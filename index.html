@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>万兽之王 - 专属黑胶盲盒</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="loading-screen" id="loadingScreen">
+        <div class="loading-ambient"></div>
+        <div class="loading-hero-wrap">
+            <img class="loading-slide is-active" src="cover/3.jpg" alt="加载封面图3">
+            <img class="loading-slide" src="cover/4.jpg" alt="加载封面图4">
+            <img class="loading-slide" src="cover/1.jpg" alt="加载封面图1">
+            <img class="loading-slide" src="cover/2.jpg" alt="加载封面图2">
+        </div>
+        <p class="loading-copy">讯号接入中</p>
+    </div>
+
+    <main class="app-shell" id="appShell">
+        <div class="header">
+            <h1>歌词抽取机</h1>
+            <p>按下按钮Yuko为你抽取专属歌词</p>
+        </div>
+
+        <div class="vinyl-wrapper">
+            <div class="turntable" id="turntable">
+                <div class="tonearm-dock" id="tonearmDock"></div>
+                <div class="tonearm" id="tonearm">
+                    <div class="tonearm-head"></div>
+                </div>
+                <div class="vinyl-record" id="vinylRecord">
+                    <div class="vinyl-grooves"></div>
+                    <div class="vinyl-highlight"></div>
+                    <div class="vinyl-sticker">
+                        <div class="vinyl-sheen" id="vinylSheen"></div>
+                        <div class="vinyl-hole"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="dynamic-island" id="dynamicIsland">
+            <button class="play-btn" id="playButton" type="button">
+                <span class="btn-text" id="btnText">抽取</span>
+            </button>
+
+            <div class="player-pill" id="playerPill">
+                <button class="player-ctrl-btn" id="playerToggleBtn">
+                    <svg class="icon-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+                    <svg class="icon-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                </button>
+                <div class="player-track-wrap" id="trackWrap">
+                    <div class="player-track-bg">
+                        <div class="player-track-fill" id="trackFill"></div>
+                    </div>
+                </div>
+                <div class="player-time" id="playerTime">0:00</div>
+            </div>
+        </div>
+
+        <div class="result-area" id="resultArea">
+            <div class="lyric-text" id="lyricText"></div>
+            <div class="song-name" id="songName"></div>
+        </div>
+    </main>
+
+    <button class="lyric-toggle-btn" id="lyricToggleBtn">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg> 显示歌词
+    </button>
+
+    <a class="footer-link" id="contactLink">联系我</a>
+    <div class="toast" id="copyToast">微信号 Michael_Yuuu 已复制</div>
+
+    <script src="main.js"></script>
+</body>
+</html>
