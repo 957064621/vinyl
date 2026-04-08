@@ -310,35 +310,60 @@ const lyricsPool = [
             if (loadingCopy) loadingCopy.classList.add('is-hidden');
 
             let currentIndex = 0;
-            const updateSlide = () => {
+            const updateSlide = (dur) => {
                 if (slides.length > 0) {
                     slides.forEach((slide, idx) => {
-                        if (idx === currentIndex) slide.classList.add('is-active');
-                        else slide.classList.remove('is-active');
+                        if (dur) {
+                            const transformDur = Math.max(dur + 780, 1200);
+                            slide.style.transition = `opacity ${dur}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), filter ${dur}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform ${transformDur}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+                        }
+
+                        if (idx === currentIndex) {
+                            slide.classList.add('is-active');
+                            slide.classList.remove('is-previous');
+                        } else if (slide.classList.contains('is-active')) {
+                            slide.classList.remove('is-active');
+                            slide.classList.add('is-previous');
+                        } else {
+                            slide.classList.remove('is-active', 'is-previous');
+                        }
                     });
+                    if (loadingHeroWrap) {
+                        loadingHeroWrap.style.setProperty('--hero-bg', `url("${loadingSources[currentIndex]}")`);
+                    }
                     if (loadingAmbient) {
+                        if (dur) loadingAmbient.style.transitionDuration = `${dur + 180}ms`;
                         loadingAmbient.style.backgroundImage = `url(${loadingSources[currentIndex]})`;
                     }
                 }
             };
             
-            updateSlide(); // 首张图
+            updateSlide(600); // 初始图
 
-            // 每张图片驻留 2.2 秒
-            let slideInterval = setInterval(() => {
-                currentIndex++;
-                if (currentIndex >= 4) {
-                    clearInterval(slideInterval);
-                    // 循环完毕后，优雅退出加载页，进入主页
-                    setTimeout(() => {
-                        loadingScreen.classList.add('is-exiting');
-                        appShell.classList.add('is-ready');
-                    }, 1000); 
-                    return;
-                }
-                updateSlide();
-            }, 2200);
+            // 编排切换时间轴（前两张3、4快切，后1、2、天外来物慢溶）
+            const sequenceSteps = [
+                { index: 1, delay: 300, dur: 220 },   // 此时是3，过0.3s后快速切到4 (快切)
+                { index: 2, delay: 1000, dur: 860 },  // 此时是4，停留后慢溶到1 (慢溶)
+                { index: 3, delay: 1800, dur: 860 },  // 此时是1，停留后慢溶到2
+                { index: 4, delay: 1800, dur: 860 }   // 此时是2，慢溶到天外来物
+            ];
+
+            for (const step of sequenceSteps) {
+                await wait(step.delay);
+                currentIndex = step.index;
+                updateSlide(step.dur);
+            }
+
+            // 最后一张驻留后淡出
+            await wait(1800);
+            
+            setTimeout(() => {
+                loadingScreen.classList.add('is-exiting');
+                appShell.classList.add('is-ready');
+            }, 1000);
         };
+
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
         if (document.readyState === 'complete') {
             runLoadingSequence();
@@ -347,10 +372,10 @@ const lyricsPool = [
         }
 
         loadingScreen.addEventListener('transitionend', (event) => {
-            if (event.propertyName === 'opacity') {
+            if (event.target === loadingScreen && event.propertyName === 'opacity') {
                 loadingScreen.remove();
             }
-        }, { once: true });
+        });
 
         const spinAnimation = vinyl.animate([
             { transform: 'translateZ(0) rotate(0deg)' },
@@ -390,8 +415,6 @@ const lyricsPool = [
 
         const ARM_REST_ANGLE = -96;
         const ARM_PLAY_ANGLE = -34;
-
-        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
         const setTonearmAngle = (angle) => {
             tonearm.style.setProperty('--arm-angle', `${angle.toFixed(2)}deg`);
