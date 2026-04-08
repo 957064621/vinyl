@@ -8,7 +8,8 @@
 </head>
 <body>
     <div class="loading-screen" id="loadingScreen">
-        <div class="hole">
+        <!-- 加载动画 -->
+        <div class="hole" id="holeLoader">
             <i></i>
             <i></i>
             <i></i>
@@ -20,7 +21,17 @@
             <i></i>
             <i></i>
         </div>
-        <p class="loading-copy">讯号接入中</p>
+        
+        <!-- 四图轮播结构 -->
+        <div class="loading-ambient" id="loadingAmbient"></div>
+        <div class="loading-hero-wrap" id="loadingHeroWrap">
+            <img class="loading-slide is-active" src="cover/3.jpg" alt="加载封面图3">
+            <img class="loading-slide" src="cover/4.jpg" alt="加载封面图4">
+            <img class="loading-slide" src="cover/1.jpg" alt="加载封面图1">
+            <img class="loading-slide" src="cover/2.jpg" alt="加载封面图2">
+        </div>
+        
+        <p class="loading-copy" id="loadingCopy">讯号接入中</p>
     </div>
 
     <main class="app-shell" id="appShell">

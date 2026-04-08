@@ -287,9 +287,8 @@ const lyricsPool = [
             await wait(300);
         };
 
-        // 等待封面图片资源加载完成：上滑 + 淡出，并让主界面无缝接入。
-        window.addEventListener('load', () => {
-            const loadingSources = ['cover/1.jpg', 'cover/2.jpg', 'cover/3.jpg', 'cover/4.jpg', 'cover/天外来物.jpg'];
+        const runLoadingSequence = async () => {
+            const loadingSources = ['cover/3.jpg', 'cover/4.jpg', 'cover/1.jpg', 'cover/2.jpg', 'cover/天外来物.jpg'];
 
             const preloadImage = (src) => {
                 return new Promise((resolve) => {
@@ -300,20 +299,69 @@ const lyricsPool = [
                 });
             };
 
-            const minLoadingTime = new Promise(resolve => setTimeout(resolve, 2500));
-            const imagePromises = loadingSources.map(preloadImage);
+            // 至少强制看一会波纹加载动画（比如 2.2秒），否则加载太快一闪而过就没有高级感了
+            const imagePromises = Promise.all(loadingSources.map(preloadImage));
+            const minHoleTime = new Promise(resolve => setTimeout(resolve, 2200));
+            
+            await Promise.all([imagePromises, minHoleTime]);
 
-            Promise.all([...imagePromises, minLoadingTime]).then(() => {
-                loadingScreen.classList.add('is-exiting');
-                appShell.classList.add('is-ready');
-            });
+            const holeLoader = document.getElementById('holeLoader');
+            const loadingCopy = document.getElementById('loadingCopy');
+            const loadingHeroWrap = document.getElementById('loadingHeroWrap');
+            const loadingAmbient = document.getElementById('loadingAmbient');
+            const slides = document.querySelectorAll('.loading-slide');
+            
+            // 隐藏波纹和文字
+            if (holeLoader) holeLoader.classList.add('is-hidden');
+            if (loadingCopy) loadingCopy.textContent = '信号已接入';
 
-            loadingScreen.addEventListener('transitionend', (event) => {
-                if (event.propertyName === 'opacity') {
-                    loadingScreen.remove();
+            await wait(400); // 留一点呼吸感时间
+
+            if (loadingHeroWrap) loadingHeroWrap.classList.add('is-loaded');
+            if (loadingAmbient) loadingAmbient.classList.add('is-loaded');
+            if (loadingCopy) loadingCopy.classList.add('is-hidden');
+
+            let currentIndex = 0;
+            const updateSlide = () => {
+                if (slides.length > 0) {
+                    slides.forEach((slide, idx) => {
+                        slide.classList.toggle('is-active', idx === currentIndex);
+                    });
+                    if (loadingAmbient) {
+                        loadingAmbient.style.backgroundImage = `url(${loadingSources[currentIndex]})`;
+                    }
                 }
-            }, { once: true });
-        });
+            };
+            
+            updateSlide(); // 首张图
+
+            // 每张图片驻留 1.6 秒（包含淡入淡出的时间）
+            let slideInterval = setInterval(() => {
+                currentIndex++;
+                if (currentIndex >= 4) {
+                    clearInterval(slideInterval);
+                    // 循环完毕后，优雅退出加载页，进入主页
+                    setTimeout(() => {
+                        loadingScreen.classList.add('is-exiting');
+                        appShell.classList.add('is-ready');
+                    }, 1000); 
+                    return;
+                }
+                updateSlide();
+            }, 1600);
+        };
+
+        if (document.readyState === 'complete') {
+            runLoadingSequence();
+        } else {
+            window.addEventListener('load', runLoadingSequence);
+        }
+
+        loadingScreen.addEventListener('transitionend', (event) => {
+            if (event.propertyName === 'opacity') {
+                loadingScreen.remove();
+            }
+        }, { once: true });
 
         const spinAnimation = vinyl.animate([
             { transform: 'translateZ(0) rotate(0deg)' },
