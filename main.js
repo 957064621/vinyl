@@ -290,20 +290,8 @@ const lyricsPool = [
         const runLoadingSequence = async () => {
             const loadingSources = ['cover/3.jpg', 'cover/4.jpg', 'cover/1.jpg', 'cover/2.jpg', 'cover/天外来物.jpg'];
 
-            const preloadImage = (src) => {
-                return new Promise((resolve) => {
-                    const img = new Image();
-                    img.onload = resolve;
-                    img.onerror = resolve;
-                    img.src = src;
-                });
-            };
-
-            // 至少强制看一会波纹加载动画（比如 2.2秒），否则加载太快一闪而过就没有高级感了
-            const imagePromises = Promise.all(loadingSources.map(preloadImage));
-            const minHoleTime = new Promise(resolve => setTimeout(resolve, 2200));
-            
-            await Promise.all([imagePromises, minHoleTime]);
+            // Just wait 2.2s to show the hole animation
+            await wait(2200);
 
             const holeLoader = document.getElementById('holeLoader');
             const loadingCopy = document.getElementById('loadingCopy');
@@ -325,7 +313,8 @@ const lyricsPool = [
             const updateSlide = () => {
                 if (slides.length > 0) {
                     slides.forEach((slide, idx) => {
-                        slide.classList.toggle('is-active', idx === currentIndex);
+                        if (idx === currentIndex) slide.classList.add('is-active');
+                        else slide.classList.remove('is-active');
                     });
                     if (loadingAmbient) {
                         loadingAmbient.style.backgroundImage = `url(${loadingSources[currentIndex]})`;
@@ -335,7 +324,7 @@ const lyricsPool = [
             
             updateSlide(); // 首张图
 
-            // 每张图片驻留 1.6 秒（包含淡入淡出的时间）
+            // 每张图片驻留 2.2 秒
             let slideInterval = setInterval(() => {
                 currentIndex++;
                 if (currentIndex >= 4) {
@@ -348,7 +337,7 @@ const lyricsPool = [
                     return;
                 }
                 updateSlide();
-            }, 1600);
+            }, 2200);
         };
 
         if (document.readyState === 'complete') {
