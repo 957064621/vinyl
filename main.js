@@ -63,8 +63,6 @@ const lyricsPool = [
         ];
 
         const loadingScreen = document.getElementById('loadingScreen');
-        const loadingAmbient = document.querySelector('.loading-ambient');
-        const loadingSlides = Array.from(document.querySelectorAll('.loading-slide'));
         const appShell = document.getElementById('appShell');
         const turntable = document.getElementById('turntable');
         const tonearm = document.getElementById('tonearm');
@@ -289,47 +287,26 @@ const lyricsPool = [
             await wait(300);
         };
 
-        // 2 秒后开始退场：上滑 + 淡出，并让主界面无缝接入。
+        // 等待封面图片资源加载完成：上滑 + 淡出，并让主界面无缝接入。
         window.addEventListener('load', () => {
-            const loadingSources = ['cover/3.jpg', 'cover/4.jpg', 'cover/1.jpg', 'cover/2.jpg'];
+            const loadingSources = ['cover/1.jpg', 'cover/2.jpg', 'cover/3.jpg', 'cover/4.jpg', 'cover/天外来物.jpg'];
 
-            const switchSlide = (nextIndex, duration) => {
-                loadingSlides.forEach((slide) => {
-                    slide.style.transitionDuration = `${duration}ms, ${duration + 140}ms, ${duration}ms`;
+            const preloadImage = (src) => {
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = resolve;
+                    img.onerror = resolve;
+                    img.src = src;
                 });
-
-                loadingSlides.forEach((slide, index) => {
-                    slide.classList.toggle('is-active', index === nextIndex);
-                });
-
-                loadingAmbient.animate([
-                    { opacity: 0.2, transform: 'scale(1.2)' },
-                    { opacity: 0.38, transform: 'scale(1.16)' }
-                ], {
-                    duration: duration + 180,
-                    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-                    fill: 'forwards'
-                });
-
-                loadingAmbient.style.backgroundImage = `url('${loadingSources[nextIndex]}')`;
             };
 
-            const switchTimeline = [
-                { index: 1, at: 420, duration: 300 },
-                { index: 2, at: 1280, duration: 980 },
-                { index: 3, at: 2280, duration: 980 }
-            ];
+            const minLoadingTime = new Promise(resolve => setTimeout(resolve, 2500));
+            const imagePromises = loadingSources.map(preloadImage);
 
-            switchTimeline.forEach(({ index, at, duration }) => {
-                setTimeout(() => {
-                    switchSlide(index, duration);
-                }, at);
-            });
-
-            setTimeout(() => {
+            Promise.all([...imagePromises, minLoadingTime]).then(() => {
                 loadingScreen.classList.add('is-exiting');
                 appShell.classList.add('is-ready');
-            }, 3200);
+            });
 
             loadingScreen.addEventListener('transitionend', (event) => {
                 if (event.propertyName === 'opacity') {
