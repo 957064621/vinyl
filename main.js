@@ -291,14 +291,14 @@ const lyricsPool = [
         };
 
         const runLoadingSequence = async () => {
-            const toCoverUrl = (name) => `${COVER_BASE_URL}${encodeURIComponent(name)}`;
-            const loadingSources = [
-                toCoverUrl('3.jpg'),
-                toCoverUrl('4.jpg'),
-                toCoverUrl('1.jpg'),
-                toCoverUrl('2.jpg'),
-                toCoverUrl('天外来物.jpg')
+            const encodedCoverFiles = [
+                '3.jpg',
+                '4.jpg',
+                '1.jpg',
+                '2.jpg',
+                '%E5%A4%A9%E5%A4%96%E6%9D%A5%E7%89%A9.jpg'
             ];
+            const loadingSources = encodedCoverFiles.map((name) => `${COVER_BASE_URL}${name}`);
 
             // Just wait 2.2s to show the hole animation
             await wait(2200);
