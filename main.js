@@ -92,6 +92,9 @@ const lyricsPool = [
         let volumeFadeInterval = null;
         let isDraggingTrack = false;
 
+        const COVER_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/';
+        const MUSIC_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/musics/';
+
         const formatAudioTime = (time) => {
             if (isNaN(time)) return '0:00';
             const m = Math.floor(time / 60);
@@ -288,7 +291,13 @@ const lyricsPool = [
         };
 
         const runLoadingSequence = async () => {
-            const loadingSources = ['cover/3.jpg', 'cover/4.jpg', 'cover/1.jpg', 'cover/2.jpg', 'cover/天外来物.jpg'];
+            const loadingSources = [
+                `${COVER_BASE_URL}3.jpg`,
+                `${COVER_BASE_URL}4.jpg`,
+                `${COVER_BASE_URL}1.jpg`,
+                `${COVER_BASE_URL}2.jpg`,
+                `${COVER_BASE_URL}天外来物.jpg`
+            ];
 
             // Just wait 2.2s to show the hole animation
             await wait(2200);
@@ -630,7 +639,7 @@ const lyricsPool = [
 
             toggleAudioState(false);
             const audioFileName = result.song.replace(/[《》]/g, '') + '.mp3';
-            audioEl.src = 'musics/' + encodeURIComponent(audioFileName);
+            audioEl.src = `${MUSIC_BASE_URL}${encodeURIComponent(audioFileName)}`;
             audioEl.load();
 
             // 同步点：减速启动与文字浮现在同一事件循环触发。
