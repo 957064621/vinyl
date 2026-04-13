@@ -244,8 +244,9 @@ const lyricsPool = [
                 turntable.classList.add('is-playing');
                 spinAnimation.play();
                 sheenAnimation.play();
+                const currentPlaybackRate = spinAnimation.playbackRate || 0;
                 animateRate({ 
-                    from: 0, 
+                    from: currentPlaybackRate, 
                     to: 0.68, 
                     duration: 1800, 
                     easing: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2 
@@ -257,8 +258,9 @@ const lyricsPool = [
             playerToggleBtn.classList.remove('is-playing');
             if (!isDrawing) {
                 turntable.classList.remove('is-playing');
+                const currentPlaybackRate = spinAnimation.playbackRate || 0;
                 animateRate({ 
-                    from: 0.68, 
+                    from: currentPlaybackRate, 
                     to: 0, 
                     duration: 2500, 
                     easing: (t) => 1 - Math.pow(1 - t, 4) 
@@ -638,32 +640,39 @@ const lyricsPool = [
 
         setTonearmAngle(ARM_REST_ANGLE);
 
+        let currentArmAnimFrame = null;
         const animateTonearm = ({ from, to, duration, easing }) => new Promise((resolve) => {
-            const startTime = performance.now();
-
+            if (currentArmAnimFrame) cancelAnimationFrame(currentArmAnimFrame);
+            
+            let startTime = null;
             const frame = (now) => {
+                if (!startTime) startTime = now;
                 const elapsed = now - startTime;
-                const progress = Math.min(elapsed / duration, 1);
+                const progress = Math.min(Math.max(elapsed / duration, 0), 1);
                 const eased = easing(progress);
                 const currentAngle = from + (to - from) * eased;
                 setTonearmAngle(currentAngle);
 
                 if (progress < 1) {
-                    requestAnimationFrame(frame);
+                    currentArmAnimFrame = requestAnimationFrame(frame);
                 } else {
+                    currentArmAnimFrame = null;
                     resolve();
                 }
             };
 
-            requestAnimationFrame(frame);
+            currentArmAnimFrame = requestAnimationFrame(frame);
         });
 
+        let currentRateAnimFrame = null;
         const animateRate = ({ from, to, duration, easing }) => new Promise((resolve) => {
-            const startTime = performance.now();
-
+            if (currentRateAnimFrame) cancelAnimationFrame(currentRateAnimFrame);
+            
+            let startTime = null;
             const frame = (now) => {
+                if (!startTime) startTime = now;
                 const elapsed = now - startTime;
-                const progress = Math.min(elapsed / duration, 1);
+                const progress = Math.min(Math.max(elapsed / duration, 0), 1);
                 const eased = easing(progress);
                 const currentRate = from + (to - from) * eased;
 
@@ -671,13 +680,14 @@ const lyricsPool = [
                 updateSheenByRate(currentRate);
 
                 if (progress < 1) {
-                    requestAnimationFrame(frame);
+                    currentRateAnimFrame = requestAnimationFrame(frame);
                 } else {
+                    currentRateAnimFrame = null;
                     resolve();
                 }
             };
 
-            requestAnimationFrame(frame);
+            currentRateAnimFrame = requestAnimationFrame(frame);
         });
 
         const lyricToLinesHTML = (text) => {
