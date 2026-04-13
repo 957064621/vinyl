@@ -88,6 +88,7 @@ const lyricsPool = [
         let isDrawing = false;
         let lyricAnimations = [];
         let hasShownDismissHint = false;
+        let canSetMediaVolume = true;
 
         const audioEl = document.createElement('audio');
         audioEl.setAttribute('playsinline', '');
@@ -140,6 +141,21 @@ const lyricsPool = [
             applyFinalKeyframe(el, keyframes);
             return createNoopAnimation();
         };
+
+        const detectVolumeControlSupport = () => {
+            try {
+                const original = Number.isFinite(audioEl.volume) ? audioEl.volume : 1;
+                const probe = original > 0.6 ? 0.4 : 0.9;
+                audioEl.volume = probe;
+                const isWritable = Math.abs(audioEl.volume - probe) < 0.01;
+                audioEl.volume = original;
+                return isWritable;
+            } catch (error) {
+                return false;
+            }
+        };
+
+        canSetMediaVolume = detectVolumeControlSupport();
 
         const formatAudioTime = (time) => {
             if (isNaN(time)) return '0:00';
@@ -206,7 +222,7 @@ const lyricsPool = [
                 volumeFadeInterval = null;
             }
             if (play) {
-                audioEl.volume = 1;
+                if (canSetMediaVolume) audioEl.volume = 1;
                 playerToggleBtn.classList.remove('is-disabled');
                 const playAttempt = audioEl.play();
                 if (playAttempt && typeof playAttempt.catch === 'function') {
@@ -246,25 +262,59 @@ const lyricsPool = [
         };
 
         const stopAndFadeOutAudio = async (duration = 800) => {
-            if (audioEl.paused) return;
+            if (audioEl.paused) {
+                if (volumeFadeInterval) {
+                    clearInterval(volumeFadeInterval);
+                    volumeFadeInterval = null;
+                }
+                isAudioPlaying = false;
+                playerToggleBtn.classList.remove('is-disabled');
+                return;
+            }
+
             if (volumeFadeInterval) clearInterval(volumeFadeInterval);
             playerToggleBtn.classList.add('is-disabled');
-            const step = 0.05;
-            const ms = Math.max(16, duration * step);
+
             return new Promise((resolve) => {
-                volumeFadeInterval = setInterval(() => {
-                    const newVol = Math.max(0, audioEl.volume - step);
-                    audioEl.volume = newVol;
-                    if (newVol === 0) {
+                const finishStop = () => {
+                    if (volumeFadeInterval) {
                         clearInterval(volumeFadeInterval);
                         volumeFadeInterval = null;
-                        isAudioPlaying = false;
-                        audioEl.pause();
-                        audioEl.volume = 1;
-                        playerToggleBtn.classList.remove('is-disabled');
-                        resolve();
                     }
-                }, ms);
+
+                    isAudioPlaying = false;
+                    audioEl.pause();
+                    if (canSetMediaVolume) audioEl.volume = 1;
+                    playerToggleBtn.classList.remove('is-disabled');
+                    resolve();
+                };
+
+                // iOS Safari 对 volume 控制不可靠，直接停止以保证暂停必定生效。
+                if (!canSetMediaVolume || duration <= 0) {
+                    finishStop();
+                    return;
+                }
+
+                const intervalMs = 40;
+                const totalSteps = Math.max(1, Math.round(duration / intervalMs));
+                const startVolume = Math.max(0, Math.min(1, audioEl.volume));
+                let currentStep = 0;
+
+                volumeFadeInterval = setInterval(() => {
+                    currentStep += 1;
+                    const ratio = Math.max(0, 1 - (currentStep / totalSteps));
+                    const nextVolume = startVolume * ratio;
+
+                    try {
+                        audioEl.volume = nextVolume;
+                    } catch (error) {
+                        // Ignore volume write errors and continue to hard-stop at the end.
+                    }
+
+                    if (currentStep >= totalSteps || nextVolume <= 0.001) {
+                        finishStop();
+                    }
+                }, intervalMs);
             });
         };
 
@@ -551,7 +601,7 @@ const lyricsPool = [
             resultArea.classList.remove('is-visible');
             resultArea.classList.remove('show-dismiss-hint');
             resultArea.style.opacity = '0';
-            resultArea.style.transform = 'translateY(18px) scale(1.01)';
+            resultArea.style.transform = 'none';
             lyricEl.style.opacity = '0';
             lyricEl.style.transform = 'translateY(20px)';
             songEl.style.opacity = '0';
@@ -568,10 +618,10 @@ const lyricsPool = [
             dynamicIsland.classList.add('is-split');
 
             const cardAnim = safeAnimate(resultArea, [
-                { opacity: 0, transform: 'translateY(28px) scale(0.98)' },
-                { opacity: 1, transform: 'translateY(0) scale(1)' }
+                { opacity: 0 },
+                { opacity: 1 }
             ], {
-                duration: 1200,
+                duration: 780,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
             });
@@ -610,10 +660,10 @@ const lyricsPool = [
 
         const morphResultOut = () => {
             const fadeOutAnimation = safeAnimate(resultArea, [
-                { opacity: 1, transform: 'translateY(0) scale(1)' },
-                { opacity: 0, transform: 'translateY(16px) scale(1.008)' }
+                { opacity: 1 },
+                { opacity: 0 }
             ], {
-                duration: 540,
+                duration: 420,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.45, 0, 0.55, 1)'
             });
