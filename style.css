@@ -152,7 +152,7 @@
 
         .loading-copy {
             position: absolute;
-            bottom: 9vh;
+            bottom: calc(9vh + 10vh);
             text-align: center;
             color: rgba(237, 245, 255, 0.9);
             font-weight: 600;
@@ -649,7 +649,7 @@
 
         .footer-link {
             position: absolute;
-            bottom: max(24px, calc(env(safe-area-inset-bottom) + 12px));
+            bottom: calc(max(24px, calc(env(safe-area-inset-bottom) + 12px)) + 10vh);
             font-size: 13px;
             color: rgba(255, 255, 255, 0.35);
             text-decoration: none;
