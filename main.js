@@ -76,6 +76,7 @@ const lyricsPool = [
         const contactLink = document.getElementById('contactLink');
         const copyToast = document.getElementById('copyToast');
 
+        const dynamicIsland = document.getElementById('dynamicIsland');
         const playerToggleBtn = document.getElementById('playerToggleBtn');
         const trackWrap = document.getElementById('trackWrap');
         const trackFill = document.getElementById('trackFill');
@@ -632,6 +633,7 @@ const lyricsPool = [
                 resultArea.classList.add('show-dismiss-hint');
                 hasShownDismissHint = true;
             }
+            dynamicIsland.classList.add('is-split');
 
             const cardAnim = safeAnimate(resultArea, [
                 { opacity: 0 },
@@ -738,6 +740,8 @@ const lyricsPool = [
             }
 
             await Promise.all(cleanupTasks);
+
+            dynamicIsland.classList.remove('is-split');
             
             resetResultVisual();
             turntable.classList.add('is-playing');
