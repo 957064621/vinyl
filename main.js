@@ -821,22 +821,29 @@ const lyricsPool = [
             }
 
             if (isAudioPlaying) {
-                initialArmAngle = ARM_PLAY_ANGLE;
-                initialRate = 0.68;
                 cleanupTasks.push(stopAndFadeOutAudio(500));
             }
 
             await Promise.all(cleanupTasks);
+
+            // 无论上一步干了什么，抽卡启步的状态必须与前一毫秒屏幕上真实呈现的数值无缝对接，不能使用之前存好的死数据，否则导致割裂与突兀
+            initialRate = spinAnimation.playbackRate || 0;
+            const currentArmAngleStr = getComputedStyle(tonearm).getPropertyValue('--arm-angle');
+            initialArmAngle = parseFloat(currentArmAngleStr) || ARM_REST_ANGLE;
 
             dynamicIsland.classList.remove('is-split');
             
             resetResultVisual();
             turntable.classList.add('is-playing');
 
+            // 保证在play()的一瞬间，所有关联数值严格等于 initialRate（特别是光效参数）
+            updateSheenByRate(initialRate);
+            spinAnimation.playbackRate = initialRate;
+
             spinAnimation.play();
             sheenAnimation.play();
 
-            // 点击即瞬时提速。
+            // 点击即加速到最高
             const maxRate = 5.2;
 
             await Promise.all([

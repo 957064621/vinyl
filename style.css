@@ -508,7 +508,7 @@
                     transparent 286deg
                 );
             mix-blend-mode: screen;
-            opacity: 0.08;
+            opacity: 0.03;
             pointer-events: none;
             will-change: transform, opacity;
         }
