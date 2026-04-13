@@ -76,15 +76,12 @@ const lyricsPool = [
         const contactLink = document.getElementById('contactLink');
         const copyToast = document.getElementById('copyToast');
 
-        const dynamicIsland = document.getElementById('dynamicIsland');
-        const playerPillEl = document.getElementById('playerPill');
         const playerToggleBtn = document.getElementById('playerToggleBtn');
         const trackWrap = document.getElementById('trackWrap');
         const trackFill = document.getElementById('trackFill');
         const playerTime = document.getElementById('playerTime');
         const lyricToggleBtn = document.getElementById('lyricToggleBtn');
         const lyricDismissHint = document.getElementById('lyricDismissHint');
-        const bodyEl = document.body;
 
         let isDrawing = false;
         let lyricAnimations = [];
@@ -366,16 +363,26 @@ const lyricsPool = [
         });
 
         trackWrap.addEventListener('touchstart', (e) => {
+            if (e.cancelable) e.preventDefault();
             isDraggingTrack = true;
             trackFill.style.transition = 'none';
             updateAudioTime(e);
-        }, {passive: true});
+        }, {passive: false});
 
         window.addEventListener('touchmove', (e) => {
-            if (isDraggingTrack) updateAudioTime(e);
+            if (!isDraggingTrack) return;
+            if (e.cancelable) e.preventDefault();
+            updateAudioTime(e);
         }, {passive: false});
 
         window.addEventListener('touchend', () => {
+            if (isDraggingTrack) {
+                isDraggingTrack = false;
+                trackFill.style.transition = '';
+            }
+        });
+
+        window.addEventListener('touchcancel', () => {
             if (isDraggingTrack) {
                 isDraggingTrack = false;
                 trackFill.style.transition = '';
@@ -610,7 +617,6 @@ const lyricsPool = [
             lyricAnimations = [];
             resultArea.classList.remove('is-visible');
             resultArea.classList.remove('show-dismiss-hint');
-            bodyEl.classList.remove('is-lyric-overlay-active');
             resultArea.style.opacity = '0';
             resultArea.style.transform = 'none';
             lyricEl.style.opacity = '0';
@@ -622,12 +628,10 @@ const lyricsPool = [
 
         const animateLyricIn = () => {
             resultArea.classList.add('is-visible');
-            bodyEl.classList.add('is-lyric-overlay-active');
             if (!hasShownDismissHint) {
                 resultArea.classList.add('show-dismiss-hint');
                 hasShownDismissHint = true;
             }
-            dynamicIsland.classList.add('is-split');
 
             const cardAnim = safeAnimate(resultArea, [
                 { opacity: 0 },
@@ -735,8 +739,6 @@ const lyricsPool = [
 
             await Promise.all(cleanupTasks);
             
-            dynamicIsland.classList.remove('is-split');
-
             resetResultVisual();
             turntable.classList.add('is-playing');
 

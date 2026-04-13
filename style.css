@@ -549,24 +549,9 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 0;
+            gap: 14px;
             z-index: 85;
             transition: gap 0.8s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        body.is-lyric-overlay-active .dynamic-island {
-            position: fixed;
-            left: 50%;
-            bottom: max(20px, calc(env(safe-area-inset-bottom) + 16px));
-            margin-top: 0;
-            transform: translateX(-50%);
-            z-index: 86;
-            pointer-events: auto;
-            transition: gap 0.8s cubic-bezier(0.16, 1, 0.3, 1), bottom 0.45s var(--hero-ease), transform 0.45s var(--hero-ease);
-        }
-
-        .dynamic-island.is-split {
-            gap: 14px;
         }
 
         .play-btn {
@@ -862,36 +847,23 @@
             align-items: center;
             gap: 16px;
             margin-top: 0;
-            padding: 8px 0px 8px 0px;
+            padding: 8px 20px 8px 10px;
             border-radius: 999px;
             background: rgba(255, 255, 255, 0.05);
-            border: 0 solid rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(28px) saturate(1.8);
             -webkit-backdrop-filter: blur(28px) saturate(1.8);
             box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.15);
-            opacity: 0;
-            max-width: 0;
+            opacity: 1;
+            max-width: 320px;
             overflow: hidden;
-            pointer-events: none;
-            transform: scale(0.96);
+            pointer-events: auto;
+            transform: scale(1);
             transform-origin: left center;
-            transition: max-width 0.8s cubic-bezier(0.16, 1, 0.3, 1),
-                        opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
-                        transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
-                        padding 0.8s cubic-bezier(0.16, 1, 0.3, 1),
-                        border-width 0.8s ease;
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
             will-change: transform, opacity, max-width;
             position: relative;
             flex-shrink: 0;
-        }
-
-        .dynamic-island.is-split .player-pill {
-            opacity: 1;
-            max-width: 320px;
-            padding: 8px 20px 8px 10px;
-            border-width: 1px;
-            transform: scale(1);
-            pointer-events: auto;
         }
 
         .player-ctrl-btn {
@@ -958,6 +930,9 @@
             align-items: center;
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         .player-track-bg {
@@ -1064,7 +1039,7 @@
                 margin-top: 22px;
             }
 
-            .dynamic-island.is-split {
+            .dynamic-island {
                 gap: 8px;
             }
 
@@ -1080,8 +1055,9 @@
                 padding: 0 16px;
             }
 
-            .dynamic-island.is-split .player-pill {
+            .player-pill {
                 padding: 6px 12px 6px 8px;
+                max-width: 280px;
             }
 
             .player-ctrl-btn {
