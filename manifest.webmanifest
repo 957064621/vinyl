@@ -1,0 +1,9 @@
+{
+  "name": "歌词抽取机",
+  "short_name": "歌词抽取机",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a1120",
+  "theme_color": "#0a1120"
+}

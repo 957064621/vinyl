@@ -15,6 +15,7 @@
                 radial-gradient(120% 90% at 20% -10%, rgba(50, 126, 255, 0.16) 0%, transparent 48%),
                 radial-gradient(90% 90% at 95% 8%, rgba(97, 224, 255, 0.1) 0%, transparent 50%),
                 linear-gradient(180deg, #0a1120 0%, #070a12 55%, #06080f 100%);
+            color-scheme: dark;
         }
 
         * {
@@ -268,7 +269,6 @@
         .app-shell {
             width: min(100%, 440px);
             position: relative;
-            z-index: 22;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -285,7 +285,6 @@
         .header {
             text-align: center;
             margin-bottom: 56px;
-            transition: opacity 0.45s var(--hero-ease), transform 0.45s var(--hero-ease);
         }
 
         .header h1 {
@@ -310,25 +309,6 @@
             align-items: center;
             perspective: 1000px;
             width: min(100%, 440px);
-            transition: opacity 0.45s var(--hero-ease), transform 0.45s var(--hero-ease);
-        }
-
-        body.is-lyric-overlay-active .app-shell {
-            pointer-events: none;
-        }
-
-        body.is-lyric-overlay-active .dynamic-island {
-            pointer-events: auto;
-        }
-
-        body.is-lyric-overlay-active .dynamic-island * {
-            pointer-events: auto;
-        }
-
-        body.is-lyric-overlay-active .header,
-        body.is-lyric-overlay-active .vinyl-wrapper {
-            opacity: 0;
-            transform: translateY(10px);
         }
 
         .turntable {
@@ -574,6 +554,17 @@
             transition: gap 0.8s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
+        body.is-lyric-overlay-active .dynamic-island {
+            position: fixed;
+            left: 50%;
+            bottom: max(20px, calc(env(safe-area-inset-bottom) + 16px));
+            margin-top: 0;
+            transform: translateX(-50%);
+            z-index: 86;
+            pointer-events: auto;
+            transition: gap 0.8s cubic-bezier(0.16, 1, 0.3, 1), bottom 0.45s var(--hero-ease), transform 0.45s var(--hero-ease);
+        }
+
         .dynamic-island.is-split {
             gap: 14px;
         }
@@ -664,7 +655,7 @@
             transform: none;
             transition: opacity 0.4s var(--hero-ease);
             will-change: opacity;
-            z-index: 16;
+            z-index: 28;
         }
 
         .result-area.is-visible {

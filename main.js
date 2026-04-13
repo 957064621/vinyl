@@ -90,17 +90,11 @@ const lyricsPool = [
         let lyricAnimations = [];
         let hasShownDismissHint = false;
         let canSetMediaVolume = true;
-        let audioFadeTimer = null;
 
         const audioEl = document.createElement('audio');
-        audioEl.crossOrigin = 'anonymous';
         audioEl.setAttribute('playsinline', '');
         audioEl.setAttribute('webkit-playsinline', '');
         audioEl.preload = 'metadata';
-        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        let audioCtx = null;
-        let audioSourceNode = null;
-        let audioGainNode = null;
         let isAudioPlaying = false;
         let volumeFadeInterval = null;
         let isDraggingTrack = false;
@@ -158,33 +152,6 @@ const lyricsPool = [
                 audioEl.volume = original;
                 return isWritable;
             } catch (error) {
-                return false;
-            }
-        };
-
-        const ensureAudioGainGraph = async () => {
-            if (!AudioContextCtor) return false;
-
-            try {
-                if (!audioCtx) {
-                    audioCtx = new AudioContextCtor();
-                }
-
-                if (!audioSourceNode) {
-                    audioSourceNode = audioCtx.createMediaElementSource(audioEl);
-                    audioGainNode = audioCtx.createGain();
-                    audioGainNode.gain.value = 1;
-                    audioSourceNode.connect(audioGainNode);
-                    audioGainNode.connect(audioCtx.destination);
-                }
-
-                if (audioCtx.state === 'suspended') {
-                    await audioCtx.resume();
-                }
-
-                return !!audioGainNode;
-            } catch (error) {
-                console.log('Audio gain graph init failed', error);
                 return false;
             }
         };
@@ -255,19 +222,10 @@ const lyricsPool = [
                 clearInterval(volumeFadeInterval);
                 volumeFadeInterval = null;
             }
-            if (audioFadeTimer) {
-                clearTimeout(audioFadeTimer);
-                audioFadeTimer = null;
-            }
+
             if (play) {
                 if (canSetMediaVolume) audioEl.volume = 1;
-                if (audioGainNode && audioCtx && audioCtx.state !== 'closed') {
-                    const now = audioCtx.currentTime;
-                    audioGainNode.gain.cancelScheduledValues(now);
-                    audioGainNode.gain.setValueAtTime(1, now);
-                }
                 playerToggleBtn.classList.remove('is-disabled');
-                ensureAudioGainGraph();
                 const playAttempt = audioEl.play();
                 if (playAttempt && typeof playAttempt.catch === 'function') {
                     playAttempt.catch((e) => {
@@ -311,17 +269,12 @@ const lyricsPool = [
                     clearInterval(volumeFadeInterval);
                     volumeFadeInterval = null;
                 }
-                if (audioFadeTimer) {
-                    clearTimeout(audioFadeTimer);
-                    audioFadeTimer = null;
-                }
                 isAudioPlaying = false;
                 playerToggleBtn.classList.remove('is-disabled');
                 return;
             }
 
             if (volumeFadeInterval) clearInterval(volumeFadeInterval);
-            if (audioFadeTimer) clearTimeout(audioFadeTimer);
             playerToggleBtn.classList.add('is-disabled');
 
             return new Promise((resolve) => {
@@ -330,41 +283,16 @@ const lyricsPool = [
                         clearInterval(volumeFadeInterval);
                         volumeFadeInterval = null;
                     }
-                    if (audioFadeTimer) {
-                        clearTimeout(audioFadeTimer);
-                        audioFadeTimer = null;
-                    }
 
                     isAudioPlaying = false;
                     audioEl.pause();
-                    if (audioGainNode && audioCtx && audioCtx.state !== 'closed') {
-                        const now = audioCtx.currentTime;
-                        audioGainNode.gain.cancelScheduledValues(now);
-                        audioGainNode.gain.setValueAtTime(1, now);
-                    }
+                    audioEl.playbackRate = 1;
                     if (canSetMediaVolume) audioEl.volume = 1;
                     playerToggleBtn.classList.remove('is-disabled');
                     resolve();
                 };
 
-                if (audioGainNode && audioCtx && audioCtx.state !== 'closed' && duration > 0) {
-                    try {
-                        const now = audioCtx.currentTime;
-                        const currentGain = Math.max(0.0001, audioGainNode.gain.value);
-                        audioGainNode.gain.cancelScheduledValues(now);
-                        audioGainNode.gain.setValueAtTime(currentGain, now);
-                        audioGainNode.gain.linearRampToValueAtTime(0.0001, now + duration / 1000);
-                        audioFadeTimer = setTimeout(() => {
-                            finishStop();
-                        }, duration);
-                        return;
-                    } catch (error) {
-                        console.log('Gain fade failed, fallback to volume fade', error);
-                    }
-                }
-
-                // iOS Safari 对 volume 控制不可靠，直接停止以保证暂停必定生效。
-                if (!canSetMediaVolume || duration <= 0) {
+                if (duration <= 0) {
                     finishStop();
                     return;
                 }
@@ -372,20 +300,28 @@ const lyricsPool = [
                 const intervalMs = 40;
                 const totalSteps = Math.max(1, Math.round(duration / intervalMs));
                 const startVolume = Math.max(0, Math.min(1, audioEl.volume));
+                const startRate = Number.isFinite(audioEl.playbackRate) ? audioEl.playbackRate : 1;
+                const targetRate = canSetMediaVolume ? startRate : Math.max(0.72, startRate * 0.82);
                 let currentStep = 0;
 
                 volumeFadeInterval = setInterval(() => {
                     currentStep += 1;
                     const ratio = Math.max(0, 1 - (currentStep / totalSteps));
-                    const nextVolume = startVolume * ratio;
+                    const progress = currentStep / totalSteps;
 
-                    try {
-                        audioEl.volume = nextVolume;
-                    } catch (error) {
-                        // Ignore volume write errors and continue to hard-stop at the end.
+                    if (canSetMediaVolume) {
+                        const nextVolume = startVolume * ratio;
+                        try {
+                            audioEl.volume = nextVolume;
+                        } catch (error) {
+                            // Ignore volume write errors and continue to hard-stop at the end.
+                        }
+                    } else {
+                        // iOS 下 volume 常不可写，用轻微降速模拟软停的听感。
+                        audioEl.playbackRate = startRate - (startRate - targetRate) * progress;
                     }
 
-                    if (currentStep >= totalSteps || nextVolume <= 0.001) {
+                    if (currentStep >= totalSteps) {
                         finishStop();
                     }
                 }, intervalMs);
@@ -393,7 +329,6 @@ const lyricsPool = [
         };
 
         playerToggleBtn.addEventListener('click', () => {
-            ensureAudioGainGraph();
             toggleAudioState(!isAudioPlaying);
         });
 
@@ -778,8 +713,6 @@ const lyricsPool = [
             if (isDrawing) return;
             isDrawing = true;
             playButton.disabled = true;
-
-            ensureAudioGainGraph();
             
             lyricToggleBtn.classList.remove('is-visible');
 
