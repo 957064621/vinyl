@@ -140,6 +140,7 @@ const lyricsPool = [
         let lyricAnimations = [];
         let hasShownDismissHint = false;
         let canSetMediaVolume = true;
+        let lastDrawIndex = -1;
 
         const audioEl = document.createElement('audio');
         audioEl.setAttribute('playsinline', '');
@@ -556,6 +557,21 @@ const lyricsPool = [
 
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+        const pickRandomLyricIndex = () => {
+            if (lyricsPool.length <= 1) {
+                lastDrawIndex = 0;
+                return 0;
+            }
+
+            let index = lastDrawIndex;
+            while (index === lastDrawIndex) {
+                index = Math.floor(Math.random() * lyricsPool.length);
+            }
+
+            lastDrawIndex = index;
+            return index;
+        };
+
         if (document.readyState === 'complete') {
             runLoadingSequence();
         } else {
@@ -822,7 +838,7 @@ const lyricsPool = [
 
             await wait(1200);
 
-            const randomIndex = Math.floor(Math.random() * lyricsPool.length);
+            const randomIndex = pickRandomLyricIndex();
             const result = lyricsPool[randomIndex];
 
             lyricEl.innerHTML = lyricToLinesHTML(result.text);
