@@ -9,6 +9,8 @@
             --damping: cubic-bezier(0.16, 1, 0.3, 1);
             --hero-ease: cubic-bezier(0.32, 0.72, 0, 1);
             --lyric-ios-offset: 0px;
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
             --app-bg:
                 radial-gradient(120% 90% at 20% -10%, rgba(50, 126, 255, 0.16) 0%, transparent 48%),
                 radial-gradient(90% 90% at 95% 8%, rgba(97, 224, 255, 0.1) 0%, transparent 50%),
@@ -22,23 +24,33 @@
         }
 
         html {
+            width: 100%;
             height: 100%;
+            min-height: 100%;
             background: var(--app-bg);
             overflow: hidden;
+            overscroll-behavior: none;
         }
 
         body {
             font-family: "Manrope", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
             color: var(--text-main);
-            min-height: 100vh;
-            min-height: 100svh;
-            min-height: 100dvh;
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100vh;
+            height: 100svh;
+            height: 100lvh;
+            height: 100dvh;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             padding: 24px;
+            padding-top: max(24px, calc(var(--safe-top) + 8px));
+            padding-bottom: max(24px, calc(var(--safe-bottom) + 8px));
             overflow: hidden;
+            overscroll-behavior: none;
             background-color: #070a12;
             background: var(--app-bg);
         }
@@ -46,6 +58,8 @@
         @supports (-webkit-touch-callout: none) {
             :root {
                 --lyric-ios-offset: clamp(8px, calc(env(safe-area-inset-top) * 0.45), 16px);
+                --safe-top: env(safe-area-inset-top, 0px);
+                --safe-bottom: env(safe-area-inset-bottom, 0px);
             }
 
             html {
