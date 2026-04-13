@@ -83,17 +83,63 @@ const lyricsPool = [
         const trackFill = document.getElementById('trackFill');
         const playerTime = document.getElementById('playerTime');
         const lyricToggleBtn = document.getElementById('lyricToggleBtn');
+        const lyricDismissHint = document.getElementById('lyricDismissHint');
 
         let isDrawing = false;
         let lyricAnimations = [];
+        let hasShownDismissHint = false;
 
         const audioEl = document.createElement('audio');
+        audioEl.setAttribute('playsinline', '');
+        audioEl.setAttribute('webkit-playsinline', '');
+        audioEl.preload = 'metadata';
         let isAudioPlaying = false;
         let volumeFadeInterval = null;
         let isDraggingTrack = false;
 
         const COVER_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/';
         const MUSIC_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/musics/';
+
+        const canUseWebAnimations = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
+
+        const createNoopAnimation = () => {
+            let playbackRateValue = 1;
+            return {
+                play: () => {},
+                pause: () => {},
+                cancel: () => {},
+                finish: () => {},
+                reverse: () => {},
+                finished: Promise.resolve(),
+                get playbackRate() {
+                    return playbackRateValue;
+                },
+                set playbackRate(value) {
+                    playbackRateValue = value;
+                }
+            };
+        };
+
+        const applyFinalKeyframe = (el, keyframes) => {
+            if (!Array.isArray(keyframes) || keyframes.length === 0) return;
+            const finalFrame = keyframes[keyframes.length - 1];
+            if (!finalFrame || typeof finalFrame !== 'object') return;
+
+            Object.entries(finalFrame).forEach(([prop, value]) => {
+                if (prop === 'offset' || prop === 'easing' || prop === 'composite') return;
+                el.style[prop] = `${value}`;
+            });
+        };
+
+        const safeAnimate = (el, keyframes, options) => {
+            if (canUseWebAnimations && typeof el.animate === 'function') {
+                return el.animate(keyframes, options);
+            }
+
+            // iOS 旧版或内嵌 WebView 不支持 WAAPI 时，直接应用终态避免脚本中断。
+            applyFinalKeyframe(el, keyframes);
+            return createNoopAnimation();
+        };
 
         const formatAudioTime = (time) => {
             if (isNaN(time)) return '0:00';
@@ -162,7 +208,22 @@ const lyricsPool = [
             if (play) {
                 audioEl.volume = 1;
                 playerToggleBtn.classList.remove('is-disabled');
-                audioEl.play().catch(e => console.log('Audio init pending interaction', e));
+                const playAttempt = audioEl.play();
+                if (playAttempt && typeof playAttempt.catch === 'function') {
+                    playAttempt.catch((e) => {
+                        console.log('Audio init pending interaction', e);
+                        isAudioPlaying = false;
+                        playerToggleBtn.classList.remove('is-playing');
+                        if (!isDrawing) {
+                            turntable.classList.remove('is-playing');
+                            spinAnimation.pause();
+                            sheenAnimation.pause();
+                            spinAnimation.playbackRate = 0;
+                            updateSheenByRate(0);
+                            setTonearmAngle(ARM_REST_ANGLE);
+                        }
+                    });
+                }
                 if (!isDrawing) {
                     animateTonearm({
                         from: ARM_REST_ANGLE, 
@@ -387,7 +448,7 @@ const lyricsPool = [
             }
         });
 
-        const spinAnimation = vinyl.animate([
+        const spinAnimation = safeAnimate(vinyl, [
             { transform: 'translateZ(0) rotate(0deg)' },
             { transform: 'translateZ(0) rotate(360deg)' }
         ], {
@@ -399,7 +460,7 @@ const lyricsPool = [
         spinAnimation.pause();
 
         // 极弱反光层：常态低速，提速阶段增强，减速后回归克制。
-        const sheenAnimation = vinylSheen.animate([
+        const sheenAnimation = safeAnimate(vinylSheen, [
             { transform: 'rotate(0deg)' },
             { transform: 'rotate(360deg)' }
         ], {
@@ -488,6 +549,7 @@ const lyricsPool = [
             lyricAnimations.forEach((anim) => anim.cancel());
             lyricAnimations = [];
             resultArea.classList.remove('is-visible');
+            resultArea.classList.remove('show-dismiss-hint');
             resultArea.style.opacity = '0';
             resultArea.style.transform = 'translateY(18px) scale(1.01)';
             lyricEl.style.opacity = '0';
@@ -499,9 +561,13 @@ const lyricsPool = [
 
         const animateLyricIn = () => {
             resultArea.classList.add('is-visible');
+            if (!hasShownDismissHint) {
+                resultArea.classList.add('show-dismiss-hint');
+                hasShownDismissHint = true;
+            }
             dynamicIsland.classList.add('is-split');
 
-            const cardAnim = resultArea.animate([
+            const cardAnim = safeAnimate(resultArea, [
                 { opacity: 0, transform: 'translateY(28px) scale(0.98)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)' }
             ], {
@@ -510,7 +576,7 @@ const lyricsPool = [
                 easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
             });
 
-            const lyricAnim = lyricEl.animate([
+            const lyricAnim = safeAnimate(lyricEl, [
                 { opacity: 0, transform: 'translateY(24px)' },
                 { opacity: 1, transform: 'translateY(0)' }
             ], {
@@ -519,7 +585,7 @@ const lyricsPool = [
                 easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
             });
 
-            const songAnim = songEl.animate([
+            const songAnim = safeAnimate(songEl, [
                 { opacity: 0, transform: 'translateY(24px)' },
                 { opacity: 1, transform: 'translateY(0)' }
             ], {
@@ -529,7 +595,7 @@ const lyricsPool = [
                 easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
             });
 
-            const lineAnimations = Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => line.animate([
+            const lineAnimations = Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => safeAnimate(line, [
                 { opacity: 0, transform: 'translateY(18px) scale(0.98)', filter: 'blur(8px)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
             ], {
@@ -543,18 +609,22 @@ const lyricsPool = [
         };
 
         const morphResultOut = () => {
-            return resultArea.animate([
+            const fadeOutAnimation = safeAnimate(resultArea, [
                 { opacity: 1, transform: 'translateY(0) scale(1)' },
                 { opacity: 0, transform: 'translateY(16px) scale(1.008)' }
             ], {
                 duration: 540,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.45, 0, 0.55, 1)'
-            }).finished;
+            });
+
+            return fadeOutAnimation.finished || Promise.resolve();
         };
 
-        resultArea.addEventListener('click', async () => {
+        resultArea.addEventListener('click', async (event) => {
             if (isDrawing || !resultArea.classList.contains('is-visible')) return;
+            if (event.target !== resultArea && event.target !== lyricDismissHint) return;
+
             isDrawing = true;
             playButton.disabled = true;
 
@@ -642,10 +712,6 @@ const lyricsPool = [
             const audioFileName = result.song.replace(/[《》]/g, '') + '.mp3';
             audioEl.src = `${MUSIC_BASE_URL}${encodeURIComponent(audioFileName)}`;
             audioEl.load();
-
-            // 同步点：减速启动与文字浮现在同一事件循环触发。
-            animateLyricIn();
-            toggleAudioState(true);
             
             await Promise.all([
                 updateButtonText('再次抽取'),
@@ -662,6 +728,10 @@ const lyricsPool = [
                     easing: easeInOutCubic
                 })
             ]);
+
+            // 唱针停止后再出现歌词层。
+            animateLyricIn();
+            toggleAudioState(true);
 
             await wait(900);
 
