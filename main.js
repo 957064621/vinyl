@@ -875,8 +875,8 @@ const lyricsPool = [
             audioEl.src = `${MUSIC_BASE_URL}${encodeURIComponent(audioFileName)}`;
             audioEl.load();
             
+            // 错开显示歌词和按钮的变形时机
             await Promise.all([
-                updateButtonText('再次抽取'),
                 animateTonearm({
                     from: ARM_REST_ANGLE,
                     to: ARM_PLAY_ANGLE, 
@@ -894,6 +894,10 @@ const lyricsPool = [
             // 唱针停止后再出现歌词层。
             animateLyricIn();
             toggleAudioState(true);
+
+            // 让文字在歌词展开时再变，避免时间上同步过于机械
+            await wait(180);
+            await updateButtonText('再次抽取');
 
             await wait(900);
 
