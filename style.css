@@ -681,9 +681,9 @@
         }
 
         .lyric-toggle-btn {
-            position: fixed;
-            right: max(24px, 5vw);
-            bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px));
+            position: absolute;
+            right: 0;
+            bottom: calc(100% + 24px);
             height: 52px;
             display: flex;
             align-items: center;
@@ -703,19 +703,22 @@
             z-index: 25;
             opacity: 0;
             pointer-events: none;
-            transform: translateY(16px);
+            transform: translate3d(0, 16px, 0);
             transition: all 0.6s var(--damping);
             box-shadow: 
                 0 16px 32px rgba(0, 0, 0, 0.35),
                 inset 0 1px 1px rgba(255, 255, 255, 0.25);
             user-select: none;
             -webkit-tap-highlight-color: transparent;
+            will-change: transform, opacity;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
         }
 
         .lyric-toggle-btn.is-visible {
             opacity: 1;
             pointer-events: auto;
-            transform: translateY(0);
+            transform: translate3d(0, 0, 0);
         }
 
         @media (hover: hover) and (pointer: fine) {
