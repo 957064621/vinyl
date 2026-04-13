@@ -102,13 +102,18 @@
             overflow: hidden;
             background: rgba(7, 10, 18, 0.86);
             transition: transform 1.1s var(--hero-ease), opacity 1.1s var(--hero-ease), visibility 1.1s var(--hero-ease);
-            transform: translateY(0);
+            transform: translateY(0) translateZ(0);
+            -webkit-transform: translateY(0) translateZ(0);
             opacity: 1;
             visibility: visible;
+            will-change: transform, opacity;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
         }
 
         .loading-screen.is-exiting {
-            transform: translateY(-18%);
+            transform: translateY(-18%) translateZ(0);
+            -webkit-transform: translateY(-18%) translateZ(0);
             opacity: 0;
             visibility: hidden;
             pointer-events: none;
@@ -547,6 +552,7 @@
             gap: 0;
             z-index: 85;
             transition: gap 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+            will-change: gap;
         }
 
         .dynamic-island.is-split {
@@ -579,6 +585,10 @@
             -webkit-tap-highlight-color: transparent;
             user-select: none;
             flex-shrink: 0;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
         }
 
         @media (hover: hover) and (pointer: fine) {
@@ -639,10 +649,13 @@
             pointer-events: none;
             overflow: hidden;
             opacity: 0;
-            transform: none;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
             transition: opacity 0.4s var(--hero-ease);
             will-change: opacity;
             z-index: 28;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
         }
 
         .result-area.is-visible {
@@ -860,16 +873,19 @@
             max-width: 0;
             overflow: hidden;
             pointer-events: none;
-            transform: scale(0.96);
+            transform: scale(0.96) translateZ(0);
+            -webkit-transform: scale(0.96) translateZ(0);
             transform-origin: left center;
             transition: max-width 0.8s cubic-bezier(0.16, 1, 0.3, 1),
                         opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
                         transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
                         padding 0.8s cubic-bezier(0.16, 1, 0.3, 1),
                         border-width 0.8s ease;
-            will-change: transform, opacity, max-width;
+            will-change: transform, opacity, max-width, padding, border-width;
             position: relative;
             flex-shrink: 0;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
         }
 
         .dynamic-island.is-split .player-pill {
@@ -877,7 +893,8 @@
             max-width: 320px;
             padding: 8px 20px 8px 10px;
             border-width: 1px;
-            transform: scale(1);
+            transform: scale(1) translateZ(0);
+            -webkit-transform: scale(1) translateZ(0);
             pointer-events: auto;
         }
 
@@ -961,12 +978,15 @@
         }
 
         .player-track-fill {
-            width: 0%;
+            width: 100%;
             height: 100%;
             background: linear-gradient(90deg, #9bb8ff, #ffffff);
             border-radius: 6px;
             box-shadow: 0 0 12px rgba(181, 216, 255, 0.85);
-            transition: width 0.2s linear;
+            transform-origin: left center;
+            transform: scaleX(0);
+            transition: transform 0.2s linear;
+            will-change: transform;
         }
 
         .player-time {

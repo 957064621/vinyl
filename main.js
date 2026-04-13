@@ -216,16 +216,25 @@ const lyricsPool = [
             return `${m}:${s}`;
         };
 
+        let timeUpdateRAF = null;
         audioEl.addEventListener('timeupdate', () => {
             if (isDraggingTrack) return;
-            const progress = (audioEl.currentTime / audioEl.duration) || 0;
-            trackFill.style.width = `${progress * 100}%`;
-            playerTime.innerText = formatAudioTime(audioEl.currentTime);
+            if (timeUpdateRAF) cancelAnimationFrame(timeUpdateRAF);
+            
+            timeUpdateRAF = requestAnimationFrame(() => {
+                const progress = (audioEl.currentTime / audioEl.duration) || 0;
+                trackFill.style.transform = `scaleX(${progress})`;
+                
+                const newTime = formatAudioTime(audioEl.currentTime);
+                if (playerTime.innerText !== newTime) {
+                    playerTime.innerText = newTime;
+                }
+            });
         });
 
         audioEl.addEventListener('loadedmetadata', () => {
             playerTime.innerText = '0:00';
-            trackFill.style.width = '0%';
+            trackFill.style.transform = 'scaleX(0)';
         });
 
         audioEl.addEventListener('play', () => {
@@ -395,7 +404,7 @@ const lyricsPool = [
             let percent = (clientX - rect.left) / rect.width;
             percent = Math.max(0, Math.min(1, percent));
             audioEl.currentTime = percent * audioEl.duration;
-            trackFill.style.width = `${percent * 100}%`;
+            trackFill.style.transform = `scaleX(${percent})`;
             playerTime.innerText = formatAudioTime(audioEl.currentTime);
         };
 
