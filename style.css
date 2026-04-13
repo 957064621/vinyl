@@ -35,24 +35,25 @@
         body {
             font-family: "Manrope", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
             color: var(--text-main);
-            position: fixed;
-            inset: 0;
+            position: relative;
             width: 100%;
-            height: 100vh;
-            height: 100svh;
-            height: 100lvh;
-            height: 100dvh;
+            min-height: 100%;
+            min-height: 100vh;
+            min-height: 100svh;
+            min-height: 100lvh;
+            min-height: 100dvh;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             padding: 24px;
-            padding-top: max(24px, calc(var(--safe-top) + 8px));
-            padding-bottom: max(24px, calc(var(--safe-bottom) + 8px));
+            padding-top: max(24px, calc(var(--safe-top) + 2px));
+            padding-bottom: max(24px, calc(var(--safe-bottom) + 2px));
             overflow: hidden;
             overscroll-behavior: none;
             background-color: #070a12;
             background: var(--app-bg);
+            isolation: isolate;
         }
 
         @supports (-webkit-touch-callout: none) {
@@ -68,7 +69,7 @@
 
             body {
                 min-height: -webkit-fill-available;
-                height: -webkit-fill-available;
+                height: auto;
             }
         }
 
@@ -78,10 +79,21 @@
             inset: 0;
             pointer-events: none;
             opacity: 0.2;
+            z-index: -1;
             background-image:
                 linear-gradient(120deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
                 linear-gradient(60deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
             background-size: 72px 72px, 72px 72px;
+        }
+
+        body::after {
+            content: "";
+            position: fixed;
+            inset: -2px;
+            pointer-events: none;
+            z-index: -2;
+            transform: translateZ(0);
+            background: var(--app-bg);
         }
 
         .loading-screen {
@@ -256,7 +268,7 @@
         .app-shell {
             width: min(100%, 440px);
             position: relative;
-            z-index: 5;
+            z-index: 22;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -273,6 +285,7 @@
         .header {
             text-align: center;
             margin-bottom: 56px;
+            transition: opacity 0.45s var(--hero-ease), transform 0.45s var(--hero-ease);
         }
 
         .header h1 {
@@ -297,6 +310,25 @@
             align-items: center;
             perspective: 1000px;
             width: min(100%, 440px);
+            transition: opacity 0.45s var(--hero-ease), transform 0.45s var(--hero-ease);
+        }
+
+        body.is-lyric-overlay-active .app-shell {
+            pointer-events: none;
+        }
+
+        body.is-lyric-overlay-active .dynamic-island {
+            pointer-events: auto;
+        }
+
+        body.is-lyric-overlay-active .dynamic-island * {
+            pointer-events: auto;
+        }
+
+        body.is-lyric-overlay-active .header,
+        body.is-lyric-overlay-active .vinyl-wrapper {
+            opacity: 0;
+            transform: translateY(10px);
         }
 
         .turntable {
@@ -632,7 +664,7 @@
             transform: none;
             transition: opacity 0.4s var(--hero-ease);
             will-change: opacity;
-            z-index: 28;
+            z-index: 16;
         }
 
         .result-area.is-visible {

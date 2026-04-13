@@ -84,16 +84,23 @@ const lyricsPool = [
         const playerTime = document.getElementById('playerTime');
         const lyricToggleBtn = document.getElementById('lyricToggleBtn');
         const lyricDismissHint = document.getElementById('lyricDismissHint');
+        const bodyEl = document.body;
 
         let isDrawing = false;
         let lyricAnimations = [];
         let hasShownDismissHint = false;
         let canSetMediaVolume = true;
+        let audioFadeTimer = null;
 
         const audioEl = document.createElement('audio');
+        audioEl.crossOrigin = 'anonymous';
         audioEl.setAttribute('playsinline', '');
         audioEl.setAttribute('webkit-playsinline', '');
         audioEl.preload = 'metadata';
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = null;
+        let audioSourceNode = null;
+        let audioGainNode = null;
         let isAudioPlaying = false;
         let volumeFadeInterval = null;
         let isDraggingTrack = false;
@@ -151,6 +158,33 @@ const lyricsPool = [
                 audioEl.volume = original;
                 return isWritable;
             } catch (error) {
+                return false;
+            }
+        };
+
+        const ensureAudioGainGraph = async () => {
+            if (!AudioContextCtor) return false;
+
+            try {
+                if (!audioCtx) {
+                    audioCtx = new AudioContextCtor();
+                }
+
+                if (!audioSourceNode) {
+                    audioSourceNode = audioCtx.createMediaElementSource(audioEl);
+                    audioGainNode = audioCtx.createGain();
+                    audioGainNode.gain.value = 1;
+                    audioSourceNode.connect(audioGainNode);
+                    audioGainNode.connect(audioCtx.destination);
+                }
+
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+
+                return !!audioGainNode;
+            } catch (error) {
+                console.log('Audio gain graph init failed', error);
                 return false;
             }
         };
@@ -221,9 +255,19 @@ const lyricsPool = [
                 clearInterval(volumeFadeInterval);
                 volumeFadeInterval = null;
             }
+            if (audioFadeTimer) {
+                clearTimeout(audioFadeTimer);
+                audioFadeTimer = null;
+            }
             if (play) {
                 if (canSetMediaVolume) audioEl.volume = 1;
+                if (audioGainNode && audioCtx && audioCtx.state !== 'closed') {
+                    const now = audioCtx.currentTime;
+                    audioGainNode.gain.cancelScheduledValues(now);
+                    audioGainNode.gain.setValueAtTime(1, now);
+                }
                 playerToggleBtn.classList.remove('is-disabled');
+                ensureAudioGainGraph();
                 const playAttempt = audioEl.play();
                 if (playAttempt && typeof playAttempt.catch === 'function') {
                     playAttempt.catch((e) => {
@@ -267,12 +311,17 @@ const lyricsPool = [
                     clearInterval(volumeFadeInterval);
                     volumeFadeInterval = null;
                 }
+                if (audioFadeTimer) {
+                    clearTimeout(audioFadeTimer);
+                    audioFadeTimer = null;
+                }
                 isAudioPlaying = false;
                 playerToggleBtn.classList.remove('is-disabled');
                 return;
             }
 
             if (volumeFadeInterval) clearInterval(volumeFadeInterval);
+            if (audioFadeTimer) clearTimeout(audioFadeTimer);
             playerToggleBtn.classList.add('is-disabled');
 
             return new Promise((resolve) => {
@@ -281,13 +330,38 @@ const lyricsPool = [
                         clearInterval(volumeFadeInterval);
                         volumeFadeInterval = null;
                     }
+                    if (audioFadeTimer) {
+                        clearTimeout(audioFadeTimer);
+                        audioFadeTimer = null;
+                    }
 
                     isAudioPlaying = false;
                     audioEl.pause();
+                    if (audioGainNode && audioCtx && audioCtx.state !== 'closed') {
+                        const now = audioCtx.currentTime;
+                        audioGainNode.gain.cancelScheduledValues(now);
+                        audioGainNode.gain.setValueAtTime(1, now);
+                    }
                     if (canSetMediaVolume) audioEl.volume = 1;
                     playerToggleBtn.classList.remove('is-disabled');
                     resolve();
                 };
+
+                if (audioGainNode && audioCtx && audioCtx.state !== 'closed' && duration > 0) {
+                    try {
+                        const now = audioCtx.currentTime;
+                        const currentGain = Math.max(0.0001, audioGainNode.gain.value);
+                        audioGainNode.gain.cancelScheduledValues(now);
+                        audioGainNode.gain.setValueAtTime(currentGain, now);
+                        audioGainNode.gain.linearRampToValueAtTime(0.0001, now + duration / 1000);
+                        audioFadeTimer = setTimeout(() => {
+                            finishStop();
+                        }, duration);
+                        return;
+                    } catch (error) {
+                        console.log('Gain fade failed, fallback to volume fade', error);
+                    }
+                }
 
                 // iOS Safari 对 volume 控制不可靠，直接停止以保证暂停必定生效。
                 if (!canSetMediaVolume || duration <= 0) {
@@ -319,6 +393,7 @@ const lyricsPool = [
         };
 
         playerToggleBtn.addEventListener('click', () => {
+            ensureAudioGainGraph();
             toggleAudioState(!isAudioPlaying);
         });
 
@@ -600,6 +675,7 @@ const lyricsPool = [
             lyricAnimations = [];
             resultArea.classList.remove('is-visible');
             resultArea.classList.remove('show-dismiss-hint');
+            bodyEl.classList.remove('is-lyric-overlay-active');
             resultArea.style.opacity = '0';
             resultArea.style.transform = 'none';
             lyricEl.style.opacity = '0';
@@ -611,6 +687,7 @@ const lyricsPool = [
 
         const animateLyricIn = () => {
             resultArea.classList.add('is-visible');
+            bodyEl.classList.add('is-lyric-overlay-active');
             if (!hasShownDismissHint) {
                 resultArea.classList.add('show-dismiss-hint');
                 hasShownDismissHint = true;
@@ -701,6 +778,8 @@ const lyricsPool = [
             if (isDrawing) return;
             isDrawing = true;
             playButton.disabled = true;
+
+            ensureAudioGainGraph();
             
             lyricToggleBtn.classList.remove('is-visible');
 
