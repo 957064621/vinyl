@@ -223,7 +223,7 @@ const lyricsPool = [
             
             timeUpdateRAF = requestAnimationFrame(() => {
                 const progress = (audioEl.currentTime / audioEl.duration) || 0;
-                trackFill.style.transform = `scaleX(${progress})`;
+                trackFill.style.transform = `translate3d(${(progress - 1) * 100}%, 0, 0)`;
                 
                 const newTime = formatAudioTime(audioEl.currentTime);
                 if (playerTime.innerText !== newTime) {
@@ -234,7 +234,7 @@ const lyricsPool = [
 
         audioEl.addEventListener('loadedmetadata', () => {
             playerTime.innerText = '0:00';
-            trackFill.style.transform = 'scaleX(0)';
+            trackFill.style.transform = 'translate3d(-100%, 0, 0)';
         });
 
         audioEl.addEventListener('play', () => {
@@ -406,7 +406,7 @@ const lyricsPool = [
             let percent = (clientX - rect.left) / rect.width;
             percent = Math.max(0, Math.min(1, percent));
             audioEl.currentTime = percent * audioEl.duration;
-            trackFill.style.transform = `scaleX(${percent})`;
+            trackFill.style.transform = `translate3d(${(percent - 1) * 100}%, 0, 0)`;
             playerTime.innerText = formatAudioTime(audioEl.currentTime);
         };
 
