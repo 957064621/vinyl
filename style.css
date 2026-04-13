@@ -26,18 +26,19 @@
 
         html {
             width: 100%;
-            height: 100lvh;
-            background: var(--app-bg);
+            height: 100%;
             overflow: hidden;
             overscroll-behavior: none;
+            background: #070a12;
         }
 
         body {
             font-family: "Manrope", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
             color: var(--text-main);
-            position: relative;
-            width: 100%;
-            height: 100lvh;
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100%;
             display: flex;
             flex-direction: column;
             align-items: center;
