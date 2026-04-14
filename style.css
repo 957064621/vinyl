@@ -10,7 +10,7 @@
             --hero-ease: cubic-bezier(0.32, 0.72, 0, 1);
             --lyric-ios-offset: 0px;
             --playlist-lift: -3.8vh;
-            --stage-lift: clamp(28px, 5.2vh, 58px);
+            --stage-lift: clamp(38px, 6.6vh, 70px);
             --loading-hero-lift: clamp(20px, 4.5vh, 44px);
             --playlist-breathe-ease: cubic-bezier(0.38, 0, 0.62, 1);
             --playlist-edge-fade: 22px;
@@ -289,7 +289,7 @@
 
         .header {
             text-align: center;
-            margin-top: -30px;
+            margin-top: -44px;
             margin-bottom: 34px;
         }
 
@@ -1407,13 +1407,13 @@
         @media (max-width: 480px) {
             :root {
                 --playlist-lift: -2.4vh;
-                --stage-lift: 18px;
+                --stage-lift: 24px;
                 --loading-hero-lift: 14px;
                 --playlist-edge-fade: 18px;
             }
 
             .header {
-                margin-top: -24px;
+                margin-top: -34px;
                 margin-bottom: 28px;
             }
 
