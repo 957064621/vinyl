@@ -139,6 +139,7 @@ const lyricsPool = [
         const playlistArea = document.getElementById('playlistArea');
         const playlistContent = document.getElementById('playlistContent');
         const playlistList = document.getElementById('playlistList');
+        const playlistModeGroup = document.getElementById('playlistModeGroup');
         const playlistDismissHint = document.getElementById('playlistDismissHint');
 
         let isDrawing = false;
@@ -149,6 +150,13 @@ const lyricsPool = [
         let canSetMediaVolume = true;
         let currentLyricIndex = -1;
         let drawQueue = [];
+        const PLAYBACK_MODES = {
+            RANDOM: 'random',
+            ORDER: 'order',
+            REPEAT_ONE: 'repeat-one',
+            ONCE: 'once'
+        };
+        let playbackMode = PLAYBACK_MODES.RANDOM;
 
         const audioEl = document.createElement('audio');
         audioEl.setAttribute('playsinline', '');
@@ -414,7 +422,10 @@ const lyricsPool = [
         audioEl.addEventListener('ended', () => {
             if (isTrackSwitching || currentLyricIndex === -1) return;
             const nextIndex = pickNextAutoLyricIndex();
-            if (nextIndex === -1) return;
+            if (nextIndex === -1) {
+                toggleAudioState(false, { skipMotion: true, stopDuration: 0 });
+                return;
+            }
             switchToTrackWithTransition(nextIndex, { stopDuration: 220 });
         });
 
@@ -637,9 +648,52 @@ const lyricsPool = [
             return drawQueue.pop();
         };
 
+        const pickOrderNextLyricIndex = () => {
+            if (lyricsPool.length === 0) return -1;
+            if (currentLyricIndex < 0 || currentLyricIndex >= lyricsPool.length) return 0;
+            return (currentLyricIndex + 1) % lyricsPool.length;
+        };
+
+        const pickOnceNextLyricIndex = () => {
+            if (lyricsPool.length === 0) return -1;
+            if (currentLyricIndex < 0 || currentLyricIndex >= lyricsPool.length) return 0;
+            const nextIndex = currentLyricIndex + 1;
+            return nextIndex < lyricsPool.length ? nextIndex : -1;
+        };
+
+        const updatePlaybackModeUI = () => {
+            if (!playlistModeGroup) return;
+            const modeButtons = playlistModeGroup.querySelectorAll('.playlist-mode-btn');
+            modeButtons.forEach((button) => {
+                const isActive = button.dataset.mode === playbackMode;
+                button.classList.toggle('is-active', isActive);
+                button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+        };
+
+        const setPlaybackMode = (mode) => {
+            const modeValues = Object.values(PLAYBACK_MODES);
+            if (!modeValues.includes(mode)) return;
+            playbackMode = mode;
+            updatePlaybackModeUI();
+        };
+
         const pickNextAutoLyricIndex = () => {
             if (lyricsPool.length === 0) return -1;
             if (lyricsPool.length === 1) return 0;
+
+            if (playbackMode === PLAYBACK_MODES.ORDER) {
+                return pickOrderNextLyricIndex();
+            }
+
+            if (playbackMode === PLAYBACK_MODES.REPEAT_ONE) {
+                return currentLyricIndex >= 0 ? currentLyricIndex : 0;
+            }
+
+            if (playbackMode === PLAYBACK_MODES.ONCE) {
+                return pickOnceNextLyricIndex();
+            }
+
             return pickRandomLyricIndex(currentLyricIndex);
         };
 
@@ -891,6 +945,7 @@ const lyricsPool = [
         };
 
         renderPlaylist();
+        updatePlaybackModeUI();
 
         const resetResultVisual = () => {
             lyricAnimations.forEach((anim) => anim.cancel());
@@ -1077,6 +1132,14 @@ const lyricsPool = [
             renderPlaylist();
             animatePlaylistIn();
         });
+
+        if (playlistModeGroup) {
+            playlistModeGroup.addEventListener('click', (event) => {
+                const modeButton = event.target.closest('.playlist-mode-btn');
+                if (!modeButton) return;
+                setPlaybackMode(modeButton.dataset.mode);
+            });
+        }
 
         playlistList.addEventListener('click', async (event) => {
             const playlistItem = event.target.closest('.playlist-item');
