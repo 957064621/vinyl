@@ -13,8 +13,7 @@
             --stage-lift: clamp(28px, 5.2vh, 58px);
             --loading-hero-lift: clamp(20px, 4.5vh, 44px);
             --playlist-breathe-ease: cubic-bezier(0.38, 0, 0.62, 1);
-            --playlist-edge-fade: 24px;
-            --playlist-fade-top-offset: 92px;
+            --playlist-edge-fade: 22px;
             --safe-top: env(safe-area-inset-top, 0px);
             --safe-bottom: env(safe-area-inset-bottom, 0px);
             --app-bg:
@@ -290,6 +289,7 @@
 
         .header {
             text-align: center;
+            margin-top: -12px;
             margin-bottom: 34px;
         }
 
@@ -736,7 +736,7 @@
             position: relative;
             z-index: 2;
             width: min(92vw, 560px);
-            max-height: min(72vh, 620px);
+            max-height: min(76vh, 660px);
             padding: 18px 16px 14px;
             border-radius: 24px;
             background: rgba(20, 28, 44, 0.72);
@@ -748,27 +748,6 @@
             opacity: 0;
             transform: translateY(calc(var(--playlist-lift) - var(--lyric-ios-offset)));
             will-change: transform, opacity;
-        }
-
-        .playlist-content::before,
-        .playlist-content::after {
-            content: "";
-            position: absolute;
-            left: 14px;
-            right: 14px;
-            height: var(--playlist-edge-fade);
-            pointer-events: none;
-            z-index: 6;
-        }
-
-        .playlist-content::before {
-            top: var(--playlist-fade-top-offset);
-            background: linear-gradient(180deg, rgba(20, 28, 44, 0.95) 0%, rgba(20, 28, 44, 0) 100%);
-        }
-
-        .playlist-content::after {
-            bottom: 14px;
-            background: linear-gradient(0deg, rgba(20, 28, 44, 0.96) 0%, rgba(20, 28, 44, 0) 100%);
         }
 
         .playlist-title {
@@ -846,16 +825,34 @@
             display: flex;
             flex-direction: column;
             gap: 2px;
-            max-height: min(56vh, 500px);
+            max-height: min(60vh, 560px);
             overflow-y: auto;
             overflow-x: hidden;
             overscroll-behavior-x: contain;
             -webkit-overflow-scrolling: touch;
-            padding: 10px 24px 12px;
+            padding: calc(var(--playlist-edge-fade) + 6px) 24px calc(var(--playlist-edge-fade) + 8px);
             scrollbar-width: none;
             -ms-overflow-style: none;
             position: relative;
             isolation: isolate;
+            -webkit-mask-image: linear-gradient(
+                to bottom,
+                rgba(0, 0, 0, 0) 0,
+                rgba(0, 0, 0, 1) var(--playlist-edge-fade),
+                rgba(0, 0, 0, 1) calc(100% - var(--playlist-edge-fade)),
+                rgba(0, 0, 0, 0) 100%
+            );
+            mask-image: linear-gradient(
+                to bottom,
+                rgba(0, 0, 0, 0) 0,
+                rgba(0, 0, 0, 1) var(--playlist-edge-fade),
+                rgba(0, 0, 0, 1) calc(100% - var(--playlist-edge-fade)),
+                rgba(0, 0, 0, 0) 100%
+            );
+            -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+            -webkit-mask-size: 100% 100%;
+            mask-size: 100% 100%;
         }
 
         .playlist-list::-webkit-scrollbar {
@@ -1385,16 +1382,13 @@
         @keyframes playlist-current-breathe {
             0%,
             100% {
-                opacity: 0.66;
-                transform: scale(0.93);
+                opacity: 0.56;
             }
             38% {
-                opacity: 0.9;
-                transform: scale(0.995);
+                opacity: 0.82;
             }
             62% {
                 opacity: 1;
-                transform: scale(1.05);
             }
         }
 
@@ -1415,11 +1409,11 @@
                 --playlist-lift: -3.4vh;
                 --stage-lift: 18px;
                 --loading-hero-lift: 14px;
-                --playlist-edge-fade: 20px;
-                --playlist-fade-top-offset: 84px;
+                --playlist-edge-fade: 18px;
             }
 
             .header {
+                margin-top: -8px;
                 margin-bottom: 28px;
             }
 
@@ -1473,15 +1467,15 @@
 
             .playlist-content {
                 width: min(94vw, 520px);
-                max-height: min(74vh, 620px);
+                max-height: min(78vh, 660px);
                 padding: 16px 12px 10px;
                 border-radius: 20px;
             }
 
             .playlist-list {
-                max-height: min(58vh, 500px);
+                max-height: min(62vh, 560px);
                 gap: 7px;
-                padding: 8px 18px 12px;
+                padding: calc(var(--playlist-edge-fade) + 6px) 18px calc(var(--playlist-edge-fade) + 8px);
             }
 
             .playlist-mode-wrap {
