@@ -65,6 +65,9 @@
         </div>
 
         <div class="dynamic-island" id="dynamicIsland">
+            <button class="playlist-toggle-btn" id="playlistToggleBtn">
+                <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M4 10h12v2H4zm0-4h16v2H4zm0 8h10v2H4zm14 0h2v2h-2zm0-4h2v2h-2z"/></svg> 播放列表
+            </button>
             <button class="lyric-toggle-btn" id="lyricToggleBtn">
                 <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg> 显示歌词
             </button>
@@ -94,6 +97,14 @@
             <div class="song-name" id="songName"></div>
         </div>
         <div class="result-dismiss-hint" id="lyricDismissHint">点击空白处关闭歌词页</div>
+    </div>
+
+    <div class="playlist-area" id="playlistArea">
+        <div class="playlist-content" id="playlistContent">
+            <div class="playlist-title">播放列表</div>
+            <div class="playlist-list" id="playlistList"></div>
+        </div>
+        <div class="result-dismiss-hint" id="playlistDismissHint">点击空白处关闭播放列表</div>
     </div>
 
     <a class="footer-link" id="contactLink">联系我</a>

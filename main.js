@@ -133,14 +133,22 @@ const lyricsPool = [
         const trackWrap = document.getElementById('trackWrap');
         const trackFill = document.getElementById('trackFill');
         const playerTime = document.getElementById('playerTime');
+        const playlistToggleBtn = document.getElementById('playlistToggleBtn');
         const lyricToggleBtn = document.getElementById('lyricToggleBtn');
         const lyricDismissHint = document.getElementById('lyricDismissHint');
+        const playlistArea = document.getElementById('playlistArea');
+        const playlistContent = document.getElementById('playlistContent');
+        const playlistList = document.getElementById('playlistList');
+        const playlistDismissHint = document.getElementById('playlistDismissHint');
 
         let isDrawing = false;
         let lyricAnimations = [];
+        let playlistAnimations = [];
         let hasShownDismissHint = false;
+        let hasShownPlaylistHint = false;
         let canSetMediaVolume = true;
-        let lastDrawIndex = -1;
+        let currentLyricIndex = -1;
+        let drawQueue = [];
 
         const audioEl = document.createElement('audio');
         audioEl.setAttribute('playsinline', '');
@@ -568,19 +576,25 @@ const lyricsPool = [
 
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+        const createShuffledDrawQueue = () => {
+            const indices = lyricsPool.map((_, index) => index);
+            for (let i = indices.length - 1; i > 0; i -= 1) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [indices[i], indices[j]] = [indices[j], indices[i]];
+            }
+            return indices;
+        };
+
         const pickRandomLyricIndex = () => {
             if (lyricsPool.length <= 1) {
-                lastDrawIndex = 0;
                 return 0;
             }
 
-            let index = lastDrawIndex;
-            while (index === lastDrawIndex) {
-                index = Math.floor(Math.random() * lyricsPool.length);
+            if (drawQueue.length === 0) {
+                drawQueue = createShuffledDrawQueue();
             }
 
-            lastDrawIndex = index;
-            return index;
+            return drawQueue.pop();
         };
 
         if (document.readyState === 'complete') {
@@ -700,6 +714,58 @@ const lyricsPool = [
             return lines.map((line) => `<span class="lyric-line">${line}</span>`).join('');
         };
 
+        const setFloatingButtonsVisible = (visible) => {
+            const shouldShow = visible && currentLyricIndex !== -1;
+            lyricToggleBtn.classList.toggle('is-visible', shouldShow);
+            playlistToggleBtn.classList.toggle('is-visible', shouldShow);
+        };
+
+        const renderPlaylist = () => {
+            playlistList.innerHTML = lyricsPool.map((item, index) => {
+                const activeClass = index === currentLyricIndex ? ' is-current' : '';
+                const displaySong = item.song.replace(/[《》]/g, '');
+                return `<button class="playlist-item${activeClass}" data-index="${index}" type="button"><span class="playlist-index">${String(index + 1).padStart(2, '0')}</span><span class="playlist-song">${displaySong}</span></button>`;
+            }).join('');
+        };
+
+        const updateCurrentLyric = (index) => {
+            const result = lyricsPool[index];
+            lyricEl.innerHTML = lyricToLinesHTML(result.text);
+            songEl.innerText = '—— ' + result.song;
+            currentLyricIndex = index;
+            renderPlaylist();
+        };
+
+        const setAudioSourceByIndex = (index) => {
+            const song = lyricsPool[index];
+            const audioFileName = song.song.replace(/[《》]/g, '') + '.mp3';
+            audioEl.src = `${MUSIC_BASE_URL}${encodeURIComponent(audioFileName)}`;
+            audioEl.load();
+        };
+
+        const hardStopAudioForSwitch = () => {
+            if (volumeFadeInterval) {
+                clearInterval(volumeFadeInterval);
+                volumeFadeInterval = null;
+            }
+
+            audioEl.pause();
+            audioEl.playbackRate = 1;
+            if (canSetMediaVolume) audioEl.volume = 1;
+            isAudioPlaying = false;
+            playerToggleBtn.classList.remove('is-playing');
+            playerToggleBtn.classList.remove('is-disabled');
+
+            turntable.classList.remove('is-playing');
+            spinAnimation.pause();
+            sheenAnimation.pause();
+            spinAnimation.playbackRate = 0;
+            updateSheenByRate(0);
+            setTonearmAngle(ARM_REST_ANGLE);
+        };
+
+        renderPlaylist();
+
         const resetResultVisual = () => {
             lyricAnimations.forEach((anim) => anim.cancel());
             lyricAnimations = [];
@@ -712,6 +778,17 @@ const lyricsPool = [
             songEl.style.opacity = '0';
             songEl.style.transform = 'translateY(20px)';
             // player-pill 现在在外部独立管理显示
+        };
+
+        const resetPlaylistVisual = () => {
+            playlistAnimations.forEach((anim) => anim.cancel());
+            playlistAnimations = [];
+            playlistArea.classList.remove('is-visible');
+            playlistArea.classList.remove('show-dismiss-hint');
+            playlistArea.style.opacity = '0';
+            playlistArea.style.transform = 'none';
+            playlistContent.style.opacity = '0';
+            playlistContent.style.transform = 'translateY(20px)';
         };
 
         const animateLyricIn = () => {
@@ -763,8 +840,60 @@ const lyricsPool = [
             lyricAnimations = [cardAnim, lyricAnim, songAnim, ...lineAnimations];
         };
 
+        const animatePlaylistIn = () => {
+            playlistArea.classList.add('is-visible');
+            if (!hasShownPlaylistHint) {
+                playlistArea.classList.add('show-dismiss-hint');
+                hasShownPlaylistHint = true;
+            }
+            dynamicIsland.classList.add('is-split');
+
+            const cardAnim = safeAnimate(playlistArea, [
+                { opacity: 0 },
+                { opacity: 1 }
+            ], {
+                duration: 780,
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+            });
+
+            const contentAnim = safeAnimate(playlistContent, [
+                { opacity: 0, transform: 'translateY(24px)' },
+                { opacity: 1, transform: 'translateY(0)' }
+            ], {
+                duration: 920,
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+            });
+
+            const itemAnimations = Array.from(playlistList.querySelectorAll('.playlist-item')).map((item, index) => safeAnimate(item, [
+                { opacity: 0, transform: 'translateY(12px) scale(0.98)', filter: 'blur(6px)' },
+                { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
+            ], {
+                duration: 620,
+                delay: Math.min(220, index * 26),
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+            }));
+
+            playlistAnimations = [cardAnim, contentAnim, ...itemAnimations];
+        };
+
         const morphResultOut = () => {
             const fadeOutAnimation = safeAnimate(resultArea, [
+                { opacity: 1 },
+                { opacity: 0 }
+            ], {
+                duration: 420,
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.45, 0, 0.55, 1)'
+            });
+
+            return fadeOutAnimation.finished || Promise.resolve();
+        };
+
+        const morphPlaylistOut = () => {
+            const fadeOutAnimation = safeAnimate(playlistArea, [
                 { opacity: 1 },
                 { opacity: 0 }
             ], {
@@ -791,23 +920,68 @@ const lyricsPool = [
             await textUpdatePromise;
             playButton.disabled = false;
             isDrawing = false;
-            
-            // 显示“显示歌词”悬浮按钮
-            lyricToggleBtn.classList.add('is-visible');
+
+            setFloatingButtonsVisible(true);
+        });
+
+        playlistArea.addEventListener('click', async (event) => {
+            if (isDrawing || !playlistArea.classList.contains('is-visible')) return;
+            if (event.target !== playlistArea && event.target !== playlistDismissHint) return;
+
+            isDrawing = true;
+            playButton.disabled = true;
+
+            await morphPlaylistOut();
+            resetPlaylistVisual();
+
+            playButton.disabled = false;
+            isDrawing = false;
+            setFloatingButtonsVisible(true);
         });
 
         lyricToggleBtn.addEventListener('click', () => {
-            if (isDrawing) return;
-            lyricToggleBtn.classList.remove('is-visible');
+            if (isDrawing || currentLyricIndex === -1) return;
+            setFloatingButtonsVisible(false);
             animateLyricIn();
+        });
+
+        playlistToggleBtn.addEventListener('click', () => {
+            if (isDrawing || currentLyricIndex === -1) return;
+            setFloatingButtonsVisible(false);
+            renderPlaylist();
+            animatePlaylistIn();
+        });
+
+        playlistList.addEventListener('click', async (event) => {
+            const playlistItem = event.target.closest('.playlist-item');
+            if (!playlistItem || isDrawing) return;
+
+            const nextIndex = Number(playlistItem.dataset.index);
+            if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= lyricsPool.length) return;
+
+            isDrawing = true;
+            playButton.disabled = true;
+
+            await morphPlaylistOut();
+            resetPlaylistVisual();
+
+            hardStopAudioForSwitch();
+            updateCurrentLyric(nextIndex);
+            setAudioSourceByIndex(nextIndex);
+            animateLyricIn();
+
+            playButton.disabled = false;
+            isDrawing = false;
+            toggleAudioState(true);
+            await updateButtonText('再次抽取');
         });
 
         playButton.addEventListener('click', async () => {
             if (isDrawing) return;
             isDrawing = true;
             playButton.disabled = true;
-            
-            lyricToggleBtn.classList.remove('is-visible');
+
+            setFloatingButtonsVisible(false);
 
             const textUpdatePromise = updateButtonText('读取中');
 
@@ -818,6 +992,10 @@ const lyricsPool = [
 
             if (resultArea.classList.contains('is-visible')) {
                 cleanupTasks.push(morphResultOut());
+            }
+
+            if (playlistArea.classList.contains('is-visible')) {
+                cleanupTasks.push(morphPlaylistOut());
             }
 
             if (isAudioPlaying) {
@@ -834,6 +1012,7 @@ const lyricsPool = [
             dynamicIsland.classList.remove('is-split');
             
             resetResultVisual();
+            resetPlaylistVisual();
             turntable.classList.add('is-playing');
 
             // 保证在play()的一瞬间，所有关联数值严格等于 initialRate（特别是光效参数）
@@ -865,15 +1044,10 @@ const lyricsPool = [
             await wait(1200);
 
             const randomIndex = pickRandomLyricIndex();
-            const result = lyricsPool[randomIndex];
-
-            lyricEl.innerHTML = lyricToLinesHTML(result.text);
-            songEl.innerText = '—— ' + result.song;
+            updateCurrentLyric(randomIndex);
 
             toggleAudioState(false);
-            const audioFileName = result.song.replace(/[《》]/g, '') + '.mp3';
-            audioEl.src = `${MUSIC_BASE_URL}${encodeURIComponent(audioFileName)}`;
-            audioEl.load();
+            setAudioSourceByIndex(randomIndex);
             
             // 错开显示歌词和按钮的变形时机
             await Promise.all([
