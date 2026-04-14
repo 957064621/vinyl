@@ -155,8 +155,9 @@ const lyricsPool = [
         audioEl.setAttribute('webkit-playsinline', '');
         audioEl.preload = 'metadata';
         let isAudioPlaying = false;
-        let volumeFadeInterval = null;
+        let volumeFadeFrame = null;
         let isDraggingTrack = false;
+        let isTrackSwitching = false;
 
         const COVER_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/';
         const MUSIC_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/musics/';
@@ -245,115 +246,27 @@ const lyricsPool = [
             trackFill.style.transform = 'translate3d(-100%, 0, 0)';
         });
 
-        audioEl.addEventListener('play', () => {
-            playerToggleBtn.classList.remove('is-disabled');
-            playerToggleBtn.classList.add('is-playing');
-            if (!isDrawing) {
-                turntable.classList.add('is-playing');
-                spinAnimation.play();
-                sheenAnimation.play();
-                const currentPlaybackRate = spinAnimation.playbackRate || 0;
-                animateRate({ 
-                    from: currentPlaybackRate, 
-                    to: 0.68, 
-                    duration: 1800, 
-                    easing: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2 
-                });
-            }
-        });
-
-        audioEl.addEventListener('pause', () => {
-            playerToggleBtn.classList.remove('is-playing');
-            if (!isDrawing) {
-                turntable.classList.remove('is-playing');
-                const currentPlaybackRate = spinAnimation.playbackRate || 0;
-                animateRate({ 
-                    from: currentPlaybackRate, 
-                    to: 0, 
-                    duration: 2500, 
-                    easing: (t) => 1 - Math.pow(1 - t, 4) 
-                }).then(() => {
-                    if (!isAudioPlaying) {
-                        spinAnimation.pause();
-                        sheenAnimation.pause();
-                    }
-                });
-            }
-        });
-
-        audioEl.addEventListener('ended', () => {
-            stopAndFadeOutAudio(800);
-        });
-
-        const toggleAudioState = (play) => {
-            if (play === isAudioPlaying) return;
-            isAudioPlaying = play;
-            if (volumeFadeInterval) {
-                clearInterval(volumeFadeInterval);
-                volumeFadeInterval = null;
-            }
-
-            if (play) {
-                if (canSetMediaVolume) audioEl.volume = 1;
-                playerToggleBtn.classList.remove('is-disabled');
-                const playAttempt = audioEl.play();
-                if (playAttempt && typeof playAttempt.catch === 'function') {
-                    playAttempt.catch((e) => {
-                        console.log('Audio init pending interaction', e);
-                        isAudioPlaying = false;
-                        playerToggleBtn.classList.remove('is-playing');
-                        if (!isDrawing) {
-                            turntable.classList.remove('is-playing');
-                            spinAnimation.pause();
-                            sheenAnimation.pause();
-                            spinAnimation.playbackRate = 0;
-                            updateSheenByRate(0);
-                            setTonearmAngle(ARM_REST_ANGLE);
-                        }
-                    });
-                }
-                if (!isDrawing) {
-                    animateTonearm({
-                        from: ARM_REST_ANGLE, 
-                        to: ARM_PLAY_ANGLE, 
-                        duration: 1200, 
-                        easing: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-                    });
-                }
-            } else {
-                stopAndFadeOutAudio(800);
-                if (!isDrawing) {
-                    animateTonearm({
-                        from: ARM_PLAY_ANGLE, 
-                        to: ARM_REST_ANGLE, 
-                        duration: 1200, 
-                        easing: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-                    });
-                }
+        const cancelVolumeFade = () => {
+            if (volumeFadeFrame) {
+                cancelAnimationFrame(volumeFadeFrame);
+                volumeFadeFrame = null;
             }
         };
 
         const stopAndFadeOutAudio = async (duration = 800) => {
             if (audioEl.paused) {
-                if (volumeFadeInterval) {
-                    clearInterval(volumeFadeInterval);
-                    volumeFadeInterval = null;
-                }
+                cancelVolumeFade();
                 isAudioPlaying = false;
                 playerToggleBtn.classList.remove('is-disabled');
                 return;
             }
 
-            if (volumeFadeInterval) clearInterval(volumeFadeInterval);
+            cancelVolumeFade();
             playerToggleBtn.classList.add('is-disabled');
 
             return new Promise((resolve) => {
                 const finishStop = () => {
-                    if (volumeFadeInterval) {
-                        clearInterval(volumeFadeInterval);
-                        volumeFadeInterval = null;
-                    }
-
+                    cancelVolumeFade();
                     isAudioPlaying = false;
                     audioEl.pause();
                     audioEl.playbackRate = 1;
@@ -367,44 +280,153 @@ const lyricsPool = [
                     return;
                 }
 
-                const intervalMs = 40;
-                const totalSteps = Math.max(1, Math.round(duration / intervalMs));
+                const startTime = performance.now();
                 const startVolume = Math.max(0, Math.min(1, audioEl.volume));
                 const startRate = Number.isFinite(audioEl.playbackRate) ? audioEl.playbackRate : 1;
                 const targetRate = canSetMediaVolume ? startRate : Math.max(0.72, startRate * 0.82);
-                let currentStep = 0;
 
-                volumeFadeInterval = setInterval(() => {
-                    currentStep += 1;
-                    const ratio = Math.max(0, 1 - (currentStep / totalSteps));
-                    const progress = currentStep / totalSteps;
+                const frame = (now) => {
+                    const progress = Math.min(1, (now - startTime) / duration);
+                    const eased = 1 - Math.pow(1 - progress, 3);
+                    const ratio = Math.max(0, 1 - eased);
 
                     if (canSetMediaVolume) {
-                        const nextVolume = startVolume * ratio;
                         try {
-                            audioEl.volume = nextVolume;
+                            audioEl.volume = startVolume * ratio;
                         } catch (error) {
                             // Ignore volume write errors and continue to hard-stop at the end.
                         }
                     } else {
-                        // iOS 下 volume 常不可写，用轻微降速模拟软停的听感。
-                        audioEl.playbackRate = startRate - (startRate - targetRate) * progress;
+                        audioEl.playbackRate = startRate - (startRate - targetRate) * eased;
                     }
 
-                    if (currentStep >= totalSteps) {
+                    if (progress < 1) {
+                        volumeFadeFrame = requestAnimationFrame(frame);
+                    } else {
                         finishStop();
                     }
-                }, intervalMs);
+                };
+
+                volumeFadeFrame = requestAnimationFrame(frame);
             });
         };
 
+        const getCurrentArmAngle = () => {
+            const currentArmAngleStr = getComputedStyle(tonearm).getPropertyValue('--arm-angle');
+            const parsed = parseFloat(currentArmAngleStr);
+            return Number.isFinite(parsed) ? parsed : ARM_REST_ANGLE;
+        };
+
+        const animateTurntableToTargetRate = async ({ targetRate, duration, easing }) => {
+            const currentPlaybackRate = spinAnimation.playbackRate || 0;
+
+            if (targetRate > 0) {
+                turntable.classList.add('is-playing');
+                spinAnimation.play();
+                sheenAnimation.play();
+            }
+
+            await animateRate({
+                from: currentPlaybackRate,
+                to: targetRate,
+                duration,
+                easing
+            });
+
+            if (targetRate <= 0 && !isAudioPlaying && !isDrawing && !isTrackSwitching) {
+                spinAnimation.pause();
+                sheenAnimation.pause();
+                turntable.classList.remove('is-playing');
+            }
+        };
+
+        const toggleAudioState = async (play, options = {}) => {
+            const { skipMotion = false, stopDuration = 800 } = options;
+            if (play === isAudioPlaying) return;
+
+            isAudioPlaying = play;
+            cancelVolumeFade();
+
+            if (play) {
+                if (canSetMediaVolume) audioEl.volume = 1;
+                playerToggleBtn.classList.remove('is-disabled');
+                const playAttempt = audioEl.play();
+                if (playAttempt && typeof playAttempt.catch === 'function') {
+                    playAttempt.catch((e) => {
+                        console.log('Audio init pending interaction', e);
+                        isAudioPlaying = false;
+                        playerToggleBtn.classList.remove('is-playing');
+                        if (!isDrawing && !isTrackSwitching) {
+                            turntable.classList.remove('is-playing');
+                            spinAnimation.pause();
+                            sheenAnimation.pause();
+                            spinAnimation.playbackRate = 0;
+                            updateSheenByRate(0);
+                            setTonearmAngle(ARM_REST_ANGLE);
+                        }
+                    });
+                }
+
+                if (!skipMotion && !isDrawing && !isTrackSwitching) {
+                    animateTonearm({
+                        from: getCurrentArmAngle(),
+                        to: ARM_PLAY_ANGLE,
+                        duration: 1200,
+                        easing: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+                    });
+                }
+            } else {
+                await stopAndFadeOutAudio(stopDuration);
+                if (!skipMotion && !isDrawing && !isTrackSwitching) {
+                    animateTonearm({
+                        from: getCurrentArmAngle(),
+                        to: ARM_REST_ANGLE,
+                        duration: 1200,
+                        easing: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+                    });
+                }
+            }
+        };
+
+        audioEl.addEventListener('play', () => {
+            playerToggleBtn.classList.remove('is-disabled');
+            playerToggleBtn.classList.add('is-playing');
+            if (!isDrawing && !isTrackSwitching) {
+                animateTurntableToTargetRate({
+                    targetRate: 0.68,
+                    duration: 1800,
+                    easing: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+                });
+            }
+        });
+
+        audioEl.addEventListener('pause', () => {
+            playerToggleBtn.classList.remove('is-playing');
+            if (!isDrawing && !isTrackSwitching) {
+                animateTurntableToTargetRate({
+                    targetRate: 0,
+                    duration: 2200,
+                    easing: (t) => 1 - Math.pow(1 - t, 4)
+                });
+            }
+        });
+
+        audioEl.addEventListener('ended', () => {
+            if (isTrackSwitching || currentLyricIndex === -1) return;
+            const nextIndex = getNextTrackIndex(currentLyricIndex);
+            if (nextIndex === -1) return;
+            switchToTrackWithTransition(nextIndex, { stopDuration: 220 });
+        });
+
         playerToggleBtn.addEventListener('click', () => {
+            if (isTrackSwitching) return;
             toggleAudioState(!isAudioPlaying);
         });
 
+        let trackDragRect = null;
         const updateAudioTime = (e) => {
             if (!audioEl.duration) return;
-            const rect = trackWrap.getBoundingClientRect();
+            const rect = trackDragRect || trackWrap.getBoundingClientRect();
             let clientX = e.clientX;
             if (e.touches && e.touches.length > 0) {
                 clientX = e.touches[0].clientX;
@@ -420,6 +442,7 @@ const lyricsPool = [
 
         trackWrap.addEventListener('mousedown', (e) => {
             isDraggingTrack = true;
+            trackDragRect = trackWrap.getBoundingClientRect();
             trackFill.style.transition = 'none';
             updateAudioTime(e);
         });
@@ -431,6 +454,7 @@ const lyricsPool = [
         window.addEventListener('mouseup', () => {
             if (isDraggingTrack) {
                 isDraggingTrack = false;
+                trackDragRect = null;
                 trackFill.style.transition = '';
             }
         });
@@ -438,6 +462,7 @@ const lyricsPool = [
         trackWrap.addEventListener('touchstart', (e) => {
             if (e.cancelable) e.preventDefault();
             isDraggingTrack = true;
+            trackDragRect = trackWrap.getBoundingClientRect();
             trackFill.style.transition = 'none';
             updateAudioTime(e);
         }, {passive: false});
@@ -451,6 +476,7 @@ const lyricsPool = [
         window.addEventListener('touchend', () => {
             if (isDraggingTrack) {
                 isDraggingTrack = false;
+                trackDragRect = null;
                 trackFill.style.transition = '';
             }
         });
@@ -458,6 +484,7 @@ const lyricsPool = [
         window.addEventListener('touchcancel', () => {
             if (isDraggingTrack) {
                 isDraggingTrack = false;
+                trackDragRect = null;
                 trackFill.style.transition = '';
             }
         });
@@ -657,6 +684,12 @@ const lyricsPool = [
         let currentArmAnimFrame = null;
         const animateTonearm = ({ from, to, duration, easing }) => new Promise((resolve) => {
             if (currentArmAnimFrame) cancelAnimationFrame(currentArmAnimFrame);
+
+            if (duration <= 0 || Math.abs(to - from) < 0.001) {
+                setTonearmAngle(to);
+                resolve();
+                return;
+            }
             
             let startTime = null;
             const frame = (now) => {
@@ -681,6 +714,13 @@ const lyricsPool = [
         let currentRateAnimFrame = null;
         const animateRate = ({ from, to, duration, easing }) => new Promise((resolve) => {
             if (currentRateAnimFrame) cancelAnimationFrame(currentRateAnimFrame);
+
+            if (duration <= 0 || Math.abs(to - from) < 0.001) {
+                spinAnimation.playbackRate = to;
+                updateSheenByRate(to);
+                resolve();
+                return;
+            }
             
             let startTime = null;
             const frame = (now) => {
@@ -743,25 +783,94 @@ const lyricsPool = [
             audioEl.load();
         };
 
-        const hardStopAudioForSwitch = () => {
-            if (volumeFadeInterval) {
-                clearInterval(volumeFadeInterval);
-                volumeFadeInterval = null;
+        const getNextTrackIndex = (baseIndex = currentLyricIndex) => {
+            if (lyricsPool.length === 0) return -1;
+            if (baseIndex < 0 || baseIndex >= lyricsPool.length) return 0;
+            return (baseIndex + 1) % lyricsPool.length;
+        };
+
+        const switchToTrackWithTransition = async (targetIndex, options = {}) => {
+            const { stopDuration = 360 } = options;
+            if (isTrackSwitching) return;
+            if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= lyricsPool.length) return;
+
+            isTrackSwitching = true;
+            isDrawing = true;
+            playButton.disabled = true;
+            setFloatingButtonsVisible(false);
+
+            try {
+                const cleanupTasks = [];
+                const wasLyricVisible = resultArea.classList.contains('is-visible');
+                const wasPlaylistVisible = playlistArea.classList.contains('is-visible');
+                const shouldOpenLyricAfterSwitch = wasLyricVisible || wasPlaylistVisible;
+                const hadSplitState = dynamicIsland.classList.contains('is-split');
+
+                if (wasLyricVisible) cleanupTasks.push(morphResultOut());
+                if (wasPlaylistVisible) cleanupTasks.push(morphPlaylistOut());
+
+                if (cleanupTasks.length) {
+                    await Promise.all(cleanupTasks);
+                }
+
+                if (wasLyricVisible) resetResultVisual();
+                if (wasPlaylistVisible) resetPlaylistVisual();
+
+                const armFrom = getCurrentArmAngle();
+                const rateFrom = spinAnimation.playbackRate || 0;
+                const bridgeRate = Math.max(1.85, rateFrom + 0.92);
+
+                turntable.classList.add('is-playing');
+                spinAnimation.play();
+                sheenAnimation.play();
+
+                await Promise.all([
+                    animateTonearm({
+                        from: armFrom,
+                        to: ARM_REST_ANGLE,
+                        duration: 760,
+                        easing: easeInOutCubic
+                    }),
+                    animateRate({
+                        from: rateFrom,
+                        to: bridgeRate,
+                        duration: 900,
+                        easing: easeInOutSine
+                    }),
+                    stopAndFadeOutAudio(stopDuration)
+                ]);
+
+                updateCurrentLyric(targetIndex);
+                setAudioSourceByIndex(targetIndex);
+
+                await Promise.all([
+                    animateTonearm({
+                        from: ARM_REST_ANGLE,
+                        to: ARM_PLAY_ANGLE,
+                        duration: 980,
+                        easing: easeInOutCubic
+                    }),
+                    animateRate({
+                        from: bridgeRate,
+                        to: 0.68,
+                        duration: 1180,
+                        easing: easeOutQuart
+                    })
+                ]);
+
+                if (shouldOpenLyricAfterSwitch) {
+                    animateLyricIn();
+                } else {
+                    dynamicIsland.classList.toggle('is-split', hadSplitState);
+                    setFloatingButtonsVisible(true);
+                }
+                await toggleAudioState(true, { skipMotion: true });
+                await updateButtonText('再次抽取');
+            } finally {
+                playButton.disabled = false;
+                isDrawing = false;
+                isTrackSwitching = false;
             }
-
-            audioEl.pause();
-            audioEl.playbackRate = 1;
-            if (canSetMediaVolume) audioEl.volume = 1;
-            isAudioPlaying = false;
-            playerToggleBtn.classList.remove('is-playing');
-            playerToggleBtn.classList.remove('is-disabled');
-
-            turntable.classList.remove('is-playing');
-            spinAnimation.pause();
-            sheenAnimation.pause();
-            spinAnimation.playbackRate = 0;
-            updateSheenByRate(0);
-            setTonearmAngle(ARM_REST_ANGLE);
         };
 
         renderPlaylist();
@@ -954,26 +1063,12 @@ const lyricsPool = [
 
         playlistList.addEventListener('click', async (event) => {
             const playlistItem = event.target.closest('.playlist-item');
-            if (!playlistItem || isDrawing) return;
+            if (!playlistItem || isDrawing || isTrackSwitching) return;
 
             const nextIndex = Number(playlistItem.dataset.index);
             if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= lyricsPool.length) return;
 
-            isDrawing = true;
-            playButton.disabled = true;
-
-            await morphPlaylistOut();
-            resetPlaylistVisual();
-
-            hardStopAudioForSwitch();
-            updateCurrentLyric(nextIndex);
-            setAudioSourceByIndex(nextIndex);
-            animateLyricIn();
-
-            playButton.disabled = false;
-            isDrawing = false;
-            toggleAudioState(true);
-            await updateButtonText('再次抽取');
+            await switchToTrackWithTransition(nextIndex, { stopDuration: 320 });
         });
 
         playButton.addEventListener('click', async () => {
@@ -1046,7 +1141,7 @@ const lyricsPool = [
             const randomIndex = pickRandomLyricIndex();
             updateCurrentLyric(randomIndex);
 
-            toggleAudioState(false);
+            await toggleAudioState(false, { skipMotion: true, stopDuration: 260 });
             setAudioSourceByIndex(randomIndex);
             
             // 错开显示歌词和按钮的变形时机
@@ -1067,35 +1162,26 @@ const lyricsPool = [
 
             // 唱针停止后再出现歌词层。
             animateLyricIn();
-            toggleAudioState(true);
+            await toggleAudioState(true, { skipMotion: true });
 
             // 让文字在歌词展开时再变，避免时间上同步过于机械
             await wait(180);
             await updateButtonText('再次抽取');
 
-            await wait(900);
-
-            // 如果不再需要后续多余的唱臂回落（前面已经放上去了），这里只管把状态维护正确即可
-            // 或者仅仅做微小的阻尼修正
-            await Promise.all([
-                animateTonearm({
-                    from: ARM_PLAY_ANGLE,
-                    to: isAudioPlaying ? ARM_PLAY_ANGLE : ARM_REST_ANGLE,
-                    duration: 920,
-                    easing: easeInOutCubic
-                }),
-                animateRate({
-                    from: 0.68,
-                    to: isAudioPlaying ? 0.68 : 0,
-                    duration: 1200,
-                    easing: easeOutQuart
-                })
-            ]);
-
             if (!isAudioPlaying) {
-                spinAnimation.pause();
-                sheenAnimation.pause();
-                turntable.classList.remove('is-playing');
+                await Promise.all([
+                    animateTonearm({
+                        from: ARM_PLAY_ANGLE,
+                        to: ARM_REST_ANGLE,
+                        duration: 760,
+                        easing: easeInOutCubic
+                    }),
+                    animateTurntableToTargetRate({
+                        targetRate: 0,
+                        duration: 980,
+                        easing: easeOutQuart
+                    })
+                ]);
             }
             playButton.disabled = false;
             isDrawing = false;
