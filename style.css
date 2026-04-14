@@ -695,7 +695,7 @@
             -webkit-transform: translateZ(0);
             transition: opacity 0.4s var(--hero-ease);
             will-change: opacity;
-            z-index: 27;
+            z-index: 92;
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
         }
@@ -735,7 +735,7 @@
             position: relative;
             z-index: 2;
             width: min(92vw, 560px);
-            max-height: min(70vh, 600px);
+            max-height: min(66vh, 560px);
             padding: 18px 16px 14px;
             border-radius: 24px;
             background: rgba(20, 28, 44, 0.72);
@@ -824,46 +824,46 @@
             display: flex;
             flex-direction: column;
             gap: 2px;
-            max-height: min(54vh, 470px);
+            max-height: min(48vh, 420px);
             overflow-y: auto;
             overflow-x: hidden;
             overscroll-behavior-x: contain;
             -webkit-overflow-scrolling: touch;
             padding: 8px 18px 12px;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(178, 210, 255, 0.45) rgba(255, 255, 255, 0.08);
-            -webkit-mask-image: linear-gradient(
-                to bottom,
-                rgba(0, 0, 0, 0) 0,
-                rgba(0, 0, 0, 1) var(--playlist-edge-fade),
-                rgba(0, 0, 0, 1) calc(100% - var(--playlist-edge-fade)),
-                rgba(0, 0, 0, 0) 100%
-            );
-            mask-image: linear-gradient(
-                to bottom,
-                rgba(0, 0, 0, 0) 0,
-                rgba(0, 0, 0, 1) var(--playlist-edge-fade),
-                rgba(0, 0, 0, 1) calc(100% - var(--playlist-edge-fade)),
-                rgba(0, 0, 0, 0) 100%
-            );
-            -webkit-mask-size: 100% 100%;
-            mask-size: 100% 100%;
-            -webkit-mask-repeat: no-repeat;
-            mask-repeat: no-repeat;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+            position: relative;
+            isolation: isolate;
         }
 
         .playlist-list::-webkit-scrollbar {
-            width: 8px;
+            width: 0;
+            height: 0;
+            display: none;
         }
 
-        .playlist-list::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.08);
-            border-radius: 999px;
+        .playlist-list::before,
+        .playlist-list::after {
+            content: "";
+            position: sticky;
+            left: 0;
+            right: 0;
+            display: block;
+            height: var(--playlist-edge-fade);
+            pointer-events: none;
+            z-index: 3;
         }
 
-        .playlist-list::-webkit-scrollbar-thumb {
-            background: rgba(178, 210, 255, 0.5);
-            border-radius: 999px;
+        .playlist-list::before {
+            top: 0;
+            margin-bottom: calc(-1 * var(--playlist-edge-fade));
+            background: linear-gradient(180deg, rgba(20, 28, 44, 0.92) 0%, rgba(20, 28, 44, 0) 100%);
+        }
+
+        .playlist-list::after {
+            bottom: 0;
+            margin-top: calc(-1 * var(--playlist-edge-fade));
+            background: linear-gradient(0deg, rgba(20, 28, 44, 0.94) 0%, rgba(20, 28, 44, 0) 100%);
         }
 
         .playlist-item {
@@ -935,6 +935,10 @@
             font-size: 15px;
             letter-spacing: 0.05em;
             line-height: 1.3;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .playlist-item.is-current {
@@ -1413,7 +1417,7 @@
                 --playlist-lift: -3.4vh;
                 --stage-lift: 18px;
                 --loading-hero-lift: 14px;
-                --playlist-edge-fade: 22px;
+                --playlist-edge-fade: 20px;
             }
 
             .header {
@@ -1470,13 +1474,13 @@
 
             .playlist-content {
                 width: min(94vw, 520px);
-                max-height: min(74vh, 620px);
+                max-height: min(62vh, 500px);
                 padding: 16px 12px 10px;
                 border-radius: 20px;
             }
 
             .playlist-list {
-                max-height: min(58vh, 500px);
+                max-height: min(40vh, 320px);
                 gap: 7px;
                 padding: 7px 14px 11px;
             }
