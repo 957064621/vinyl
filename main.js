@@ -413,7 +413,7 @@ const lyricsPool = [
 
         audioEl.addEventListener('ended', () => {
             if (isTrackSwitching || currentLyricIndex === -1) return;
-            const nextIndex = getNextTrackIndex(currentLyricIndex);
+            const nextIndex = pickNextAutoLyricIndex();
             if (nextIndex === -1) return;
             switchToTrackWithTransition(nextIndex, { stopDuration: 220 });
         });
@@ -603,25 +603,44 @@ const lyricsPool = [
 
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-        const createShuffledDrawQueue = () => {
+        const createShuffledDrawQueue = (avoidIndex = -1) => {
             const indices = lyricsPool.map((_, index) => index);
             for (let i = indices.length - 1; i > 0; i -= 1) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [indices[i], indices[j]] = [indices[j], indices[i]];
             }
+
+            // drawQueue 使用 pop()，确保新一轮首抽尽量不与当前歌曲重复。
+            if (indices.length > 1 && indices[indices.length - 1] === avoidIndex) {
+                const swapIndex = Math.floor(Math.random() * (indices.length - 1));
+                [indices[indices.length - 1], indices[swapIndex]] = [indices[swapIndex], indices[indices.length - 1]];
+            }
+
             return indices;
         };
 
-        const pickRandomLyricIndex = () => {
-            if (lyricsPool.length <= 1) {
-                return 0;
+        const consumeLyricIndexFromQueue = (index) => {
+            if (!Number.isInteger(index) || index < 0) return;
+            const queueIndex = drawQueue.indexOf(index);
+            if (queueIndex !== -1) {
+                drawQueue.splice(queueIndex, 1);
             }
+        };
+
+        const pickRandomLyricIndex = (avoidIndex = -1) => {
+            if (lyricsPool.length <= 1) return 0;
 
             if (drawQueue.length === 0) {
-                drawQueue = createShuffledDrawQueue();
+                drawQueue = createShuffledDrawQueue(avoidIndex);
             }
 
             return drawQueue.pop();
+        };
+
+        const pickNextAutoLyricIndex = () => {
+            if (lyricsPool.length === 0) return -1;
+            if (lyricsPool.length === 1) return 0;
+            return pickRandomLyricIndex(currentLyricIndex);
         };
 
         if (document.readyState === 'complete') {
@@ -773,6 +792,7 @@ const lyricsPool = [
             lyricEl.innerHTML = lyricToLinesHTML(result.text);
             songEl.innerText = '—— ' + result.song;
             currentLyricIndex = index;
+            consumeLyricIndexFromQueue(index);
             renderPlaylist();
         };
 
@@ -783,11 +803,8 @@ const lyricsPool = [
             audioEl.load();
         };
 
-        const getNextTrackIndex = (baseIndex = currentLyricIndex) => {
-            if (lyricsPool.length === 0) return -1;
-            if (baseIndex < 0 || baseIndex >= lyricsPool.length) return 0;
-            return (baseIndex + 1) % lyricsPool.length;
-        };
+        const PLAYLIST_CONTENT_REST_TRANSFORM = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset)))';
+        const PLAYLIST_CONTENT_ENTER_START_TRANSFORM = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) + 24px))';
 
         const switchToTrackWithTransition = async (targetIndex, options = {}) => {
             const { stopDuration = 360 } = options;
@@ -897,7 +914,7 @@ const lyricsPool = [
             playlistArea.style.opacity = '0';
             playlistArea.style.transform = 'none';
             playlistContent.style.opacity = '0';
-            playlistContent.style.transform = 'translateY(20px)';
+            playlistContent.style.transform = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) + 20px))';
         };
 
         const animateLyricIn = () => {
@@ -967,8 +984,8 @@ const lyricsPool = [
             });
 
             const contentAnim = safeAnimate(playlistContent, [
-                { opacity: 0, transform: 'translateY(24px)' },
-                { opacity: 1, transform: 'translateY(0)' }
+                { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
+                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
             ], {
                 duration: 920,
                 fill: 'forwards',
@@ -1138,7 +1155,7 @@ const lyricsPool = [
 
             await wait(1200);
 
-            const randomIndex = pickRandomLyricIndex();
+            const randomIndex = pickRandomLyricIndex(currentLyricIndex);
             updateCurrentLyric(randomIndex);
 
             await toggleAudioState(false, { skipMotion: true, stopDuration: 260 });
