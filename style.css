@@ -9,7 +9,7 @@
             --damping: cubic-bezier(0.16, 1, 0.3, 1);
             --hero-ease: cubic-bezier(0.32, 0.72, 0, 1);
             --lyric-ios-offset: 0px;
-            --playlist-lift: -5.1vh;
+            --playlist-lift: -3.8vh;
             --stage-lift: clamp(28px, 5.2vh, 58px);
             --loading-hero-lift: clamp(20px, 4.5vh, 44px);
             --playlist-breathe-ease: cubic-bezier(0.38, 0, 0.62, 1);
@@ -736,7 +736,7 @@
             position: relative;
             z-index: 2;
             width: min(92vw, 560px);
-            max-height: min(76vh, 660px);
+            max-height: min(71vh, 600px);
             padding: 18px 16px 14px;
             border-radius: 24px;
             background: rgba(20, 28, 44, 0.72);
@@ -825,7 +825,7 @@
             display: flex;
             flex-direction: column;
             gap: 2px;
-            max-height: min(60vh, 560px);
+            max-height: min(54vh, 470px);
             overflow-y: auto;
             overflow-x: hidden;
             overscroll-behavior-x: contain;
@@ -1406,7 +1406,7 @@
 
         @media (max-width: 480px) {
             :root {
-                --playlist-lift: -3.4vh;
+                --playlist-lift: -2.4vh;
                 --stage-lift: 18px;
                 --loading-hero-lift: 14px;
                 --playlist-edge-fade: 18px;
@@ -1467,13 +1467,13 @@
 
             .playlist-content {
                 width: min(94vw, 520px);
-                max-height: min(78vh, 660px);
+                max-height: min(70vh, 560px);
                 padding: 16px 12px 10px;
                 border-radius: 20px;
             }
 
             .playlist-list {
-                max-height: min(62vh, 560px);
+                max-height: min(54vh, 430px);
                 gap: 7px;
                 padding: calc(var(--playlist-edge-fade) + 6px) 18px calc(var(--playlist-edge-fade) + 8px);
             }
