@@ -10,6 +10,8 @@
             --hero-ease: cubic-bezier(0.32, 0.72, 0, 1);
             --lyric-ios-offset: 0px;
             --playlist-lift: -8vh;
+            --stage-lift: clamp(16px, 3.4vh, 30px);
+            --loading-hero-lift: clamp(20px, 4.5vh, 44px);
             --safe-top: env(safe-area-inset-top, 0px);
             --safe-bottom: env(safe-area-inset-bottom, 0px);
             --app-bg:
@@ -202,12 +204,12 @@
             box-shadow: 0 30px 60px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.1);
             z-index: 1;
             opacity: 0;
-            transform: scale(0.9);
+            transform: translate3d(0, calc(-1 * var(--loading-hero-lift)), 0) scale(0.9);
             transition: opacity 0.8s var(--hero-ease), transform 0.8s var(--hero-ease);
         }
         .loading-hero-wrap.is-loaded {
             opacity: 1;
-            transform: scale(1);
+            transform: translate3d(0, calc(-1 * var(--loading-hero-lift)), 0) scale(1);
         }
 
         .loading-hero-wrap::before {
@@ -272,6 +274,7 @@
             display: flex;
             flex-direction: column;
             align-items: center;
+            margin-top: calc(-1 * var(--stage-lift));
             opacity: 0;
             transform: translateY(32px) scale(0.98);
             transition: opacity 1.4s var(--hero-ease), transform 1.6s var(--hero-ease);
@@ -284,7 +287,7 @@
 
         .header {
             text-align: center;
-            margin-bottom: 56px;
+            margin-bottom: 46px;
         }
 
         .header h1 {
@@ -309,6 +312,7 @@
             align-items: center;
             perspective: 1000px;
             width: min(100%, 440px);
+            margin-top: -6px;
         }
 
         .turntable {
@@ -547,7 +551,7 @@
 
         .dynamic-island {
             position: relative;
-            margin-top: 26px;
+            margin-top: 18px;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -558,13 +562,13 @@
         }
 
         .dynamic-island.is-split {
-            gap: 14px;
+            gap: 10px;
         }
 
         .play-btn {
-            height: 52px;
+            height: 48px;
             margin: 0;
-            width: 148px;
+            width: 136px;
             background: rgba(255, 255, 255, 0.08);
             -webkit-backdrop-filter: blur(16px) saturate(1.8);
             backdrop-filter: blur(16px) saturate(1.8);
@@ -574,9 +578,9 @@
             align-items: center;
             font-family: inherit;
             border: 1px solid rgba(255, 255, 255, 0.12);
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 500;
-            letter-spacing: 0.1em;
+            letter-spacing: 0.09em;
             color: rgba(255, 255, 255, 0.95);
             border-radius: 999px;
             box-shadow: 
@@ -894,8 +898,8 @@
         .lyric-toggle-btn,
         .playlist-toggle-btn {
             position: absolute;
-            top: calc(100% + 24px);
-            height: 52px;
+            top: calc(100% + 18px);
+            height: 48px;
             display: flex;
             align-items: center;
             gap: 8px;
@@ -904,12 +908,12 @@
             -webkit-backdrop-filter: blur(16px) saturate(1.8);
             border: 1px solid rgba(255, 255, 255, 0.12);
             color: rgba(255, 255, 255, 0.95);
-            padding: 0 24px;
+            padding: 0 20px;
             border-radius: 999px;
-            font-size: 16px;
+            font-size: 15px;
             font-family: inherit;
             font-weight: 500;
-            letter-spacing: 0.1em;
+            letter-spacing: 0.09em;
             cursor: pointer;
             z-index: 25;
             opacity: 0;
@@ -1087,7 +1091,7 @@
         .player-pill {
             display: flex;
             align-items: center;
-            gap: 16px;
+            gap: 12px;
             margin-top: 0;
             padding: 8px 0px 8px 0px;
             border-radius: 999px;
@@ -1117,8 +1121,8 @@
 
         .dynamic-island.is-split .player-pill {
             opacity: 1;
-            max-width: 320px;
-            padding: 8px 20px 8px 10px;
+            max-width: 292px;
+            padding: 6px 14px 6px 8px;
             border-width: 1px;
             transform: scale(1) translateZ(0);
             -webkit-transform: scale(1) translateZ(0);
@@ -1126,8 +1130,8 @@
         }
 
         .player-ctrl-btn {
-            width: 44px;
-            height: 44px;
+            width: 40px;
+            height: 40px;
             flex-shrink: 0;
             border-radius: 50%;
             background: rgba(255, 255, 255, 0.92);
@@ -1171,8 +1175,8 @@
         }
 
         .player-ctrl-btn svg {
-            width: 20px;
-            height: 20px;
+            width: 18px;
+            height: 18px;
             margin-left: 2px;
             transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }
@@ -1182,9 +1186,9 @@
         .player-ctrl-btn:not(.is-playing) svg.icon-play { opacity: 1; transform: scale(1); position: relative; }
 
         .player-track-wrap {
-            width: 22vw;
-            min-width: 140px;
-            height: 32px;
+            width: 20vw;
+            min-width: 124px;
+            height: 30px;
             display: flex;
             align-items: center;
             cursor: pointer;
@@ -1196,7 +1200,7 @@
 
         .player-track-bg {
             width: 100%;
-            height: 12px;
+            height: 10px;
             background: rgba(255, 255, 255, 0.12);
             border-radius: 6px;
             overflow: hidden;
@@ -1219,11 +1223,11 @@
         }
 
         .player-time {
-            font-size: 14px;
+            font-size: 13px;
             font-variant-numeric: tabular-nums;
             color: rgba(255, 255, 255, 0.8);
             font-weight: 600;
-            width: 38px;
+            width: 34px;
             text-align: right;
             user-select: none;
         }
@@ -1281,10 +1285,12 @@
         @media (max-width: 480px) {
             :root {
                 --playlist-lift: -6vh;
+                --stage-lift: 10px;
+                --loading-hero-lift: 14px;
             }
 
             .header {
-                margin-bottom: 44px;
+                margin-bottom: 36px;
             }
 
             .result-area {
@@ -1308,25 +1314,25 @@
             }
 
             .dynamic-island.is-split {
-                gap: 8px;
+                gap: 6px;
             }
 
             .play-btn {
-                width: 106px;
-                height: 48px;
-                font-size: 14px;
+                width: 98px;
+                height: 44px;
+                font-size: 13px;
             }
 
             .lyric-toggle-btn {
-                height: 48px;
-                font-size: 14px;
-                padding: 0 16px;
+                height: 44px;
+                font-size: 13px;
+                padding: 0 14px;
             }
 
             .playlist-toggle-btn {
-                height: 48px;
-                font-size: 14px;
-                padding: 0 16px;
+                height: 44px;
+                font-size: 13px;
+                padding: 0 14px;
             }
 
             .playlist-content {
@@ -1351,22 +1357,23 @@
             }
 
             .dynamic-island.is-split .player-pill {
-                padding: 6px 12px 6px 8px;
+                max-width: 262px;
+                padding: 4px 10px 4px 6px;
             }
 
             .player-ctrl-btn {
-                width: 36px;
-                height: 36px;
+                width: 32px;
+                height: 32px;
             }
 
             .player-track-wrap {
-                width: 18vw;
-                min-width: 100px;
+                width: 16vw;
+                min-width: 90px;
             }
 
             .player-time {
-                width: 32px;
-                font-size: 12px;
+                width: 28px;
+                font-size: 11px;
             }
 
             .loading-hero-wrap {
