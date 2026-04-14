@@ -166,15 +166,15 @@ const lyricsPool = [
         const PLAYBACK_MODE_META = {
             [PLAYBACK_MODES.RANDOM]: {
                 label: '随机播放',
-                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3.2c1.1 0 2.2.45 2.98 1.24l6.74 6.76c.8.8 1.87 1.24 3.01 1.24H21"/><path d="m18.8 14.8 2.2 2.2-2.2 2.2"/><path d="M4 17h3.2c1.1 0 2.2-.45 2.98-1.24l1.62-1.62"/><path d="M14.8 9.2 16.42 7.6A4.2 4.2 0 0 1 19.4 6.4H21"/><path d="m18.8 4.2 2.2 2.2-2.2 2.2"/></svg>'
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3.3c1.2 0 2.31.47 3.16 1.31l6.5 6.38c.84.84 1.96 1.31 3.15 1.31H21"/><path d="m18.4 14.4 2.6 2.6-2.6 2.6"/><path d="M4 17h3.3c1.2 0 2.31-.47 3.16-1.31l1.68-1.66"/><path d="m14.3 9.6 2.15-2.1A4.45 4.45 0 0 1 19.6 6H21"/><path d="m18.4 3.4 2.6 2.6-2.6 2.6"/></svg>'
             },
             [PLAYBACK_MODES.LIST_LOOP]: {
                 label: '列表循环',
-                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h11a4 4 0 0 1 0 8h-1.5"/><path d="m13.8 12 2.2 3-2.2 3"/><path d="M19 17H8a4 4 0 0 1 0-8h1.5"/><path d="m10.2 12-2.2-3 2.2-3"/><path d="M4 7h1.2M4 12h1.2M4 17h1.2"/></svg>'
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h11.5a3.5 3.5 0 0 1 0 7H15"/><path d="m12.8 11.4 2.2 2.1-2.2 2.1"/><path d="M19 17H7.5a3.5 3.5 0 0 1 0-7H9"/><path d="m11.2 12.6-2.2-2.1 2.2-2.1"/><path d="M4 7h1M4 12h1M4 17h1"/></svg>'
             },
             [PLAYBACK_MODES.SINGLE_LOOP]: {
                 label: '单曲循环',
-                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h11a4 4 0 0 1 0 8h-1.5"/><path d="m13.8 12 2.2 3-2.2 3"/><path d="M19 17H8a4 4 0 0 1 0-8h1.5"/><path d="m10.2 12-2.2-3 2.2-3"/><path d="M12.1 9.1h2v6.8"/><path d="m11.5 10.1.6-1 .6 1"/></svg>'
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h11.5a3.5 3.5 0 0 1 0 7H15"/><path d="m12.8 11.4 2.2 2.1-2.2 2.1"/><path d="M19 17H7.5a3.5 3.5 0 0 1 0-7H9"/><path d="m11.2 12.6-2.2-2.1 2.2-2.1"/><path d="M12.1 9.2h1.8v5.8"/><path d="m11.5 10.1.6-.9.6.9"/></svg>'
             }
         };
 
