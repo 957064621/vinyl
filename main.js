@@ -166,15 +166,15 @@ const lyricsPool = [
         const PLAYBACK_MODE_META = {
             [PLAYBACK_MODES.RANDOM]: {
                 label: '随机播放',
-                icon: '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M16 3h5v5h-2V6.41l-2.29 2.3-1.42-1.42L17.59 5H16zm3 12h2v6h-6v-2h2.59l-3.3-3.29 1.42-1.42L19 17.59zm-14 4h6v2H3v-8h2zm0-16h8v2H5v2H3V3zM8.71 8.29l7 7-1.42 1.42-7-7z"/></svg>'
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3.2c1.1 0 2.2.45 2.98 1.24l6.74 6.76c.8.8 1.87 1.24 3.01 1.24H21"/><path d="m18.8 14.8 2.2 2.2-2.2 2.2"/><path d="M4 17h3.2c1.1 0 2.2-.45 2.98-1.24l1.62-1.62"/><path d="M14.8 9.2 16.42 7.6A4.2 4.2 0 0 1 19.4 6.4H21"/><path d="m18.8 4.2 2.2 2.2-2.2 2.2"/></svg>'
             },
             [PLAYBACK_MODES.LIST_LOOP]: {
                 label: '列表循环',
-                icon: '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M7 7h11V4l4 4-4 4V9H7a4 4 0 0 0 0 8h2v2H7A6 6 0 0 1 7 7m10 10H6v3l-4-4 4-4v3h11a4 4 0 0 0 0-8h-2V5h2a6 6 0 0 1 0 12"/></svg>'
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h11a4 4 0 0 1 0 8h-1.5"/><path d="m13.8 12 2.2 3-2.2 3"/><path d="M19 17H8a4 4 0 0 1 0-8h1.5"/><path d="m10.2 12-2.2-3 2.2-3"/><path d="M4 7h1.2M4 12h1.2M4 17h1.2"/></svg>'
             },
             [PLAYBACK_MODES.SINGLE_LOOP]: {
                 label: '单曲循环',
-                icon: '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M7 7h11V4l4 4-4 4V9H7a4 4 0 0 0 0 8h2v2H7A6 6 0 0 1 7 7m10 10H6v3l-4-4 4-4v3h11a4 4 0 0 0 0-8h-2V5h2a6 6 0 0 1 0 12M12 8v8l3-2.2z"/></svg>'
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h11a4 4 0 0 1 0 8h-1.5"/><path d="m13.8 12 2.2 3-2.2 3"/><path d="M19 17H8a4 4 0 0 1 0-8h1.5"/><path d="m10.2 12-2.2-3 2.2-3"/><path d="M12.1 9.1h2v6.8"/><path d="m11.5 10.1.6-1 .6 1"/></svg>'
             }
         };
 
