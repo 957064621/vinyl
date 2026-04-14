@@ -139,7 +139,9 @@ const lyricsPool = [
         const playlistArea = document.getElementById('playlistArea');
         const playlistContent = document.getElementById('playlistContent');
         const playlistList = document.getElementById('playlistList');
-        const playlistModeGroup = document.getElementById('playlistModeGroup');
+        const playlistModeSwitch = document.getElementById('playlistModeSwitch');
+        const modeIcon = document.getElementById('modeIcon');
+        const modeLabel = document.getElementById('modeLabel');
         const playlistDismissHint = document.getElementById('playlistDismissHint');
 
         let isDrawing = false;
@@ -152,11 +154,29 @@ const lyricsPool = [
         let drawQueue = [];
         const PLAYBACK_MODES = {
             RANDOM: 'random',
-            ORDER: 'order',
-            REPEAT_ONE: 'repeat-one',
-            ONCE: 'once'
+            LIST_LOOP: 'list-loop',
+            SINGLE_LOOP: 'single-loop'
         };
         let playbackMode = PLAYBACK_MODES.RANDOM;
+        const PLAYBACK_MODE_ORDER = [
+            PLAYBACK_MODES.RANDOM,
+            PLAYBACK_MODES.LIST_LOOP,
+            PLAYBACK_MODES.SINGLE_LOOP
+        ];
+        const PLAYBACK_MODE_META = {
+            [PLAYBACK_MODES.RANDOM]: {
+                label: '随机播放',
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M16 3h5v5h-2V6.41l-2.29 2.3-1.42-1.42L17.59 5H16zm3 12h2v6h-6v-2h2.59l-3.3-3.29 1.42-1.42L19 17.59zm-14 4h6v2H3v-8h2zm0-16h8v2H5v2H3V3zM8.71 8.29l7 7-1.42 1.42-7-7z"/></svg>'
+            },
+            [PLAYBACK_MODES.LIST_LOOP]: {
+                label: '列表循环',
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M7 7h11V4l4 4-4 4V9H7a4 4 0 0 0 0 8h2v2H7A6 6 0 0 1 7 7m10 10H6v3l-4-4 4-4v3h11a4 4 0 0 0 0-8h-2V5h2a6 6 0 0 1 0 12"/></svg>'
+            },
+            [PLAYBACK_MODES.SINGLE_LOOP]: {
+                label: '单曲循环',
+                icon: '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M7 7h11V4l4 4-4 4V9H7a4 4 0 0 0 0 8h2v2H7A6 6 0 0 1 7 7m10 10H6v3l-4-4 4-4v3h11a4 4 0 0 0 0-8h-2V5h2a6 6 0 0 1 0 12M12 8v8l3-2.2z"/></svg>'
+            }
+        };
 
         const audioEl = document.createElement('audio');
         audioEl.setAttribute('playsinline', '');
@@ -654,44 +674,43 @@ const lyricsPool = [
             return (currentLyricIndex + 1) % lyricsPool.length;
         };
 
-        const pickOnceNextLyricIndex = () => {
-            if (lyricsPool.length === 0) return -1;
-            if (currentLyricIndex < 0 || currentLyricIndex >= lyricsPool.length) return 0;
-            const nextIndex = currentLyricIndex + 1;
-            return nextIndex < lyricsPool.length ? nextIndex : -1;
-        };
-
         const updatePlaybackModeUI = () => {
-            if (!playlistModeGroup) return;
-            const modeButtons = playlistModeGroup.querySelectorAll('.playlist-mode-btn');
-            modeButtons.forEach((button) => {
-                const isActive = button.dataset.mode === playbackMode;
-                button.classList.toggle('is-active', isActive);
-                button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-            });
+            const modeMeta = PLAYBACK_MODE_META[playbackMode] || PLAYBACK_MODE_META[PLAYBACK_MODES.RANDOM];
+            if (modeLabel) {
+                modeLabel.innerText = modeMeta.label;
+            }
+            if (modeIcon) {
+                modeIcon.innerHTML = modeMeta.icon;
+            }
+            if (playlistModeSwitch) {
+                const ariaText = `切换播放模式：${modeMeta.label}`;
+                playlistModeSwitch.setAttribute('aria-label', ariaText);
+                playlistModeSwitch.setAttribute('title', ariaText);
+            }
         };
 
         const setPlaybackMode = (mode) => {
-            const modeValues = Object.values(PLAYBACK_MODES);
-            if (!modeValues.includes(mode)) return;
+            if (!PLAYBACK_MODE_ORDER.includes(mode)) return;
             playbackMode = mode;
             updatePlaybackModeUI();
+        };
+
+        const cyclePlaybackMode = () => {
+            const currentIndex = PLAYBACK_MODE_ORDER.indexOf(playbackMode);
+            const nextIndex = (currentIndex + 1) % PLAYBACK_MODE_ORDER.length;
+            setPlaybackMode(PLAYBACK_MODE_ORDER[nextIndex]);
         };
 
         const pickNextAutoLyricIndex = () => {
             if (lyricsPool.length === 0) return -1;
             if (lyricsPool.length === 1) return 0;
 
-            if (playbackMode === PLAYBACK_MODES.ORDER) {
+            if (playbackMode === PLAYBACK_MODES.LIST_LOOP) {
                 return pickOrderNextLyricIndex();
             }
 
-            if (playbackMode === PLAYBACK_MODES.REPEAT_ONE) {
+            if (playbackMode === PLAYBACK_MODES.SINGLE_LOOP) {
                 return currentLyricIndex >= 0 ? currentLyricIndex : 0;
-            }
-
-            if (playbackMode === PLAYBACK_MODES.ONCE) {
-                return pickOnceNextLyricIndex();
             }
 
             return pickRandomLyricIndex(currentLyricIndex);
@@ -1133,11 +1152,9 @@ const lyricsPool = [
             animatePlaylistIn();
         });
 
-        if (playlistModeGroup) {
-            playlistModeGroup.addEventListener('click', (event) => {
-                const modeButton = event.target.closest('.playlist-mode-btn');
-                if (!modeButton) return;
-                setPlaybackMode(modeButton.dataset.mode);
+        if (playlistModeSwitch) {
+            playlistModeSwitch.addEventListener('click', () => {
+                cyclePlaybackMode();
             });
         }
 
