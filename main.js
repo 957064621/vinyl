@@ -186,9 +186,29 @@ const lyricsPool = [
         let volumeFadeFrame = null;
         let isDraggingTrack = false;
         let isTrackSwitching = false;
+        let isHandlingTrackEnd = false;
 
         const COVER_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/';
         const MUSIC_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/musics/';
+        const COVER_ROTATION_FILES = [
+            '3.jpg',
+            '4.jpg',
+            '1.jpg',
+            '2.jpg',
+            '%E5%A4%A9%E5%A4%96%E6%9D%A5%E7%89%A9.jpg'
+        ];
+
+        const ua = navigator.userAgent || '';
+        const platformName = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+        const isIOSDevice = /iPad|iPhone|iPod/i.test(ua) || (platformName === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const isAndroidDevice = /Android/i.test(ua);
+        const isWeChatWebView = /MicroMessenger/i.test(ua);
+        const playbackPlatform = {
+            isIOS: isIOSDevice,
+            isAndroid: isAndroidDevice,
+            isDesktop: !isIOSDevice && !isAndroidDevice,
+            isWeChat: isWeChatWebView
+        };
 
         const canUseWebAnimations = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
 
@@ -251,6 +271,62 @@ const lyricsPool = [
             const m = Math.floor(time / 60);
             const s = Math.floor(time % 60).toString().padStart(2, '0');
             return `${m}:${s}`;
+        };
+
+        const getCoverSrcByLyricIndex = (index) => {
+            const normalizedIndex = Number.isInteger(index) ? Math.abs(index) : 0;
+            const coverFile = COVER_ROTATION_FILES[normalizedIndex % COVER_ROTATION_FILES.length];
+            return `${COVER_BASE_URL}${coverFile}`;
+        };
+
+        const shouldUseHeadlessTrackSwitch = () => {
+            if (document.visibilityState !== 'visible') return true;
+            // 微信 WebView 后台能力更受限，保持无动画切歌分支更稳。
+            if (playbackPlatform.isWeChat) return true;
+            return false;
+        };
+
+        const updateMediaSessionPlaybackState = () => {
+            if (!('mediaSession' in navigator)) return;
+            try {
+                navigator.mediaSession.playbackState = isAudioPlaying ? 'playing' : 'paused';
+            } catch (error) {
+                // Ignore unsupported playbackState writes on partial implementations.
+            }
+        };
+
+        const updateMediaSessionMetadata = (index = currentLyricIndex) => {
+            if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
+            if (!Number.isInteger(index) || index < 0 || index >= lyricsPool.length) return;
+
+            const track = lyricsPool[index];
+            const title = track.song.replace(/[《》]/g, '');
+
+            try {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title,
+                    artist: '薛之谦',
+                    album: '歌词抽取机',
+                    artwork: [
+                        {
+                            src: getCoverSrcByLyricIndex(index),
+                            sizes: '512x512',
+                            type: 'image/jpeg'
+                        }
+                    ]
+                });
+            } catch (error) {
+                // Ignore metadata failures on constrained browsers/webviews.
+            }
+        };
+
+        const setMediaSessionAction = (action, handler) => {
+            if (!('mediaSession' in navigator)) return;
+            try {
+                navigator.mediaSession.setActionHandler(action, handler);
+            } catch (error) {
+                // Ignore unsupported action handlers.
+            }
         };
 
         let timeUpdateRAF = null;
@@ -384,6 +460,7 @@ const lyricsPool = [
                         console.log('Audio init pending interaction', e);
                         isAudioPlaying = false;
                         playerToggleBtn.classList.remove('is-playing');
+                        updateMediaSessionPlaybackState();
                         if (!isDrawing && !isTrackSwitching) {
                             turntable.classList.remove('is-playing');
                             spinAnimation.pause();
@@ -417,8 +494,10 @@ const lyricsPool = [
         };
 
         audioEl.addEventListener('play', () => {
+            isAudioPlaying = true;
             playerToggleBtn.classList.remove('is-disabled');
             playerToggleBtn.classList.add('is-playing');
+            updateMediaSessionPlaybackState();
             if (!isDrawing && !isTrackSwitching) {
                 animateTurntableToTargetRate({
                     targetRate: 0.68,
@@ -429,7 +508,9 @@ const lyricsPool = [
         });
 
         audioEl.addEventListener('pause', () => {
+            isAudioPlaying = false;
             playerToggleBtn.classList.remove('is-playing');
+            updateMediaSessionPlaybackState();
             if (!isDrawing && !isTrackSwitching) {
                 animateTurntableToTargetRate({
                     targetRate: 0,
@@ -437,16 +518,20 @@ const lyricsPool = [
                     easing: (t) => 1 - Math.pow(1 - t, 4)
                 });
             }
+
+            if (
+                (playbackPlatform.isIOS || playbackPlatform.isWeChat) &&
+                document.visibilityState !== 'visible' &&
+                audioEl.ended &&
+                !isTrackSwitching &&
+                currentLyricIndex !== -1
+            ) {
+                handleTrackEnded();
+            }
         });
 
         audioEl.addEventListener('ended', () => {
-            if (isTrackSwitching || currentLyricIndex === -1) return;
-            const nextIndex = pickNextAutoLyricIndex();
-            if (nextIndex === -1) {
-                toggleAudioState(false, { skipMotion: true, stopDuration: 0 });
-                return;
-            }
-            switchToTrackWithTransition(nextIndex, { stopDuration: 220 });
+            handleTrackEnded();
         });
 
         playerToggleBtn.addEventListener('click', () => {
@@ -674,6 +759,20 @@ const lyricsPool = [
             return (currentLyricIndex + 1) % lyricsPool.length;
         };
 
+        const pickPreviousLyricIndex = () => {
+            if (lyricsPool.length === 0) return -1;
+
+            if (playbackMode === PLAYBACK_MODES.SINGLE_LOOP) {
+                return currentLyricIndex >= 0 ? currentLyricIndex : 0;
+            }
+
+            if (currentLyricIndex <= 0 || currentLyricIndex >= lyricsPool.length) {
+                return lyricsPool.length - 1;
+            }
+
+            return currentLyricIndex - 1;
+        };
+
         const updatePlaybackModeUI = () => {
             const modeMeta = PLAYBACK_MODE_META[playbackMode] || PLAYBACK_MODE_META[PLAYBACK_MODES.RANDOM];
             if (modeLabel) {
@@ -866,6 +965,7 @@ const lyricsPool = [
             songEl.innerText = '—— ' + result.song;
             currentLyricIndex = index;
             consumeLyricIndexFromQueue(index);
+            updateMediaSessionMetadata(index);
             renderPlaylist();
         };
 
@@ -963,8 +1063,93 @@ const lyricsPool = [
             }
         };
 
+        const switchToTrackHeadless = async (targetIndex) => {
+            if (isTrackSwitching) return;
+            if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= lyricsPool.length) return;
+
+            isTrackSwitching = true;
+
+            try {
+                updateCurrentLyric(targetIndex);
+                setAudioSourceByIndex(targetIndex);
+                await toggleAudioState(true, { skipMotion: true });
+
+                if (document.visibilityState === 'visible') {
+                    setFloatingButtonsVisible(true);
+                }
+
+                await updateButtonText('再次抽取');
+            } finally {
+                isTrackSwitching = false;
+            }
+        };
+
+        const handleTrackEnded = async () => {
+            if (isHandlingTrackEnd || isTrackSwitching || currentLyricIndex === -1) return;
+
+            isHandlingTrackEnd = true;
+            isAudioPlaying = false;
+            updateMediaSessionPlaybackState();
+
+            try {
+                const nextIndex = pickNextAutoLyricIndex();
+                if (nextIndex === -1) {
+                    await toggleAudioState(false, { skipMotion: true, stopDuration: 0 });
+                    return;
+                }
+
+                if (shouldUseHeadlessTrackSwitch()) {
+                    await switchToTrackHeadless(nextIndex);
+                } else {
+                    await switchToTrackWithTransition(nextIndex, { stopDuration: 220 });
+                }
+            } finally {
+                isHandlingTrackEnd = false;
+            }
+        };
+
+        const setupMediaSessionHandlers = () => {
+            if (!('mediaSession' in navigator)) return;
+
+            const jumpToIndex = (index) => {
+                if (!Number.isInteger(index) || index < 0) return;
+
+                if (shouldUseHeadlessTrackSwitch()) {
+                    switchToTrackHeadless(index);
+                } else {
+                    switchToTrackWithTransition(index, { stopDuration: 220 });
+                }
+            };
+
+            setMediaSessionAction('play', () => {
+                toggleAudioState(true, { skipMotion: shouldUseHeadlessTrackSwitch() });
+            });
+
+            setMediaSessionAction('pause', () => {
+                const stopDuration = shouldUseHeadlessTrackSwitch() ? 0 : 220;
+                toggleAudioState(false, { skipMotion: true, stopDuration });
+            });
+
+            setMediaSessionAction('nexttrack', () => {
+                if (currentLyricIndex === -1) return;
+                const nextIndex = pickNextAutoLyricIndex();
+                jumpToIndex(nextIndex);
+            });
+
+            setMediaSessionAction('previoustrack', () => {
+                if (currentLyricIndex === -1) return;
+                const previousIndex = pickPreviousLyricIndex();
+                jumpToIndex(previousIndex);
+            });
+
+            setMediaSessionAction('stop', () => {
+                toggleAudioState(false, { skipMotion: true, stopDuration: 0 });
+            });
+        };
+
         renderPlaylist();
         updatePlaybackModeUI();
+        setupMediaSessionHandlers();
 
         const resetResultVisual = () => {
             lyricAnimations.forEach((anim) => anim.cancel());
