@@ -969,6 +969,19 @@ const lyricsPool = [
             renderPlaylist();
         };
 
+        const revealLyricContentImmediately = () => {
+            lyricEl.style.opacity = '1';
+            lyricEl.style.transform = 'translateY(0)';
+            songEl.style.opacity = '1';
+            songEl.style.transform = 'translateY(0)';
+
+            Array.from(lyricEl.querySelectorAll('.lyric-line')).forEach((line) => {
+                line.style.opacity = '1';
+                line.style.transform = 'translateY(0)';
+                line.style.filter = 'blur(0px)';
+            });
+        };
+
         const setAudioSourceByIndex = (index) => {
             const song = lyricsPool[index];
             const audioFileName = song.song.replace(/[《》]/g, '') + '.mp3';
@@ -1071,6 +1084,11 @@ const lyricsPool = [
 
             try {
                 updateCurrentLyric(targetIndex);
+
+                if (resultArea.classList.contains('is-visible')) {
+                    revealLyricContentImmediately();
+                }
+
                 setAudioSourceByIndex(targetIndex);
                 await toggleAudioState(true, { skipMotion: true });
 
@@ -1150,6 +1168,19 @@ const lyricsPool = [
         renderPlaylist();
         updatePlaybackModeUI();
         setupMediaSessionHandlers();
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible' || currentLyricIndex === -1) return;
+
+            if (resultArea.classList.contains('is-visible')) {
+                revealLyricContentImmediately();
+                return;
+            }
+
+            if (!playlistArea.classList.contains('is-visible')) {
+                setFloatingButtonsVisible(true);
+            }
+        });
 
         const resetResultVisual = () => {
             lyricAnimations.forEach((anim) => anim.cancel());
