@@ -1255,6 +1255,7 @@
                 0 0 16px rgba(255, 255, 255, 0.25),
                 inset 0 2px 4px rgba(255, 255, 255, 0.9);
             transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1), background 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+            transform-origin: center center;
             -webkit-tap-highlight-color: transparent;
         }
 
@@ -1275,24 +1276,27 @@
         }
 
         .player-ctrl-btn:active {
-            transform: translateY(2px) scale(0.92);
+            transform: scale(0.92);
             box-shadow: 
-                0 4px 8px rgba(0, 0, 0, 0.2), 
-                0 0 12px rgba(133, 216, 255, 0.3),
-                inset 0 1px 2px rgba(255, 255, 255, 0.5);
+                0 2px 6px rgba(0, 0, 0, 0.18),
+                0 0 10px rgba(133, 216, 255, 0.24),
+                inset 0 2px 4px rgba(0, 0, 0, 0.12),
+                inset 0 1px 2px rgba(255, 255, 255, 0.45);
             transition: transform 0.1s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }
 
         .player-ctrl-btn svg {
             width: 18px;
             height: 18px;
-            margin-left: 2px;
+            margin-left: 0;
+            display: block;
+            transform-origin: 50% 50%;
             transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }
-        .player-ctrl-btn.is-playing svg.icon-play { opacity: 0; transform: scale(0.6); position: absolute; }
+        .player-ctrl-btn.is-playing svg.icon-play { opacity: 0; transform: translateX(-1px) scale(0.6); position: absolute; }
         .player-ctrl-btn.is-playing svg.icon-pause { opacity: 1; transform: scale(1); margin-left: 0; position: relative; }
         .player-ctrl-btn:not(.is-playing) svg.icon-pause { opacity: 0; transform: scale(0.6); position: absolute; }
-        .player-ctrl-btn:not(.is-playing) svg.icon-play { opacity: 1; transform: scale(1); position: relative; }
+        .player-ctrl-btn:not(.is-playing) svg.icon-play { opacity: 1; transform: translateX(-1px) scale(1); position: relative; }
 
         .player-track-wrap {
             width: 20vw;
