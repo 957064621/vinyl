@@ -1,122 +1,9 @@
-const lyricsPool = [
-            {
-                song: "《天外来物》",
-                text: "你就像天外来物一样\n求之不得\n我在世俗里的名字\n被人用了\n反正我隐藏的人格\n是锲而不舍"
-            },
-            {
-                song: "《演员》",
-                text: "该配合你演出的我\n尽力在表演\n像情感节目里的嘉宾\n任人挑选\n如果还能看出我有\n爱你的那面"
-            },
-            {
-                song: "《丑八怪》",
-                text: "丑八怪\n能否别把灯打开\n我要的爱\n出没在漆黑一片的舞台\n丑八怪\n在这暧昧的时代"
-            },
-            {
-                song: "《刚刚好》",
-                text: "我们的爱情\n到这刚刚好\n剩不多也不少\n还能忘掉\n我应该可以\n把自己照顾好"
-            },
-            {
-                song: "《认真的雪》",
-                text: "雪下得那么深\n下得那么认真\n倒映出我躺在雪中的伤痕\n爱得那么认真\n爱得那么深"
-            },
-            {
-                song: "《绅士》",
-                text: "我想摸你的头发\n只是简单的试探啊\n我想给你个拥抱\n像以前一样可以吗\n你退半步的动作\n认真的吗"
-            },
-            {
-                song: "《动物世界》",
-                text: "人类用沙\n想捏出梦里通天塔\n为贪念不惜代价\n驾驭着昂贵的木马\n巢穴一层层叠加"
-            },
-            {
-                song: "《方圆几里》",
-                text: "我宁愿留在你方圆几里\n我的心要不回就送你\n因为我爱你\n和你没关系"
-            },
-            {
-                song: "《守村人》",
-                text: "你看守村的夜晚\n灯忽明忽暗\n最爱你的人\n望眼欲穿\n烟花点不燃\n我没像样的伞"
-            },
-            {
-                song: "《租购》",
-                text: "能给她一个\n不管多久都不会变动的家\n收留所有的流浪\n不让她觉得害怕\n这间房住过多少人\n梦过了多少理想"
-            },
-            {
-                song: "《Nothing》",
-                text: "I am still waiting for you\nI am still waiting for nothing\nCome back to me\ncome back to me"
-            },
-            {
-                song: "《崇拜》",
-                text: "我崇拜\n你回眸一笑就万里火海\n能明白\n我孤独的存在"
-            },
-            {
-                song: "《情书》",
-                text: "甘愿签下唯一\n终生制承诺书\n受益名字\n是你也是我的全部\n哪怕非得孤注一掷\n也不愿再辜负一次"
-            },
-            {
-                song: "《顽疾》",
-                text: "病历上肆意拉扯\n来回写满\n摊开它给你欣赏\n我的不堪\n可是要治好顽疾\n有多难"
-            },
-            {
-                song: "《平庸》",
-                text: "我要用暗淡盖你璀璨的伤\n别回应\n让烟慢慢讲\n烫一个洞\n留一点念想"
-            },
-            {
-                song: "《爱我的人谢谢你》",
-                text: "每一次掌声响起\n多少爱沸腾在你手里\n告诉自己千万不可以对不起你\n唱一首爱的歌曲\n希望它能够让你满意\n爱我的人我真的谢谢你"
-            },
-            {
-                song: "《木偶人》",
-                text: "别在雨里对阵用可乐拉环陪你的人\n已变成俗剧本\n你何必太当真不要提那辛路历程\n所以 当我们都变成木偶人\n你何苦再做一个痴情人表忠贞\n文字叙述工整重复廉价伤痕\n你还会哭多感人"
-            },
-            {
-                song: "《慢半拍》",
-                text: "我们模仿 慢半拍的 芭比\n我们移动 慢半拍的 身体\n漫天纸醉金迷 这算不上滑稽\n反正这世界早已那么差强人意"
-            },
-            {
-                song: "《我害怕》",
-                text: "我害怕你的消息\n不经意被谁提起\n像曾贴着我耳边的气息\n我害怕某个旋律\n带我回某个场景\n你说如果雨停了我们就在一起"
-            },
-            {
-                song: "《霸王别姬》",
-                text: "当湖面澄清 笑可倾城 是谁不懂珍惜\n当美景憔悴 映入铜镜 是我对你不起\n落得 霸王别姬"
-            },
-            {
-                song: "《聊表心意》",
-                text: "我怎么那么爱你\n我还是抵抗不了你的声音\n我必须控制自己 别疯狂的找你"
-            },
-            {
-                song: "《迟迟》",
-                text: "耳朵先撒了谎 是你靠近的声响\n来探我梳妆的模样 我着白纱登场\n和你希望的一样 我走的很慢\n像你在对面一样"
-            },
-            {
-                song: "《我的雅典娜》",
-                text: "雅典娜 我以神的名义\n赐给你爱我的心\n你只能爱我 这不是传说\n你无法逃脱\n我愿意 为你化身为魔\n从新来过"
-            },
-            {
-                song: "《粉钻》",
-                text: "满地粉钻 无人看管\n你若不甘 用挚爱交换\n漫天红伞 无人生还\n我的遗憾 是不能洁白的带你离开"
-            },
-            {
-                song: "《其实》",
-                text: "分开后我会笑着说\n当朋友问你关于我\n我都会轻描淡写仿佛没爱过\n其实我根本没人说\n其实我没你不能活\n其实我给你的爱比你想的多"
-            },
-            {
-                song: "《像风一样》",
-                text: "你像风一样\n触摸时温柔流淌\n席卷我所有抵抗\n不急着要我投降\n你不就像风一样\n掠夺时沙沙作响\n可惜我自投罗网\n你也就没什么可骄傲的地方"
-            },
-            {
-                song: "《违背的青春》",
-                text: "原谅我可好\n我失陪的青春\n最遗憾的是你 用最后的距离\n目送我 躁动的远离\n满是歉意"
-            },
-            {
-                song: "《那是你离开了北京的生活》",
-                text: "我以为我爱了 就会留下些什么\n纪念那些曲折\n我们快乐的 争吵的 不舍的 分分合合\n我还是撑着 不说 我应该平静的\n面对你离开了北京的生活"
-            },
-            {
-                song: "《造物》",
-                text: "唾弃你贪婪的咒\n现在又何必挽留\n怎么狂妄到要灵魂任人左右\n莫非造了我 爱造了祸\n你才不会觉得寂寞"
-            },
-          
-        ];
+import {
+    COVER_BASE_URL,
+    COVER_ROTATION_FILES,
+    MUSIC_BASE_URL,
+    lyricsPool
+} from './data.js';
 
         const loadingScreen = document.getElementById('loadingScreen');
         const appShell = document.getElementById('appShell');
@@ -140,6 +27,7 @@ const lyricsPool = [
         const playlistToggleBtn = document.getElementById('playlistToggleBtn');
         const lyricToggleBtn = document.getElementById('lyricToggleBtn');
         const lyricDismissHint = document.getElementById('lyricDismissHint');
+        const lyricCloseBtn = document.getElementById('lyricCloseBtn');
         const playlistArea = document.getElementById('playlistArea');
         const playlistContent = document.getElementById('playlistContent');
         const playlistList = document.getElementById('playlistList');
@@ -147,8 +35,10 @@ const lyricsPool = [
         const modeIcon = document.getElementById('modeIcon');
         const modeLabel = document.getElementById('modeLabel');
         const playlistDismissHint = document.getElementById('playlistDismissHint');
+        const playlistCloseBtn = document.getElementById('playlistCloseBtn');
 
         let isDrawing = false;
+        let isOverlayClosing = false;
         let lyricAnimations = [];
         let playlistAnimations = [];
         let hasShownDismissHint = false;
@@ -192,16 +82,6 @@ const lyricsPool = [
         let isTrackSwitching = false;
         let isHandlingTrackEnd = false;
 
-        const COVER_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/';
-        const MUSIC_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/musics/';
-        const COVER_ROTATION_FILES = [
-            '3.jpg',
-            '4.jpg',
-            '1.jpg',
-            '2.jpg',
-            '%E5%A4%A9%E5%A4%96%E6%9D%A5%E7%89%A9.jpg'
-        ];
-
         const ua = navigator.userAgent || '';
         const platformName = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
         const isIOSDevice = /iPad|iPhone|iPod/i.test(ua) || (platformName === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -215,6 +95,7 @@ const lyricsPool = [
         };
 
         const canUseWebAnimations = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
+        const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
         const createNoopAnimation = () => {
             let playbackRateValue = 1;
@@ -246,6 +127,11 @@ const lyricsPool = [
         };
 
         const safeAnimate = (el, keyframes, options) => {
+            if (prefersReducedMotion) {
+                applyFinalKeyframe(el, keyframes);
+                return createNoopAnimation();
+            }
+
             if (canUseWebAnimations && typeof el.animate === 'function') {
                 return el.animate(keyframes, options);
             }
@@ -639,17 +525,9 @@ const lyricsPool = [
         };
 
         const runLoadingSequence = async () => {
-            const encodedCoverFiles = [
-                '3.jpg',
-                '4.jpg',
-                '1.jpg',
-                '2.jpg',
-                '%E5%A4%A9%E5%A4%96%E6%9D%A5%E7%89%A9.jpg'
-            ];
-            const loadingSources = encodedCoverFiles.map((name) => `${COVER_BASE_URL}${name}`);
+            const loadingSources = COVER_ROTATION_FILES.map((name) => `${COVER_BASE_URL}${name}`);
 
-            // Just wait 2.2s to show the hole animation
-            await wait(2200);
+            await wait(prefersReducedMotion ? 120 : 1200);
 
             const holeLoader = document.getElementById('holeLoader');
             const loadingCopy = document.getElementById('loadingCopy');
@@ -661,7 +539,7 @@ const lyricsPool = [
             if (holeLoader) holeLoader.classList.add('is-hidden');
             if (loadingCopy) loadingCopy.textContent = '信号已接入';
 
-            await wait(400); // 留一点呼吸感时间
+            await wait(prefersReducedMotion ? 0 : 220);
 
             if (loadingHeroWrap) loadingHeroWrap.classList.add('is-loaded');
             if (loadingAmbient) loadingAmbient.classList.add('is-loaded');
@@ -700,25 +578,30 @@ const lyricsPool = [
 
             // 编排切换时间轴（前两张3、4快切，后1、2、天外来物慢溶）
             const sequenceSteps = [
-                { index: 1, delay: 300, dur: 220 },   // 此时是3，过0.3s后快速切到4 (快切)
-                { index: 2, delay: 1000, dur: 860 },  // 此时是4，停留后慢溶到1 (慢溶)
-                { index: 3, delay: 1800, dur: 860 },  // 此时是1，停留后慢溶到2
-                { index: 4, delay: 1800, dur: 860 }   // 此时是2，慢溶到天外来物
+                { index: 1, delay: 220, dur: 220 },   // 此时是3，短暂停留后快速切到4
+                { index: 2, delay: 520, dur: 720 },   // 此时是4，慢溶到1
+                { index: 3, delay: 760, dur: 720 },   // 此时是1，慢溶到2
+                { index: 4, delay: 760, dur: 720 }    // 此时是2，慢溶到天外来物
             ];
 
-            for (const step of sequenceSteps) {
-                await wait(step.delay);
-                currentIndex = step.index;
-                updateSlide(step.dur);
+            if (prefersReducedMotion) {
+                currentIndex = 4;
+                updateSlide(0);
+            } else {
+                for (const step of sequenceSteps) {
+                    await wait(step.delay);
+                    currentIndex = step.index;
+                    updateSlide(step.dur);
+                }
             }
 
             // 最后一张驻留后淡出
-            await wait(1800);
+            await wait(prefersReducedMotion ? 80 : 900);
             
             setTimeout(() => {
                 loadingScreen.classList.add('is-exiting');
                 appShell.classList.add('is-ready');
-            }, 1000);
+            }, prefersReducedMotion ? 0 : 320);
         };
 
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -880,7 +763,7 @@ const lyricsPool = [
         const animateTonearm = ({ from, to, duration, easing }) => new Promise((resolve) => {
             if (currentArmAnimFrame) cancelAnimationFrame(currentArmAnimFrame);
 
-            if (duration <= 0 || Math.abs(to - from) < 0.001) {
+            if (prefersReducedMotion || duration <= 0 || Math.abs(to - from) < 0.001) {
                 setTonearmAngle(to);
                 resolve();
                 return;
@@ -910,7 +793,7 @@ const lyricsPool = [
         const animateRate = ({ from, to, duration, easing }) => new Promise((resolve) => {
             if (currentRateAnimFrame) cancelAnimationFrame(currentRateAnimFrame);
 
-            if (duration <= 0 || Math.abs(to - from) < 0.001) {
+            if (prefersReducedMotion || duration <= 0 || Math.abs(to - from) < 0.001) {
                 spinAnimation.playbackRate = to;
                 updateSheenByRate(to);
                 resolve();
@@ -1223,38 +1106,38 @@ const lyricsPool = [
                 { opacity: 0 },
                 { opacity: 1 }
             ], {
-                duration: 780,
+                duration: 620,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
             });
 
             const lyricAnim = safeAnimate(lyricEl, [
-                { opacity: 0, transform: 'translateY(24px)' },
+                { opacity: 0, transform: 'translateY(18px)' },
                 { opacity: 1, transform: 'translateY(0)' }
             ], {
-                duration: 1000,
+                duration: 780,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
             });
 
             const songAnim = safeAnimate(songEl, [
-                { opacity: 0, transform: 'translateY(24px)' },
+                { opacity: 0, transform: 'translateY(16px)' },
                 { opacity: 1, transform: 'translateY(0)' }
             ], {
-                duration: 900,
-                delay: 260,
+                duration: 720,
+                delay: 180,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
             });
 
             const lineAnimations = Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => safeAnimate(line, [
-                { opacity: 0, transform: 'translateY(18px) scale(0.98)', filter: 'blur(8px)' },
+                { opacity: 0, transform: 'translateY(14px) scale(0.992)', filter: 'blur(4px)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
             ], {
-                duration: 850,
-                delay: 150 + index * 85,
+                duration: 640,
+                delay: 110 + index * 64,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
             }));
 
             lyricAnimations = [cardAnim, lyricAnim, songAnim, ...lineAnimations];
@@ -1272,28 +1155,28 @@ const lyricsPool = [
                 { opacity: 0 },
                 { opacity: 1 }
             ], {
-                duration: 780,
+                duration: 620,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
             });
 
             const contentAnim = safeAnimate(playlistContent, [
                 { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
                 { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
             ], {
-                duration: 920,
+                duration: 720,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
             });
 
             const itemAnimations = Array.from(playlistList.querySelectorAll('.playlist-item')).map((item, index) => safeAnimate(item, [
-                { opacity: 0, transform: 'translateY(12px) scale(0.98)', filter: 'blur(6px)' },
+                { opacity: 0, transform: 'translateY(8px) scale(0.992)', filter: 'blur(3px)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
             ], {
-                duration: 620,
-                delay: Math.min(220, index * 26),
+                duration: 460,
+                delay: Math.min(160, index * 18),
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
             }));
 
             playlistAnimations = [cardAnim, contentAnim, ...itemAnimations];
@@ -1325,38 +1208,87 @@ const lyricsPool = [
             return fadeOutAnimation.finished || Promise.resolve();
         };
 
+        const closeLyricOverlay = async () => {
+            if (isOverlayClosing || !resultArea.classList.contains('is-visible')) return;
+
+            const ownsInteractionLock = !isDrawing;
+            isOverlayClosing = true;
+            if (ownsInteractionLock) {
+                isDrawing = true;
+                playButton.disabled = true;
+            }
+
+            try {
+                const textUpdatePromise = updateButtonText('再次抽取');
+                await morphResultOut();
+                resetResultVisual();
+                await textUpdatePromise;
+                setFloatingButtonsVisible(true);
+            } finally {
+                if (ownsInteractionLock) {
+                    playButton.disabled = false;
+                    isDrawing = false;
+                }
+                isOverlayClosing = false;
+            }
+        };
+
+        const closePlaylistOverlay = async () => {
+            if (isOverlayClosing || !playlistArea.classList.contains('is-visible')) return;
+
+            const ownsInteractionLock = !isDrawing;
+            isOverlayClosing = true;
+            if (ownsInteractionLock) {
+                isDrawing = true;
+                playButton.disabled = true;
+            }
+
+            try {
+                await morphPlaylistOut();
+                resetPlaylistVisual();
+                setFloatingButtonsVisible(true);
+            } finally {
+                if (ownsInteractionLock) {
+                    playButton.disabled = false;
+                    isDrawing = false;
+                }
+                isOverlayClosing = false;
+            }
+        };
+
         resultArea.addEventListener('click', async (event) => {
-            if (isDrawing || !resultArea.classList.contains('is-visible')) return;
+            if (!resultArea.classList.contains('is-visible')) return;
             if (event.target !== resultArea && event.target !== lyricDismissHint) return;
 
-            isDrawing = true;
-            playButton.disabled = true;
-
-            const textUpdatePromise = updateButtonText('再次抽取');
-
-            await morphResultOut();
-            resetResultVisual();
-
-            await textUpdatePromise;
-            playButton.disabled = false;
-            isDrawing = false;
-
-            setFloatingButtonsVisible(true);
+            await closeLyricOverlay();
         });
 
         playlistArea.addEventListener('click', async (event) => {
-            if (isDrawing || !playlistArea.classList.contains('is-visible')) return;
+            if (!playlistArea.classList.contains('is-visible')) return;
             if (event.target !== playlistArea && event.target !== playlistDismissHint) return;
 
-            isDrawing = true;
-            playButton.disabled = true;
+            await closePlaylistOverlay();
+        });
 
-            await morphPlaylistOut();
-            resetPlaylistVisual();
+        lyricCloseBtn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            await closeLyricOverlay();
+        });
 
-            playButton.disabled = false;
-            isDrawing = false;
-            setFloatingButtonsVisible(true);
+        playlistCloseBtn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            await closePlaylistOverlay();
+        });
+
+        document.addEventListener('keydown', async (event) => {
+            if (event.key !== 'Escape') return;
+            if (playlistArea.classList.contains('is-visible')) {
+                await closePlaylistOverlay();
+                return;
+            }
+            if (resultArea.classList.contains('is-visible')) {
+                await closeLyricOverlay();
+            }
         });
 
         lyricToggleBtn.addEventListener('click', () => {
@@ -1453,7 +1385,7 @@ const lyricsPool = [
                 })
             ]);
 
-            await wait(1200);
+            await wait(prefersReducedMotion ? 0 : 1200);
 
             const randomIndex = pickRandomLyricIndex(currentLyricIndex);
             updateCurrentLyric(randomIndex);
@@ -1482,7 +1414,7 @@ const lyricsPool = [
             await toggleAudioState(true, { skipMotion: true });
 
             // 让文字在歌词展开时再变，避免时间上同步过于机械
-            await wait(180);
+            await wait(prefersReducedMotion ? 0 : 180);
             await updateButtonText('再次抽取');
 
             if (!isAudioPlaying) {

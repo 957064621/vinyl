@@ -101,14 +101,22 @@
     </main>
 
     <div class="result-area" id="resultArea">
+        <button class="overlay-close-btn" id="lyricCloseBtn" type="button" aria-label="关闭歌词页">
+            <span aria-hidden="true">×</span>
+            <span>关闭</span>
+        </button>
         <div class="result-content" id="resultContent">
             <div class="lyric-text" id="lyricText"></div>
             <div class="song-name" id="songName"></div>
         </div>
-        <div class="result-dismiss-hint" id="lyricDismissHint">点击空白处关闭歌词页</div>
+        <div class="result-dismiss-hint" id="lyricDismissHint">轻点空白处关闭</div>
     </div>
 
     <div class="playlist-area" id="playlistArea">
+        <button class="overlay-close-btn" id="playlistCloseBtn" type="button" aria-label="关闭播放列表">
+            <span aria-hidden="true">×</span>
+            <span>关闭</span>
+        </button>
         <div class="playlist-content" id="playlistContent">
             <div class="playlist-title">播放列表</div>
             <div class="playlist-mode-wrap">
@@ -123,12 +131,12 @@
             </div>
             <div class="playlist-list" id="playlistList"></div>
         </div>
-        <div class="result-dismiss-hint" id="playlistDismissHint">点击空白处关闭播放列表</div>
+        <div class="result-dismiss-hint" id="playlistDismissHint">轻点空白处关闭</div>
     </div>
 
     <a class="footer-link" id="contactLink">联系我</a>
     <div class="toast" id="copyToast">微信号 Michael_Yuuu 已复制</div>
 
-    <script src="main.js"></script>
+    <script type="module" src="main.js"></script>
 </body>
 </html>
