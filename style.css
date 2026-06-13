@@ -15,6 +15,10 @@
             --stage-shadow: 0 28px 72px rgba(0, 0, 0, 0.48);
             --damping: cubic-bezier(0.16, 1, 0.3, 1);
             --hero-ease: cubic-bezier(0.32, 0.72, 0, 1);
+            --fluid-ease: cubic-bezier(0.22, 1, 0.36, 1);
+            --soft-spring: cubic-bezier(0.2, 1.08, 0.22, 1);
+            --button-swap-ease: cubic-bezier(0.2, 0.86, 0.18, 1);
+            --button-settle-ease: cubic-bezier(0.2, 1.18, 0.24, 1);
             --lyric-ios-offset: 0px;
             --playlist-lift: -3.8vh;
             --stage-lift: clamp(38px, 6.6vh, 70px);
@@ -80,15 +84,19 @@
             width: 100vw;
             height: 100lvh;
             pointer-events: none;
-            opacity: 0.18;
+            opacity: 0.2;
             z-index: -1;
             background-image:
-                radial-gradient(circle at 50% 24%, rgba(255, 255, 255, 0.11) 0 0.8px, transparent 1.4px),
-                linear-gradient(120deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-                linear-gradient(60deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
-            background-size: 190px 190px, 92px 92px, 92px 92px;
+                radial-gradient(circle at 18% 24%, rgba(214, 236, 255, 0.22) 0 0.7px, transparent 1.4px),
+                radial-gradient(circle at 78% 34%, rgba(255, 180, 200, 0.16) 0 0.65px, transparent 1.35px),
+                radial-gradient(circle at 52% 78%, rgba(208, 232, 255, 0.16) 0 0.55px, transparent 1.3px),
+                linear-gradient(120deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(60deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+            background-size: 164px 164px, 220px 220px, 280px 280px, 96px 96px, 96px 96px;
+            background-position: 0 0, 32px 18px, -18px 42px, 0 0, 0 0;
             mask-image: radial-gradient(circle at 50% 34%, black 0%, transparent 68%);
             -webkit-mask-image: radial-gradient(circle at 50% 34%, black 0%, transparent 68%);
+            animation: ambient-dust-drift 18s ease-in-out infinite alternate;
         }
 
         body::after {
@@ -101,7 +109,11 @@
             pointer-events: none;
             z-index: -2;
             transform: translateZ(0);
-            background: var(--app-bg);
+            background:
+                radial-gradient(46% 28% at 50% 66%, rgba(183, 221, 255, 0.052), transparent 72%),
+                radial-gradient(34% 22% at 18% 82%, rgba(255, 154, 176, 0.04), transparent 70%),
+                var(--app-bg);
+            animation: ambient-veil-shift 20s ease-in-out infinite alternate;
         }
 
         .loading-screen {
@@ -637,8 +649,12 @@
             align-items: center;
             gap: 0;
             z-index: 85;
-            transition: gap 0.8s cubic-bezier(0.16, 1, 0.3, 1);
-            will-change: gap;
+            transition: gap 0.58s var(--soft-spring), transform 0.58s var(--soft-spring);
+            will-change: gap, transform;
+        }
+
+        .dynamic-island.is-overlay-control-visible {
+            z-index: 118;
         }
 
         .dynamic-island::before {
@@ -658,6 +674,7 @@
 
         .dynamic-island.is-split {
             gap: 10px;
+            transform: translate3d(0, -1px, 0);
         }
 
         .play-btn {
@@ -665,7 +682,8 @@
             margin: 0;
             width: 136px;
             position: relative;
-            overflow: hidden;
+            overflow: visible;
+            isolation: isolate;
             background:
                 radial-gradient(circle at 35% 0%, rgba(255, 255, 255, 0.15), transparent 42%),
                 linear-gradient(145deg, rgba(255, 255, 255, 0.105), rgba(255, 255, 255, 0.03)),
@@ -688,8 +706,9 @@
                 0 0 18px rgba(154, 211, 255, 0.055),
                 inset 0 1px 1px rgba(255, 255, 255, 0.22),
                 inset 0 -9px 18px rgba(0, 0, 0, 0.16);
-            transition: transform 0.6s var(--damping), background 0.6s var(--damping), box-shadow 0.6s var(--damping), opacity 0.4s ease;
-            will-change: transform, opacity;
+            transition: transform 0.42s var(--button-settle-ease), background 0.52s var(--fluid-ease), box-shadow 0.52s var(--fluid-ease), opacity 0.36s ease;
+            will-change: transform;
+            transform-origin: 50% 50%;
             -webkit-tap-highlight-color: transparent;
             user-select: none;
             flex-shrink: 0;
@@ -704,10 +723,26 @@
             position: absolute;
             inset: 1px;
             border-radius: inherit;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
-            transform: translateX(-120%);
-            transition: transform 0.78s var(--hero-ease);
+            background:
+                linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 48%, transparent 100%),
+                radial-gradient(circle at 34% 0%, rgba(255, 255, 255, 0.16), transparent 42%);
+            opacity: 0.62;
             pointer-events: none;
+            transition: opacity 0.52s var(--fluid-ease), transform 0.52s var(--fluid-ease), filter 0.52s var(--fluid-ease);
+            transform: translateZ(0);
+        }
+
+        .play-btn::after {
+            content: "";
+            position: absolute;
+            inset: -7px;
+            border-radius: inherit;
+            background: radial-gradient(ellipse at center, rgba(203, 232, 255, 0.16), transparent 68%);
+            opacity: 0;
+            transform: scale(0.92);
+            transition: opacity 0.52s var(--button-settle-ease), transform 0.52s var(--button-settle-ease);
+            pointer-events: none;
+            z-index: 0;
         }
 
         @media (hover: hover) and (pointer: fine) {
@@ -721,40 +756,115 @@
                     0 0 20px rgba(181, 222, 255, 0.1),
                     inset 0 1px 1px rgba(255, 255, 255, 0.28);
                 transform: translateY(-1px);
-                transition: transform 0.4s var(--damping), background 0.4s var(--damping), box-shadow 0.4s var(--damping), opacity 0.4s ease;
+                transition: transform 0.46s var(--button-settle-ease), background 0.46s var(--fluid-ease), box-shadow 0.46s var(--fluid-ease), opacity 0.4s ease;
             }
 
-            .play-btn:hover::before {
-                transform: translateX(120%);
+            .play-btn:hover::after {
+                opacity: 1;
+                transform: scale(1);
             }
         }
 
         .play-btn:active {
-            transform: translateY(2px) scale(0.96);
+            transform: translateY(1px) scale3d(0.972, 0.972, 1);
             background: rgba(255, 255, 255, 0.06);
             box-shadow: 
                 0 8px 16px rgba(0, 0, 0, 0.4),
                 inset 0 1px 2px rgba(0, 0, 0, 0.2);
-            transition: transform 0.1s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.18s ease, box-shadow 0.18s ease;
         }
 
-        .play-btn:disabled {
-            opacity: 0.72;
+        @media (hover: none) and (pointer: coarse) {
+            .play-btn:active {
+                transform: translateY(0.5px) scale3d(0.988, 0.988, 1);
+                background:
+                    radial-gradient(circle at 35% 0%, rgba(255, 255, 255, 0.15), transparent 42%),
+                    linear-gradient(145deg, rgba(255, 255, 255, 0.105), rgba(255, 255, 255, 0.03)),
+                    var(--glass-fill);
+                box-shadow:
+                    0 16px 32px rgba(0, 0, 0, 0.35),
+                    0 0 18px rgba(154, 211, 255, 0.055),
+                    inset 0 1px 1px rgba(255, 255, 255, 0.22),
+                    inset 0 -9px 18px rgba(0, 0, 0, 0.16);
+            }
+        }
+
+        .play-btn:disabled,
+        .play-btn[data-busy] {
+            opacity: 1;
             cursor: not-allowed;
         }
 
-        .btn-text {
-            display: inline-block;
+        .btn-label-viewport {
             position: relative;
-            z-index: 1;
-            transition: opacity 0.3s var(--hero-ease), transform 0.3s var(--hero-ease), filter 0.3s var(--hero-ease);
-            will-change: transform, opacity, filter;
+            z-index: 3;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: calc(100% - 22px);
+            height: 1.7em;
+            min-width: 4.6em;
+            overflow: hidden;
+            line-height: 1.25;
+            isolation: isolate;
+            transform: translateZ(0);
+            -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 9%, #000 91%, transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0%, #000 9%, #000 91%, transparent 100%);
         }
 
-        .btn-text.is-switching {
-            opacity: 0;
-            transform: scale(0.92);
-            filter: blur(4px);
+        .btn-text,
+        .btn-text-ghost {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            color: inherit;
+            font: inherit;
+            letter-spacing: inherit;
+            line-height: 1.25;
+            white-space: nowrap;
+            transform: translateZ(0);
+            transform-origin: 50% 50%;
+            will-change: transform, opacity, filter;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: geometricPrecision;
+        }
+
+        .btn-text {
+            position: relative;
+            z-index: 2;
+        }
+
+        .btn-text-ghost {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        .play-btn.is-text-swapping {
+            box-shadow:
+                0 18px 36px rgba(0, 0, 0, 0.38),
+                0 0 18px rgba(181, 222, 255, 0.075),
+                inset 0 1px 1px rgba(255, 255, 255, 0.28),
+                inset 0 -9px 18px rgba(0, 0, 0, 0.13);
+        }
+
+        .play-btn.is-text-swapping::before {
+            animation: btn-glass-bloom 0.56s var(--button-swap-ease) both;
+        }
+
+        .play-btn.is-text-swapping::after {
+            animation: btn-halo-bloom 0.62s var(--button-swap-ease) both;
+        }
+
+        .btn-text.is-blur-out {
+            animation: btn-blur-out 0.36s var(--button-swap-ease) both;
+        }
+
+        .btn-text.is-blur-in,
+        .btn-text-ghost.is-blur-in {
+            animation: btn-blur-in 0.44s var(--button-swap-ease) both;
         }
 
         .result-area {
@@ -783,7 +893,7 @@
             -webkit-transform: translateZ(0);
             transition: opacity 0.4s var(--hero-ease);
             will-change: opacity;
-            z-index: 28;
+            z-index: 108;
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
         }
@@ -819,7 +929,7 @@
             -webkit-transform: translateZ(0);
             transition: opacity 0.4s var(--hero-ease);
             will-change: opacity;
-            z-index: 92;
+            z-index: 110;
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
         }
@@ -830,46 +940,58 @@
         }
 
         .overlay-close-btn {
-            position: absolute;
-            top: max(18px, calc(env(safe-area-inset-top) + 10px));
-            right: max(18px, calc(env(safe-area-inset-right) + 18px));
-            z-index: 8;
-            min-width: 76px;
-            height: 44px;
-            padding: 0 14px 0 12px;
-            border: 1px solid var(--glass-border);
+            position: fixed;
+            top: max(18px, calc(env(safe-area-inset-top) + 12px));
+            right: max(18px, calc(env(safe-area-inset-right) + 16px));
+            z-index: 120;
+            min-width: 82px;
+            height: 48px;
+            padding: 0 16px 0 13px;
+            border: 1px solid rgba(238, 247, 255, 0.34);
             border-radius: 999px;
-            color: rgba(246, 250, 255, 0.96);
+            color: rgba(250, 253, 255, 0.98);
             background:
-                radial-gradient(circle at 24% 12%, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.045) 34%, transparent 62%),
-                linear-gradient(145deg, rgba(255, 255, 255, 0.105), rgba(255, 255, 255, 0.03)),
-                var(--glass-fill);
+                radial-gradient(circle at 24% 12%, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.08) 34%, transparent 62%),
+                linear-gradient(145deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055)),
+                rgba(15, 22, 35, 0.78);
             box-shadow:
-                0 12px 28px rgba(0, 0, 0, 0.34),
-                0 0 0 1px rgba(255, 255, 255, 0.055) inset,
-                inset 0 1px 0 rgba(255, 255, 255, 0.22),
-                inset 0 -9px 16px rgba(0, 0, 0, 0.12);
-            backdrop-filter: blur(12px) saturate(1.28);
-            -webkit-backdrop-filter: blur(12px) saturate(1.28);
+                0 14px 32px rgba(0, 0, 0, 0.46),
+                0 0 0 1px rgba(255, 255, 255, 0.11) inset,
+                inset 0 1px 0 rgba(255, 255, 255, 0.34),
+                inset 0 -10px 18px rgba(0, 0, 0, 0.16);
+            backdrop-filter: blur(18px) saturate(1.42);
+            -webkit-backdrop-filter: blur(18px) saturate(1.42);
             display: inline-flex;
             align-items: center;
             justify-content: center;
             gap: 6px;
             font-family: inherit;
-            font-size: 13px;
-            font-weight: 600;
-            letter-spacing: 0.06em;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
             touch-action: manipulation;
             user-select: none;
-            transform: translateZ(0);
+            opacity: 0;
+            filter: blur(8px);
+            transform: translate3d(8px, -8px, 0) scale(0.94);
             transition:
-                transform 0.34s var(--damping),
+                transform 0.42s var(--soft-spring),
+                filter 0.42s var(--fluid-ease),
                 border-color 0.34s var(--damping),
                 background 0.34s var(--damping),
                 box-shadow 0.34s var(--damping),
-                opacity 0.34s var(--damping);
+                opacity 0.34s var(--fluid-ease);
+            will-change: transform, opacity, filter;
+        }
+
+        .result-area.is-visible .overlay-close-btn,
+        .playlist-area.is-visible .overlay-close-btn {
+            opacity: 1;
+            filter: blur(0);
+            transform: translateZ(0) scale(1);
+            transition-delay: 0.08s;
         }
 
         .overlay-close-btn span:first-child {
@@ -878,23 +1000,29 @@
             justify-content: center;
             width: 18px;
             height: 18px;
-            font-size: 20px;
+            font-size: 22px;
             line-height: 1;
             transform: translateY(-1px);
         }
 
         @media (hover: hover) and (pointer: fine) {
             .overlay-close-btn:hover {
-                border-color: rgba(232, 246, 255, 0.34);
+                border-color: rgba(244, 250, 255, 0.48);
                 background:
-                    radial-gradient(circle at 24% 12%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055) 34%, transparent 62%),
-                    linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04)),
-                    rgba(13, 20, 33, 0.52);
+                    radial-gradient(circle at 24% 12%, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.09) 34%, transparent 62%),
+                    linear-gradient(145deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.065)),
+                    rgba(18, 26, 40, 0.86);
                 box-shadow:
-                    0 14px 30px rgba(0, 0, 0, 0.38),
-                    0 0 18px rgba(181, 222, 255, 0.09),
-                    inset 0 1px 0 rgba(255, 255, 255, 0.26);
+                    0 16px 34px rgba(0, 0, 0, 0.5),
+                    0 0 20px rgba(214, 237, 255, 0.12),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.38);
                 transform: translateY(-1px) translateZ(0);
+            }
+
+            .result-area.is-visible .overlay-close-btn:hover,
+            .playlist-area.is-visible .overlay-close-btn:hover {
+                transform: translateY(-1px) translateZ(0) scale(1);
+                transition-delay: 0s;
             }
         }
 
@@ -907,6 +1035,12 @@
             transition-duration: 0.1s;
         }
 
+        .result-area.is-visible .overlay-close-btn:active,
+        .playlist-area.is-visible .overlay-close-btn:active {
+            transform: translateY(1px) scale(0.97) translateZ(0);
+            transition-delay: 0s;
+        }
+
         .overlay-close-btn:focus-visible {
             outline: 2px solid rgba(224, 239, 255, 0.8);
             outline-offset: 3px;
@@ -915,15 +1049,22 @@
         .playlist-area::before {
             content: "";
             position: absolute;
-            inset: 0;
-            background: linear-gradient(120deg, transparent 42%, rgba(231, 244, 255, 0.09) 50%, transparent 58%);
-            transform: translateX(-56%);
+            left: 50%;
+            top: 50%;
+            width: 210vw;
+            height: 48vh;
+            background:
+                radial-gradient(ellipse at center, rgba(245, 250, 255, 0.13) 0%, rgba(207, 234, 255, 0.052) 22%, transparent 64%),
+                linear-gradient(90deg, transparent 0%, rgba(237, 248, 255, 0.018) 30%, rgba(237, 248, 255, 0.095) 50%, rgba(237, 248, 255, 0.018) 70%, transparent 100%);
+            transform: translate3d(-146%, -50%, 0) rotate(-12deg);
             opacity: 0;
+            filter: blur(18px);
+            mix-blend-mode: screen;
             pointer-events: none;
         }
 
         .playlist-area.is-visible::before {
-            animation: lyric-sheen 1.65s cubic-bezier(0.22, 1, 0.36, 1) 1;
+            animation: lyric-sheen 1.35s cubic-bezier(0.22, 1, 0.36, 1) 1;
         }
 
         .playlist-area::after {
@@ -1246,8 +1387,8 @@
             z-index: 25;
             opacity: 0;
             pointer-events: none;
-            transform: translate3d(0, -16px, 0);
-            transition: transform 0.6s var(--damping), opacity 0.6s var(--damping), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
+            transform: translate3d(var(--float-x, 0), -8px, 0) scale(0.88);
+            transition: transform 0.58s var(--soft-spring), opacity 0.42s var(--fluid-ease), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
             box-shadow: 
                 0 14px 28px rgba(0, 0, 0, 0.32),
                 0 0 16px rgba(181, 222, 255, 0.055),
@@ -1283,17 +1424,19 @@
 
         .lyric-toggle-btn {
             right: 0;
+            --float-x: -12px;
         }
 
         .playlist-toggle-btn {
             left: 0;
+            --float-x: 12px;
         }
 
         .lyric-toggle-btn.is-visible,
         .playlist-toggle-btn.is-visible {
             opacity: 1;
             pointer-events: auto;
-            transform: translate3d(0, 0, 0);
+            transform: translate3d(0, 0, 0) scale(1);
         }
 
         .lyric-toggle-btn.is-visible::before,
@@ -1319,12 +1462,12 @@
 
         .lyric-toggle-btn:active,
         .playlist-toggle-btn:active {
-            transform: translateY(2px) scale(0.96);
+            transform: translateY(1px) scale(0.96);
             background: rgba(255, 255, 255, 0.06);
             box-shadow: 
                 0 8px 16px rgba(0, 0, 0, 0.4),
                 inset 0 1px 2px rgba(0, 0, 0, 0.2);
-            transition: transform 0.4s var(--damping), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
+            transition: transform 0.18s var(--fluid-ease), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
         }
 
         .toast {
@@ -1356,15 +1499,22 @@
         .result-area::before {
             content: "";
             position: absolute;
-            inset: 0;
-            background: linear-gradient(120deg, transparent 42%, rgba(231, 244, 255, 0.09) 50%, transparent 58%);
-            transform: translateX(-56%);
+            left: 50%;
+            top: 50%;
+            width: 210vw;
+            height: 48vh;
+            background:
+                radial-gradient(ellipse at center, rgba(245, 250, 255, 0.13) 0%, rgba(207, 234, 255, 0.052) 22%, transparent 64%),
+                linear-gradient(90deg, transparent 0%, rgba(237, 248, 255, 0.018) 30%, rgba(237, 248, 255, 0.095) 50%, rgba(237, 248, 255, 0.018) 70%, transparent 100%);
+            transform: translate3d(-146%, -50%, 0) rotate(-12deg);
             opacity: 0;
+            filter: blur(18px);
+            mix-blend-mode: screen;
             pointer-events: none;
         }
 
         .result-area.is-visible::before {
-            animation: lyric-sheen 1.65s cubic-bezier(0.22, 1, 0.36, 1) 1;
+            animation: lyric-sheen 1.35s cubic-bezier(0.22, 1, 0.36, 1) 1;
         }
 
         .result-area::after {
@@ -1461,7 +1611,7 @@
             align-items: center;
             gap: 12px;
             margin-top: 0;
-            padding: 8px 0px 8px 0px;
+            padding: 6px 0;
             border-radius: 999px;
             background:
                 linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.022)),
@@ -1474,32 +1624,48 @@
                 0 0 18px rgba(154, 211, 255, 0.055),
                 inset 0 1px 1px rgba(255, 255, 255, 0.14);
             opacity: 0;
-            max-width: 0;
-            overflow: hidden;
+            inline-size: 0;
+            max-inline-size: 292px;
+            overflow: visible;
             pointer-events: none;
-            transform: scale(0.96) translateZ(0);
-            -webkit-transform: scale(0.96) translateZ(0);
+            transform: translate3d(-14px, 0, 0) scale(0.98);
+            -webkit-transform: translate3d(-14px, 0, 0) scale(0.98);
             transform-origin: left center;
-            transition: max-width 0.8s cubic-bezier(0.16, 1, 0.3, 1),
-                        opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
-                        transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
-                        padding 0.8s cubic-bezier(0.16, 1, 0.3, 1),
-                        border-width 0.8s ease;
-            will-change: transform, opacity, max-width, padding, border-width;
+            transition:
+                inline-size 0.68s var(--soft-spring),
+                opacity 0.42s var(--fluid-ease),
+                transform 0.68s var(--soft-spring),
+                padding 0.68s var(--fluid-ease),
+                border-width 0.68s ease,
+                box-shadow 0.68s var(--fluid-ease);
+            will-change: transform, opacity, inline-size, padding, border-width;
             position: relative;
             flex-shrink: 0;
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
         }
 
+        .player-pill > * {
+            opacity: 0;
+            transform: translate3d(-8px, 0, 0);
+            transition: opacity 0.34s var(--fluid-ease), transform 0.46s var(--soft-spring);
+            transition-delay: 0s;
+        }
+
         .dynamic-island.is-split .player-pill {
             opacity: 1;
-            max-width: 292px;
+            inline-size: 292px;
             padding: 6px 14px 6px 8px;
             border-width: 1px;
             transform: scale(1) translateZ(0);
             -webkit-transform: scale(1) translateZ(0);
             pointer-events: auto;
+        }
+
+        .dynamic-island.is-split .player-pill > * {
+            opacity: 1;
+            transform: translateZ(0);
+            transition-delay: 0.12s;
         }
 
         .player-ctrl-btn {
@@ -1611,14 +1777,17 @@
 
         @keyframes lyric-sheen {
             0% {
-                transform: translateX(-55%);
+                transform: translate3d(-146%, -50%, 0) rotate(-12deg) scaleX(0.96);
                 opacity: 0;
             }
             25% {
-                opacity: 0.9;
+                opacity: 0.72;
+            }
+            55% {
+                opacity: 0.44;
             }
             100% {
-                transform: translateX(58%);
+                transform: translate3d(42%, -50%, 0) rotate(-12deg) scaleX(1.04);
                 opacity: 0;
             }
         }
@@ -1629,6 +1798,117 @@
             }
             100% {
                 transform: translateX(86%) rotate(-8deg);
+            }
+        }
+
+        @keyframes btn-glass-settle {
+            0% {
+                transform: translate3d(0, 0, 0) scale(1);
+            }
+            34% {
+                transform: translate3d(0, -0.8px, 0) scale3d(1.026, 1.026, 1);
+            }
+            68% {
+                transform: translate3d(0, 0.35px, 0) scale3d(0.992, 0.992, 1);
+            }
+            100% {
+                transform: translate3d(0, 0, 0) scale(1);
+            }
+        }
+
+        @keyframes btn-glass-bloom {
+            0% {
+                opacity: 0.62;
+                filter: blur(0);
+                transform: translate3d(0, 0, 0) scaleX(1);
+            }
+            46% {
+                opacity: 0.78;
+                filter: blur(0.08px);
+                transform: translate3d(0, 0, 0) scaleX(1.018);
+            }
+            100% {
+                opacity: 0.66;
+                filter: blur(0);
+                transform: translate3d(0, 0, 0) scaleX(1);
+            }
+        }
+
+        @keyframes btn-halo-bloom {
+            0% {
+                opacity: 0;
+                transform: scale(0.96);
+            }
+            48% {
+                opacity: 0.28;
+                transform: scale(1.02);
+            }
+            100% {
+                opacity: 0;
+                transform: scale(1.06);
+            }
+        }
+
+        @keyframes btn-blur-out {
+            0% {
+                opacity: 1;
+                filter: blur(0) saturate(1);
+                transform: translate3d(0, 0, 0) scale(1);
+            }
+            45% {
+                opacity: 0.52;
+                filter: blur(1.2px) saturate(0.94);
+                transform: translate3d(0, -0.5px, 0) scale(0.992);
+            }
+            100% {
+                opacity: 0;
+                filter: blur(2.6px) saturate(0.86);
+                transform: translate3d(0, -1px, 0) scale(0.976);
+            }
+        }
+
+        @keyframes btn-blur-in {
+            0% {
+                opacity: 0;
+                filter: blur(3px) saturate(0.86);
+                transform: translate3d(0, 0.5px, 0) scale(1.012);
+            }
+            42% {
+                opacity: 0.72;
+                filter: blur(0.9px) saturate(0.97);
+                transform: translate3d(0, 0.25px, 0) scale(1.006);
+            }
+            72% {
+                opacity: 1;
+                filter: blur(0.18px) saturate(1.02);
+                transform: translate3d(0, -0.1px, 0) scale(0.998);
+            }
+            100% {
+                opacity: 1;
+                filter: blur(0) saturate(1);
+                transform: translate3d(0, 0, 0) scale(1);
+            }
+        }
+
+        @keyframes ambient-dust-drift {
+            0% {
+                background-position: 0 0, 32px 18px, -18px 42px, 0 0, 0 0;
+                opacity: 0.16;
+            }
+            100% {
+                background-position: 16px -22px, 18px 42px, 8px 18px, 10px 6px, -8px 4px;
+                opacity: 0.22;
+            }
+        }
+
+        @keyframes ambient-veil-shift {
+            0% {
+                transform: translate3d(0, 0, 0) scale(1);
+                opacity: 1;
+            }
+            100% {
+                transform: translate3d(0, -10px, 0) scale(1.015);
+                opacity: 0.92;
             }
         }
 
@@ -1727,12 +2007,12 @@
             }
 
             .overlay-close-btn {
-                top: max(14px, calc(env(safe-area-inset-top) + 8px));
-                right: max(14px, calc(env(safe-area-inset-right) + 14px));
-                min-width: 68px;
-                height: 44px;
-                padding: 0 12px 0 10px;
-                font-size: 12px;
+                top: max(14px, calc(env(safe-area-inset-top) + 10px));
+                right: max(14px, calc(env(safe-area-inset-right) + 12px));
+                min-width: 76px;
+                height: 46px;
+                padding: 0 14px 0 11px;
+                font-size: 13px;
             }
 
             .result-content {
@@ -1759,12 +2039,12 @@
             }
 
             .dynamic-island.is-split {
-                gap: 7px;
+                gap: 8px;
             }
 
             .play-btn {
-                width: 98px;
-                height: 44px;
+                width: 100px;
+                height: 46px;
                 font-size: 13px;
             }
 
@@ -1839,7 +2119,8 @@
             }
 
             .dynamic-island.is-split .player-pill {
-                max-width: 262px;
+                inline-size: 262px;
+                max-inline-size: 262px;
                 padding: 4px 10px 4px 6px;
             }
 
@@ -1897,12 +2178,15 @@
             .lyric-text,
             .song-name,
             .playlist-item,
-            .btn-text {
+            .btn-text,
+            .btn-text-ghost {
                 filter: none !important;
             }
 
             .playlist-item.is-current::before,
             .loading-copy,
+            .btn-text,
+            .btn-text-ghost,
             .lyric-toggle-btn.is-visible::before,
             .playlist-toggle-btn.is-visible::before {
                 animation: none !important;
@@ -1914,12 +2198,22 @@
                 -webkit-backdrop-filter: blur(12px) saturate(1.05);
             }
 
+            .result-area.is-visible .overlay-close-btn,
+            .playlist-area.is-visible .overlay-close-btn {
+                opacity: 1 !important;
+                filter: none !important;
+                transform: translateZ(0) scale(1) !important;
+                transition-delay: 0s !important;
+            }
+
             body::before,
+            body::after,
             .vinyl-wrapper::before,
             .dynamic-island::before,
             .turntable::after,
             .vinyl-record::after,
-            .play-btn::before {
+            .play-btn::before,
+            .play-btn::after {
                 animation: none !important;
                 transition: none !important;
             }

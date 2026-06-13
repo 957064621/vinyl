@@ -1,4 +1,4 @@
-import {
+﻿import {
     COVER_BASE_URL,
     COVER_ROTATION_FILES,
     MUSIC_BASE_URL,
@@ -81,6 +81,15 @@ import {
         let isDraggingTrack = false;
         let isTrackSwitching = false;
         let isHandlingTrackEnd = false;
+        let buttonTextTransitionId = 0;
+
+        const setPlayButtonBusy = (busy) => {
+            playButton.disabled = false;
+            playButton.toggleAttribute('data-busy', busy);
+            playButton.setAttribute('aria-disabled', busy ? 'true' : 'false');
+        };
+
+        setPlayButtonBusy(false);
 
         const ua = navigator.userAgent || '';
         const platformName = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
@@ -136,7 +145,7 @@ import {
                 return el.animate(keyframes, options);
             }
 
-            // iOS 旧版或内嵌 WebView 不支持 WAAPI 时，直接应用终态避免脚本中断。
+            // Older iOS/WebView builds may not support WAAPI; apply the final frame directly.
             applyFinalKeyframe(el, keyframes);
             return createNoopAnimation();
         };
@@ -171,7 +180,7 @@ import {
 
         const shouldUseHeadlessTrackSwitch = () => {
             if (document.visibilityState !== 'visible') return true;
-            // 微信 WebView 后台能力更受限，保持无动画切歌分支更稳。
+            // WeChat WebView background playback can be constrained; use the steadier headless branch.
             if (playbackPlatform.isWeChat) return true;
             return false;
         };
@@ -517,15 +526,79 @@ import {
 
         const updateButtonText = async (newText) => {
             if (btnTextEl.innerText === newText) return;
-            btnTextEl.classList.add('is-switching');
-            await wait(300);
+
+            if (prefersReducedMotion) {
+                btnTextEl.innerText = newText;
+                return;
+            }
+
+            const transitionId = ++buttonTextTransitionId;
+            const currentText = btnTextEl.innerText;
+            const ghostText = document.createElement('span');
+            const labelViewport = btnTextEl.parentElement;
+
+            playButton.querySelectorAll('.btn-text-ghost').forEach((node) => node.remove());
+            btnTextEl.classList.remove('is-blur-out', 'is-blur-in');
+            playButton.classList.remove('is-text-swapping');
+
+            ghostText.className = 'btn-text-ghost is-blur-in';
+            ghostText.textContent = newText;
+            btnTextEl.innerText = currentText;
+            btnTextEl.classList.add('is-blur-out');
+            playButton.classList.add('is-text-swapping');
+            labelViewport.appendChild(ghostText);
+
+            await wait(420);
+            if (transitionId !== buttonTextTransitionId) return;
             btnTextEl.innerText = newText;
-            btnTextEl.classList.remove('is-switching');
-            await wait(300);
+            btnTextEl.classList.remove('is-blur-out', 'is-blur-in');
+            ghostText.remove();
+            playButton.classList.remove('is-text-swapping');
         };
+
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        const preloadImage = (src, timeout = 1400) => new Promise((resolve) => {
+            const img = new Image();
+            let settled = false;
+            const done = () => {
+                if (settled) return;
+                settled = true;
+                resolve();
+            };
+
+            const timer = setTimeout(done, timeout);
+            img.onload = async () => {
+                try {
+                    if (typeof img.decode === 'function') {
+                        await img.decode();
+                    }
+                } catch (error) {
+                    // decode() may reject for cached/cross-origin images in some WebViews.
+                } finally {
+                    clearTimeout(timer);
+                    done();
+                }
+            };
+            img.onerror = () => {
+                clearTimeout(timer);
+                done();
+            };
+            img.src = src;
+        });
 
         const runLoadingSequence = async () => {
             const loadingSources = COVER_ROTATION_FILES.map((name) => `${COVER_BASE_URL}${name}`);
+            const preloadTimeout = playbackPlatform.isWeChat ? 900 : 1200;
+            let loadingFinished = false;
+            const finishLoadingSequence = () => {
+                if (loadingFinished) return;
+                loadingFinished = true;
+                loadingScreen.classList.add('is-exiting');
+                appShell.classList.add('is-ready');
+            };
+
+            loadingSources.forEach((src) => preloadImage(src, preloadTimeout));
 
             await wait(prefersReducedMotion ? 120 : 1200);
 
@@ -538,7 +611,6 @@ import {
             // 隐藏波纹和文字
             if (holeLoader) holeLoader.classList.add('is-hidden');
             if (loadingCopy) loadingCopy.textContent = '信号已接入';
-
             await wait(prefersReducedMotion ? 0 : 220);
 
             if (loadingHeroWrap) loadingHeroWrap.classList.add('is-loaded');
@@ -575,13 +647,12 @@ import {
             };
             
             updateSlide(600); // 初始图
-
-            // 编排切换时间轴（前两张3、4快切，后1、2、天外来物慢溶）
+            // 编排切换时间轴：前两张轻快切换，后两张慢溶到最终封面。
             const sequenceSteps = [
-                { index: 1, delay: 220, dur: 220 },   // 此时是3，短暂停留后快速切到4
-                { index: 2, delay: 520, dur: 720 },   // 此时是4，慢溶到1
-                { index: 3, delay: 760, dur: 720 },   // 此时是1，慢溶到2
-                { index: 4, delay: 760, dur: 720 }    // 此时是2，慢溶到天外来物
+                { index: 1, delay: 220, dur: 220 },
+                { index: 2, delay: 520, dur: 720 },
+                { index: 3, delay: 760, dur: 720 },
+                { index: 4, delay: 760, dur: 720 }
             ];
 
             if (prefersReducedMotion) {
@@ -598,13 +669,8 @@ import {
             // 最后一张驻留后淡出
             await wait(prefersReducedMotion ? 80 : 900);
             
-            setTimeout(() => {
-                loadingScreen.classList.add('is-exiting');
-                appShell.classList.add('is-ready');
-            }, prefersReducedMotion ? 0 : 320);
+            setTimeout(finishLoadingSequence, prefersReducedMotion ? 0 : 320);
         };
-
-        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
         const createShuffledDrawQueue = (avoidIndex = -1) => {
             const indices = lyricsPool.map((_, index) => index);
@@ -838,6 +904,10 @@ import {
             playlistToggleBtn.classList.toggle('is-visible', shouldShow);
         };
 
+        const setOverlayControlsVisible = (visible) => {
+            dynamicIsland.classList.toggle('is-overlay-control-visible', visible);
+        };
+
         const renderPlaylist = () => {
             playlistList.innerHTML = lyricsPool.map((item, index) => {
                 const activeClass = index === currentLyricIndex ? ' is-current' : '';
@@ -886,7 +956,7 @@ import {
 
             isTrackSwitching = true;
             isDrawing = true;
-            playButton.disabled = true;
+            setPlayButtonBusy(true);
             setFloatingButtonsVisible(false);
 
             try {
@@ -957,7 +1027,7 @@ import {
                 await toggleAudioState(true, { skipMotion: true });
                 await updateButtonText('再次抽取');
             } finally {
-                playButton.disabled = false;
+                setPlayButtonBusy(false);
                 isDrawing = false;
                 isTrackSwitching = false;
             }
@@ -1074,13 +1144,19 @@ import {
             lyricAnimations = [];
             resultArea.classList.remove('is-visible');
             resultArea.classList.remove('show-dismiss-hint');
+            setOverlayControlsVisible(false);
             resultArea.style.opacity = '0';
             resultArea.style.transform = 'none';
+            lyricCloseBtn.style.opacity = '';
+            lyricCloseBtn.style.transform = '';
+            lyricCloseBtn.style.filter = '';
             lyricEl.style.opacity = '0';
             lyricEl.style.transform = 'translateY(20px)';
+            lyricEl.style.filter = '';
             songEl.style.opacity = '0';
             songEl.style.transform = 'translateY(20px)';
-            // player-pill 现在在外部独立管理显示
+            songEl.style.filter = '';
+            // player-pill 现在在外部独立管理显示。
         };
 
         const resetPlaylistVisual = () => {
@@ -1088,10 +1164,15 @@ import {
             playlistAnimations = [];
             playlistArea.classList.remove('is-visible');
             playlistArea.classList.remove('show-dismiss-hint');
+            setOverlayControlsVisible(false);
             playlistArea.style.opacity = '0';
             playlistArea.style.transform = 'none';
+            playlistCloseBtn.style.opacity = '';
+            playlistCloseBtn.style.transform = '';
+            playlistCloseBtn.style.filter = '';
             playlistContent.style.opacity = '0';
             playlistContent.style.transform = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) + 20px))';
+            playlistContent.style.filter = '';
         };
 
         const animateLyricIn = () => {
@@ -1101,43 +1182,44 @@ import {
                 hasShownDismissHint = true;
             }
             dynamicIsland.classList.add('is-split');
+            setOverlayControlsVisible(true);
 
             const cardAnim = safeAnimate(resultArea, [
-                { opacity: 0 },
-                { opacity: 1 }
+                { opacity: 0, transform: 'translateY(8px)' },
+                { opacity: 1, transform: 'translateY(0)' }
             ], {
-                duration: 620,
+                duration: 560,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
             const lyricAnim = safeAnimate(lyricEl, [
-                { opacity: 0, transform: 'translateY(18px)' },
-                { opacity: 1, transform: 'translateY(0)' }
+                { opacity: 0, transform: 'translateY(16px) scale(0.995)', filter: 'blur(5px)' },
+                { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
             ], {
-                duration: 780,
+                duration: 740,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
             const songAnim = safeAnimate(songEl, [
-                { opacity: 0, transform: 'translateY(16px)' },
-                { opacity: 1, transform: 'translateY(0)' }
+                { opacity: 0, transform: 'translateY(12px)', filter: 'blur(4px)' },
+                { opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)' }
             ], {
-                duration: 720,
-                delay: 180,
+                duration: 660,
+                delay: 150,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
             const lineAnimations = Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => safeAnimate(line, [
-                { opacity: 0, transform: 'translateY(14px) scale(0.992)', filter: 'blur(4px)' },
+                { opacity: 0, transform: 'translateY(12px) scale(0.992)', filter: 'blur(4px)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
             ], {
-                duration: 640,
-                delay: 110 + index * 64,
+                duration: 600,
+                delay: 90 + index * 54,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             }));
 
             lyricAnimations = [cardAnim, lyricAnim, songAnim, ...lineAnimations];
@@ -1150,60 +1232,116 @@ import {
                 hasShownPlaylistHint = true;
             }
             dynamicIsland.classList.add('is-split');
+            setOverlayControlsVisible(false);
 
             const cardAnim = safeAnimate(playlistArea, [
-                { opacity: 0 },
-                { opacity: 1 }
+                { opacity: 0, transform: 'translateY(8px)' },
+                { opacity: 1, transform: 'translateY(0)' }
             ], {
-                duration: 620,
+                duration: 560,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
             const contentAnim = safeAnimate(playlistContent, [
-                { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
-                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
+                { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM, filter: 'blur(6px)' },
+                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM, filter: 'blur(0px)' }
             ], {
-                duration: 720,
+                duration: 680,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
             const itemAnimations = Array.from(playlistList.querySelectorAll('.playlist-item')).map((item, index) => safeAnimate(item, [
-                { opacity: 0, transform: 'translateY(8px) scale(0.992)', filter: 'blur(3px)' },
+                { opacity: 0, transform: 'translateY(7px) scale(0.992)', filter: 'blur(3px)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
             ], {
-                duration: 460,
-                delay: Math.min(160, index * 18),
+                duration: 430,
+                delay: Math.min(150, index * 16),
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.2, 0.8, 0.18, 1)'
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             }));
 
             playlistAnimations = [cardAnim, contentAnim, ...itemAnimations];
         };
 
         const morphResultOut = () => {
+            lyricAnimations.forEach((anim) => anim.cancel());
+            lyricAnimations = [];
+
             const fadeOutAnimation = safeAnimate(resultArea, [
-                { opacity: 1 },
-                { opacity: 0 }
+                { opacity: 1, transform: 'translateY(0)' },
+                { opacity: 0, transform: 'translateY(-8px)' }
             ], {
-                duration: 420,
+                duration: 360,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.45, 0, 0.55, 1)'
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
             });
+
+            const closeAnim = safeAnimate(lyricCloseBtn, [
+                { opacity: 1, transform: 'translateZ(0) scale(1)', filter: 'blur(0px)' },
+                { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)', filter: 'blur(6px)' }
+            ], {
+                duration: 240,
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
+            });
+
+            const contentAnim = safeAnimate(lyricEl, [
+                { opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)' },
+                { opacity: 0, transform: 'translateY(-8px)', filter: 'blur(4px)' }
+            ], {
+                duration: 280,
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
+            });
+
+            const songAnim = safeAnimate(songEl, [
+                { opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)' },
+                { opacity: 0, transform: 'translateY(-6px)', filter: 'blur(4px)' }
+            ], {
+                duration: 260,
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
+            });
+
+            lyricAnimations = [fadeOutAnimation, closeAnim, contentAnim, songAnim];
 
             return fadeOutAnimation.finished || Promise.resolve();
         };
 
         const morphPlaylistOut = () => {
+            playlistAnimations.forEach((anim) => anim.cancel());
+            playlistAnimations = [];
+
             const fadeOutAnimation = safeAnimate(playlistArea, [
-                { opacity: 1 },
-                { opacity: 0 }
+                { opacity: 1, transform: 'translateY(0)' },
+                { opacity: 0, transform: 'translateY(-8px)' }
             ], {
-                duration: 420,
+                duration: 360,
                 fill: 'forwards',
-                easing: 'cubic-bezier(0.45, 0, 0.55, 1)'
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
             });
+
+            const closeAnim = safeAnimate(playlistCloseBtn, [
+                { opacity: 1, transform: 'translateZ(0) scale(1)', filter: 'blur(0px)' },
+                { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)', filter: 'blur(6px)' }
+            ], {
+                duration: 240,
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
+            });
+
+            const contentAnim = safeAnimate(playlistContent, [
+                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM, filter: 'blur(0px)' },
+                { opacity: 0, transform: 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) - 10px))', filter: 'blur(5px)' }
+            ], {
+                duration: 300,
+                fill: 'forwards',
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
+            });
+
+            playlistAnimations = [fadeOutAnimation, closeAnim, contentAnim];
 
             return fadeOutAnimation.finished || Promise.resolve();
         };
@@ -1215,7 +1353,7 @@ import {
             isOverlayClosing = true;
             if (ownsInteractionLock) {
                 isDrawing = true;
-                playButton.disabled = true;
+                setPlayButtonBusy(true);
             }
 
             try {
@@ -1226,7 +1364,7 @@ import {
                 setFloatingButtonsVisible(true);
             } finally {
                 if (ownsInteractionLock) {
-                    playButton.disabled = false;
+                    setPlayButtonBusy(false);
                     isDrawing = false;
                 }
                 isOverlayClosing = false;
@@ -1240,7 +1378,7 @@ import {
             isOverlayClosing = true;
             if (ownsInteractionLock) {
                 isDrawing = true;
-                playButton.disabled = true;
+                setPlayButtonBusy(true);
             }
 
             try {
@@ -1249,7 +1387,7 @@ import {
                 setFloatingButtonsVisible(true);
             } finally {
                 if (ownsInteractionLock) {
-                    playButton.disabled = false;
+                    setPlayButtonBusy(false);
                     isDrawing = false;
                 }
                 isOverlayClosing = false;
@@ -1323,7 +1461,7 @@ import {
         playButton.addEventListener('click', async () => {
             if (isDrawing) return;
             isDrawing = true;
-            playButton.disabled = true;
+            setPlayButtonBusy(true);
 
             setFloatingButtonsVisible(false);
 
@@ -1359,14 +1497,14 @@ import {
             resetPlaylistVisual();
             turntable.classList.add('is-playing');
 
-            // 保证在play()的一瞬间，所有关联数值严格等于 initialRate（特别是光效参数）
+            // 保证 play() 瞬间的关联数值严格等于 initialRate，避免光效跳变。
             updateSheenByRate(initialRate);
             spinAnimation.playbackRate = initialRate;
 
             spinAnimation.play();
             sheenAnimation.play();
 
-            // 点击即加速到最高
+            // 点击即加速到最高。
             const maxRate = 5.2;
 
             await Promise.all([
@@ -1413,7 +1551,7 @@ import {
             animateLyricIn();
             await toggleAudioState(true, { skipMotion: true });
 
-            // 让文字在歌词展开时再变，避免时间上同步过于机械
+            // 让文字在歌词展开时再变，避免时间上同步过于机械。
             await wait(prefersReducedMotion ? 0 : 180);
             await updateButtonText('再次抽取');
 
@@ -1432,6 +1570,6 @@ import {
                     })
                 ]);
             }
-            playButton.disabled = false;
+            setPlayButtonBusy(false);
             isDrawing = false;
         });
