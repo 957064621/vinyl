@@ -1,7 +1,8 @@
-export const COVER_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/';
-export const MUSIC_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/musics/';
+(function () {
+const COVER_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/';
+const MUSIC_BASE_URL = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/musics/';
 
-export const COVER_ROTATION_FILES = [
+const COVER_ROTATION_FILES = [
     '3.jpg',
     '4.jpg',
     '1.jpg',
@@ -9,7 +10,7 @@ export const COVER_ROTATION_FILES = [
     '%E5%A4%A9%E5%A4%96%E6%9D%A5%E7%89%A9.jpg'
 ];
 
-export const lyricsPool = [
+const lyricsPool = [
     {
         song: "《天外来物》",
         text: "你就像天外来物一样\n求之不得\n我在世俗里的名字\n被人用了\n反正我隐藏的人格\n是锲而不舍"
@@ -127,3 +128,11 @@ export const lyricsPool = [
         text: "唾弃你贪婪的咒\n现在又何必挽留\n怎么狂妄到要灵魂任人左右\n莫非造了我 爱造了祸\n你才不会觉得寂寞"
     }
 ];
+
+window.VINYL_DATA = {
+    COVER_BASE_URL,
+    COVER_ROTATION_FILES,
+    MUSIC_BASE_URL,
+    lyricsPool
+};
+})();

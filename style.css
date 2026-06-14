@@ -1972,6 +1972,10 @@
                 --playlist-edge-fade: 18px;
             }
 
+            body {
+                padding-inline: 16px;
+            }
+
             body::before {
                 opacity: 0.14;
             }
@@ -2038,32 +2042,72 @@
                 margin-top: 22px;
             }
 
+            .dynamic-island {
+                width: min(100%, 320px);
+                margin-top: 16px;
+            }
+
             .dynamic-island.is-split {
-                gap: 8px;
+                display: grid;
+                grid-template-columns: 44px minmax(96px, 108px) 44px;
+                grid-template-areas:
+                    "playlist play lyric"
+                    "player player player";
+                justify-content: center;
+                align-items: center;
+                column-gap: 8px;
+                row-gap: 10px;
+                gap: 10px 8px;
+                transform: translate3d(0, -1px, 0);
+            }
+
+            .dynamic-island::before {
+                width: min(84vw, 260px);
+                height: 112px;
+                opacity: 0.42;
             }
 
             .play-btn {
-                width: 100px;
+                grid-area: play;
+                width: 104px;
                 height: 46px;
                 font-size: 13px;
+                justify-self: center;
             }
 
             .lyric-toggle-btn {
-                width: 40px;
-                height: 40px;
+                width: 44px;
+                height: 44px;
                 padding: 0;
             }
 
             .playlist-toggle-btn {
-                width: 40px;
-                height: 40px;
+                width: 44px;
+                height: 44px;
                 padding: 0;
+            }
+
+            .dynamic-island.is-split .lyric-toggle-btn,
+            .dynamic-island.is-split .playlist-toggle-btn {
+                position: static;
+                top: auto;
+                right: auto;
+                left: auto;
+                justify-self: center;
+            }
+
+            .dynamic-island.is-split .playlist-toggle-btn {
+                grid-area: playlist;
+            }
+
+            .dynamic-island.is-split .lyric-toggle-btn {
+                grid-area: lyric;
             }
 
             .lyric-toggle-btn svg,
             .playlist-toggle-btn svg {
-                width: 16px;
-                height: 16px;
+                width: 17px;
+                height: 17px;
             }
 
             .playlist-content {
@@ -2119,9 +2163,13 @@
             }
 
             .dynamic-island.is-split .player-pill {
-                inline-size: 262px;
-                max-inline-size: 262px;
-                padding: 4px 10px 4px 6px;
+                grid-area: player;
+                justify-self: center;
+                inline-size: min(calc(100vw - 56px), 300px);
+                max-inline-size: 300px;
+                gap: 10px;
+                padding: 5px 12px 5px 7px;
+                transform-origin: center top;
             }
 
             .player-ctrl-btn {
@@ -2130,8 +2178,10 @@
             }
 
             .player-track-wrap {
-                width: 16vw;
-                min-width: 90px;
+                flex: 1 1 0;
+                width: auto;
+                min-width: 0;
+                max-width: none;
             }
 
             .player-time {
@@ -2167,9 +2217,6 @@
             *,
             *::before,
             *::after {
-                animation-duration: 0.001ms !important;
-                animation-iteration-count: 1 !important;
-                transition-duration: 0.001ms !important;
                 scroll-behavior: auto !important;
             }
 
@@ -2187,6 +2234,8 @@
             .loading-copy,
             .btn-text,
             .btn-text-ghost,
+            .play-btn::before,
+            .play-btn::after,
             .lyric-toggle-btn.is-visible::before,
             .playlist-toggle-btn.is-visible::before {
                 animation: none !important;
@@ -2213,7 +2262,9 @@
             .turntable::after,
             .vinyl-record::after,
             .play-btn::before,
-            .play-btn::after {
+            .play-btn::after,
+            .lyric-toggle-btn::before,
+            .playlist-toggle-btn::before {
                 animation: none !important;
                 transition: none !important;
             }

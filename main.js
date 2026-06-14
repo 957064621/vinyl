@@ -1,9 +1,14 @@
-﻿import {
+const VINYL_DATA = window.VINYL_DATA;
+if (!VINYL_DATA) {
+    throw new Error('Vinyl data is missing. Load data.js before main.js.');
+}
+
+const {
     COVER_BASE_URL,
     COVER_ROTATION_FILES,
     MUSIC_BASE_URL,
     lyricsPool
-} from './data.js';
+} = VINYL_DATA;
 
         const loadingScreen = document.getElementById('loadingScreen');
         const appShell = document.getElementById('appShell');
@@ -91,6 +96,15 @@
 
         setPlayButtonBusy(false);
 
+        const setPlayerToggleState = (playing) => {
+            playerToggleBtn.classList.toggle('is-playing', playing);
+            playerToggleBtn.setAttribute('aria-pressed', playing ? 'true' : 'false');
+            playerToggleBtn.setAttribute('aria-label', playing ? '暂停播放' : '播放');
+            playerToggleBtn.setAttribute('title', playing ? '暂停播放' : '播放');
+        };
+
+        setPlayerToggleState(false);
+
         const ua = navigator.userAgent || '';
         const platformName = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
         const isIOSDevice = /iPad|iPhone|iPod/i.test(ua) || (platformName === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -136,13 +150,16 @@
         };
 
         const safeAnimate = (el, keyframes, options) => {
-            if (prefersReducedMotion) {
-                applyFinalKeyframe(el, keyframes);
-                return createNoopAnimation();
-            }
-
             if (canUseWebAnimations && typeof el.animate === 'function') {
-                return el.animate(keyframes, options);
+                const motionOptions = prefersReducedMotion
+                    ? {
+                        ...options,
+                        duration: Math.min(Number(options?.duration) || 180, 180),
+                        delay: Math.min(Number(options?.delay) || 0, 40),
+                        easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+                    }
+                    : options;
+                return el.animate(keyframes, motionOptions);
             }
 
             // Older iOS/WebView builds may not support WAAPI; apply the final frame directly.
@@ -256,16 +273,19 @@
             }
         };
 
-        const stopAndFadeOutAudio = async (duration = 800) => {
+        const stopAndFadeOutAudio = async (duration = 800, options = {}) => {
+            const { disableControl = true } = options;
             if (audioEl.paused) {
                 cancelVolumeFade();
                 isAudioPlaying = false;
+                setPlayerToggleState(false);
                 playerToggleBtn.classList.remove('is-disabled');
                 return;
             }
 
             cancelVolumeFade();
-            playerToggleBtn.classList.add('is-disabled');
+            setPlayerToggleState(false);
+            playerToggleBtn.classList.toggle('is-disabled', disableControl);
 
             return new Promise((resolve) => {
                 const finishStop = () => {
@@ -275,6 +295,7 @@
                     audioEl.playbackRate = 1;
                     if (canSetMediaVolume) audioEl.volume = 1;
                     playerToggleBtn.classList.remove('is-disabled');
+                    setPlayerToggleState(false);
                     resolve();
                 };
 
@@ -353,12 +374,13 @@
             if (play) {
                 if (canSetMediaVolume) audioEl.volume = 1;
                 playerToggleBtn.classList.remove('is-disabled');
+                setPlayerToggleState(true);
                 const playAttempt = audioEl.play();
                 if (playAttempt && typeof playAttempt.catch === 'function') {
                     playAttempt.catch((e) => {
                         console.log('Audio init pending interaction', e);
                         isAudioPlaying = false;
-                        playerToggleBtn.classList.remove('is-playing');
+                        setPlayerToggleState(false);
                         updateMediaSessionPlaybackState();
                         if (!isDrawing && !isTrackSwitching) {
                             turntable.classList.remove('is-playing');
@@ -380,7 +402,7 @@
                     });
                 }
             } else {
-                await stopAndFadeOutAudio(stopDuration);
+                await stopAndFadeOutAudio(stopDuration, { disableControl: false });
                 if (!skipMotion && !isDrawing && !isTrackSwitching) {
                     animateTonearm({
                         from: getCurrentArmAngle(),
@@ -395,7 +417,7 @@
         audioEl.addEventListener('play', () => {
             isAudioPlaying = true;
             playerToggleBtn.classList.remove('is-disabled');
-            playerToggleBtn.classList.add('is-playing');
+            setPlayerToggleState(true);
             updateMediaSessionPlaybackState();
             if (!isDrawing && !isTrackSwitching) {
                 animateTurntableToTargetRate({
@@ -408,7 +430,7 @@
 
         audioEl.addEventListener('pause', () => {
             isAudioPlaying = false;
-            playerToggleBtn.classList.remove('is-playing');
+            setPlayerToggleState(false);
             updateMediaSessionPlaybackState();
             if (!isDrawing && !isTrackSwitching) {
                 animateTurntableToTargetRate({
