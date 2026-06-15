@@ -954,7 +954,7 @@ const {
             controlMotionTimer = setTimeout(() => {
                 dynamicIsland.classList.remove('is-opening', 'is-collapsing');
                 controlMotionTimer = null;
-            }, split ? 760 : 620);
+            }, split ? 860 : 700);
         };
 
         const renderPlaylist = () => {
@@ -1568,10 +1568,12 @@ const {
             isDrawing = true;
             setPlayButtonBusy(true);
 
+            const shouldDelayLoadingText = dynamicIsland.classList.contains('is-split');
             setFloatingButtonsVisible(false);
             setControlSplit(false);
 
-            const textUpdatePromise = updateButtonText('读取中');
+            const textUpdateDelay = shouldDelayLoadingText && !prefersReducedMotion ? 260 : 0;
+            const textUpdatePromise = wait(textUpdateDelay).then(() => updateButtonText('读取中'));
 
             let initialArmAngle = ARM_REST_ANGLE;
             let initialRate = 0;

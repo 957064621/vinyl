@@ -21,6 +21,8 @@
             --button-settle-ease: cubic-bezier(0.2, 1.18, 0.24, 1);
             --control-slide-ease: cubic-bezier(0.16, 1, 0.3, 1);
             --control-orbit-ease: cubic-bezier(0.18, 1.18, 0.2, 1);
+            --control-drift-in-ease: cubic-bezier(0.24, 0.82, 0.18, 1);
+            --control-drift-out-ease: cubic-bezier(0.28, 0.72, 0.18, 1);
             --lyric-ios-offset: 0px;
             --playlist-lift: -3.8vh;
             --stage-lift: clamp(38px, 6.6vh, 70px);
@@ -721,6 +723,8 @@
             --control-height: 48px;
             --play-shift: 0px;
             --island-lift: 0px;
+            --player-enter-x: -18px;
+            --player-exit-x: -10px;
             width: calc(var(--play-width) + var(--player-slot) + var(--player-gap));
             min-height: var(--control-height);
             transform: translate3d(0, var(--island-lift), 0);
@@ -758,11 +762,27 @@
         }
 
         .dynamic-island.is-opening .play-btn {
-            animation: control-button-settle-in 0.72s var(--control-orbit-ease) both;
+            transition:
+                transform 0.72s var(--control-drift-in-ease) 0.06s,
+                background 0.52s var(--fluid-ease),
+                box-shadow 0.52s var(--fluid-ease),
+                opacity 0.36s ease;
         }
 
         .dynamic-island.is-collapsing .play-btn {
-            animation: control-button-settle-out 0.58s var(--control-slide-ease) both;
+            transition:
+                transform 0.56s var(--control-drift-out-ease) 0.04s,
+                background 0.46s var(--fluid-ease),
+                box-shadow 0.46s var(--fluid-ease),
+                opacity 0.32s ease;
+        }
+
+        .dynamic-island.is-opening .play-btn::before {
+            animation: control-button-surface-in 0.62s var(--control-drift-in-ease) 0.06s both;
+        }
+
+        .dynamic-island.is-collapsing .play-btn::before {
+            animation: control-button-surface-out 0.5s var(--control-drift-out-ease) 0.04s both;
         }
 
         .play-btn {
@@ -794,8 +814,13 @@
                 0 0 18px rgba(154, 211, 255, 0.055),
                 inset 0 1px 1px rgba(255, 255, 255, 0.22),
                 inset 0 -9px 18px rgba(0, 0, 0, 0.16);
-            transition: transform 0.58s var(--control-orbit-ease), background 0.52s var(--fluid-ease), box-shadow 0.52s var(--fluid-ease), opacity 0.36s ease;
+            transition:
+                transform 0.72s var(--control-drift-in-ease),
+                background 0.52s var(--fluid-ease),
+                box-shadow 0.52s var(--fluid-ease),
+                opacity 0.36s ease;
             will-change: transform;
+            z-index: 2;
             transform-origin: 50% 50%;
             -webkit-tap-highlight-color: transparent;
             user-select: none;
@@ -1783,18 +1808,19 @@
             min-width: 0;
             overflow: visible;
             pointer-events: none;
-            filter: blur(5px);
-            transform: translate3d(-20px, -50%, 0) scale3d(0.955, 0.985, 1);
-            -webkit-transform: translate3d(-20px, -50%, 0) scale3d(0.955, 0.985, 1);
+            filter: blur(6px);
+            transform: translate3d(var(--player-enter-x), -50%, 0) scale3d(0.955, 0.982, 1);
+            -webkit-transform: translate3d(var(--player-enter-x), -50%, 0) scale3d(0.955, 0.982, 1);
             transform-origin: left center;
             transition:
-                opacity 0.36s var(--fluid-ease),
-                transform 0.62s var(--control-orbit-ease),
+                opacity 0.38s var(--fluid-ease),
+                transform 0.7s var(--control-drift-in-ease),
                 filter 0.34s var(--fluid-ease);
             will-change: transform, opacity, filter;
             isolation: isolate;
             flex-shrink: 0;
             order: 2;
+            z-index: 1;
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
         }
@@ -1839,7 +1865,23 @@
             transform: translate3d(0, -50%, 0) scale(1);
             -webkit-transform: translate3d(0, -50%, 0) scale(1);
             pointer-events: auto;
-            transition-delay: 0.06s;
+            transition-delay: 0.02s, 0.08s, 0.02s;
+        }
+
+        .dynamic-island.is-opening .player-pill {
+            animation: player-pill-breathe-in 0.78s var(--control-drift-in-ease) both;
+        }
+
+        .dynamic-island.is-collapsing .player-pill {
+            opacity: 0;
+            filter: blur(6px);
+            transform: translate3d(var(--player-exit-x), -50%, 0) scale3d(0.96, 0.984, 1);
+            -webkit-transform: translate3d(var(--player-exit-x), -50%, 0) scale3d(0.96, 0.984, 1);
+            transition:
+                opacity 0.24s ease,
+                transform 0.5s var(--control-drift-out-ease),
+                filter 0.2s ease;
+            transition-delay: 0s;
         }
 
         .dynamic-island.is-split .player-pill::after {
@@ -1850,6 +1892,13 @@
             opacity: 1;
             transform: translateZ(0);
             transition-delay: 0.18s;
+        }
+
+        .dynamic-island.is-collapsing .player-pill > * {
+            opacity: 0;
+            transform: translate3d(-4px, -1px, 0);
+            transition-duration: 0.2s;
+            transition-delay: 0s;
         }
 
         .player-ctrl-btn {
@@ -1981,24 +2030,63 @@
             }
         }
 
-        @keyframes control-button-settle-in {
+        @keyframes control-button-surface-in {
             0% {
-                transform: translate3d(calc(var(--play-shift) + 10px), var(--button-y), 0) scale3d(calc(var(--button-scale) * 0.985), calc(var(--button-scale) * 0.985), 1);
+                transform: translateZ(0) scale3d(0.985, 0.985, 1);
+                opacity: 0.5;
             }
-            58% {
-                transform: translate3d(calc(var(--play-shift) - 1.6px), var(--button-y), 0) scale3d(calc(var(--button-scale) * 1.008), calc(var(--button-scale) * 1.008), 1);
+            42% {
+                transform: translateZ(0) scale3d(1.026, 1.026, 1);
+                opacity: 0.82;
+            }
+            68% {
+                transform: translateZ(0) scale3d(0.994, 0.994, 1);
+                opacity: 0.64;
             }
             100% {
-                transform: translate3d(var(--play-shift), var(--button-y), 0) scale3d(var(--button-scale), var(--button-scale), 1);
+                transform: translateZ(0) scale3d(1, 1, 1);
+                opacity: 0.62;
             }
         }
 
-        @keyframes control-button-settle-out {
+        @keyframes control-button-surface-out {
             0% {
-                transform: translate3d(calc(var(--play-shift) - 8px), var(--button-y), 0) scale3d(calc(var(--button-scale) * 0.992), calc(var(--button-scale) * 0.992), 1);
+                transform: translateZ(0) scale3d(0.99, 0.99, 1);
+                opacity: 0.54;
+            }
+            38% {
+                transform: translateZ(0) scale3d(1.02, 1.02, 1);
+                opacity: 0.78;
+            }
+            72% {
+                transform: translateZ(0) scale3d(0.996, 0.996, 1);
+                opacity: 0.64;
             }
             100% {
-                transform: translate3d(var(--play-shift), var(--button-y), 0) scale3d(var(--button-scale), var(--button-scale), 1);
+                transform: translateZ(0) scale3d(1, 1, 1);
+                opacity: 0.62;
+            }
+        }
+
+        @keyframes player-pill-breathe-in {
+            0% {
+                opacity: 0;
+                filter: blur(6px);
+                transform: translate3d(calc(var(--player-enter-x) - 4px), -50%, 0) scale3d(0.952, 0.98, 1);
+            }
+            38% {
+                opacity: 0.78;
+                filter: blur(2px);
+            }
+            66% {
+                opacity: 1;
+                filter: blur(0.4px);
+                transform: translate3d(1.6px, -50%, 0) scale3d(1.01, 1.006, 1);
+            }
+            100% {
+                opacity: 1;
+                filter: blur(0);
+                transform: translate3d(0, -50%, 0) scale3d(1, 1, 1);
             }
         }
 
@@ -2271,6 +2359,8 @@
                 --player-slot: min(calc(82vw - 116px), 190px);
                 --player-gap: 10px;
                 --control-height: 48px;
+                --player-enter-x: -12px;
+                --player-exit-x: -7px;
                 width: min(82vw, 306px);
                 margin-top: 28px;
                 min-height: 48px;
@@ -2413,13 +2503,13 @@
                 border-width: 1px;
                 opacity: 0;
                 filter: blur(4px);
-                transform: translate3d(-14px, -50%, 0) scale3d(0.955, 0.982, 1);
-                -webkit-transform: translate3d(-14px, -50%, 0) scale3d(0.955, 0.982, 1);
+                transform: translate3d(var(--player-enter-x), -50%, 0) scale3d(0.955, 0.982, 1);
+                -webkit-transform: translate3d(var(--player-enter-x), -50%, 0) scale3d(0.955, 0.982, 1);
                 transform-origin: left center;
                 transition:
-                    opacity 0.32s var(--fluid-ease),
-                    transform 0.56s var(--control-orbit-ease),
-                    filter 0.3s var(--fluid-ease);
+                    opacity 0.34s var(--fluid-ease),
+                    transform 0.64s var(--control-drift-in-ease),
+                    filter 0.28s var(--fluid-ease);
                 will-change: transform, opacity, filter;
             }
 
@@ -2502,6 +2592,9 @@
             .loading-copy,
             .btn-text,
             .btn-text-ghost,
+            .dynamic-island.is-opening .play-btn,
+            .dynamic-island.is-collapsing .play-btn,
+            .dynamic-island.is-opening .player-pill,
             .play-btn::before,
             .play-btn::after,
             .lyric-toggle-btn.is-visible::before,
