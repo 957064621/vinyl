@@ -28,11 +28,27 @@
             --safe-top: env(safe-area-inset-top, 0px);
             --safe-bottom: env(safe-area-inset-bottom, 0px);
             --app-bg:
-                radial-gradient(80% 64% at 50% 6%, rgba(181, 222, 255, 0.14) 0%, rgba(181, 222, 255, 0.035) 36%, transparent 66%),
-                radial-gradient(62% 46% at 15% 76%, rgba(255, 154, 176, 0.075) 0%, transparent 58%),
-                radial-gradient(68% 52% at 94% 16%, rgba(154, 224, 255, 0.07) 0%, transparent 58%),
+                radial-gradient(88% 66% at 50% 3%, color-mix(in srgb, var(--cover-a) 32%, transparent) 0%, color-mix(in srgb, var(--cover-a) 8%, transparent) 38%, transparent 68%),
+                radial-gradient(64% 48% at 13% 80%, color-mix(in srgb, var(--cover-b) 22%, transparent) 0%, transparent 60%),
+                radial-gradient(72% 54% at 95% 16%, color-mix(in srgb, var(--cover-a) 17%, transparent) 0%, transparent 60%),
                 linear-gradient(180deg, #0a111c 0%, #060910 50%, #04060b 100%);
+            --cover-a: #b7ddff;
+            --cover-b: #ff9ab0;
             color-scheme: dark;
+            transition: --cover-a 1.05s var(--fluid-ease), --cover-b 1.05s var(--fluid-ease);
+        }
+
+        /* 封面驱动的动态主色：注册为 <color> 才能在抽取时平滑过渡。
+           默认值与原有蓝/玫瑰一致，未抽取前视觉不变。 */
+        @property --cover-a {
+            syntax: "<color>";
+            inherits: true;
+            initial-value: #b7ddff;
+        }
+        @property --cover-b {
+            syntax: "<color>";
+            inherits: true;
+            initial-value: #ff9ab0;
         }
 
         * {
@@ -366,10 +382,10 @@
             transform: translate(-50%, -46%);
             border-radius: 50%;
             background:
-                radial-gradient(circle, rgba(181, 222, 255, 0.13) 0%, rgba(181, 222, 255, 0.035) 42%, transparent 72%),
-                conic-gradient(from 20deg, transparent, rgba(255, 255, 255, 0.07), transparent 30%, rgba(255, 154, 176, 0.055), transparent 66%);
+                radial-gradient(circle, color-mix(in srgb, var(--cover-a) 32%, transparent) 0%, color-mix(in srgb, var(--cover-a) 9%, transparent) 42%, transparent 72%),
+                conic-gradient(from 20deg, transparent, rgba(255, 255, 255, 0.07), transparent 30%, color-mix(in srgb, var(--cover-b) 17%, transparent), transparent 66%);
             filter: blur(4px);
-            opacity: 0.7;
+            opacity: 0.85;
             pointer-events: none;
         }
 
@@ -381,6 +397,7 @@
             padding: 18px;
             background:
                 radial-gradient(circle at 32% 18%, rgba(255, 255, 255, 0.12), transparent 28%),
+                radial-gradient(116% 116% at 50% 38%, transparent 58%, rgba(0, 0, 0, 0.32) 100%),
                 linear-gradient(155deg, rgba(31, 43, 64, 0.72), rgba(10, 15, 25, 0.84)),
                 linear-gradient(0deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0));
             box-shadow:
@@ -559,20 +576,36 @@
             pointer-events: none;
         }
 
+        /* 固定的定向镜面反光：唱片在它下面旋转（不再跟着转），更接近真实黑胶在顶光下的反光带 */
         .vinyl-highlight {
             position: absolute;
-            inset: 0;
+            top: 50%;
+            left: 50%;
+            width: min(70vw, 280px);
+            height: min(70vw, 280px);
+            transform: translate(-50%, -50%);
             border-radius: 50%;
-            background: conic-gradient(
-                transparent 0deg,
-                rgba(255, 255, 255, 0.11) 34deg,
-                transparent 82deg,
-                transparent 176deg,
-                rgba(183, 221, 255, 0.16) 218deg,
-                transparent 270deg
-            );
+            z-index: 9;
+            background:
+                linear-gradient(122deg,
+                    transparent 30%,
+                    rgba(255, 255, 255, 0.085) 43%,
+                    rgba(214, 234, 255, 0.17) 49.5%,
+                    rgba(255, 255, 255, 0.06) 56%,
+                    transparent 69%),
+                radial-gradient(circle at 70% 76%, rgba(181, 221, 255, 0.1), transparent 40%),
+                radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.07), transparent 36%);
+            -webkit-mask-image: radial-gradient(circle, transparent 27%, #000 30.5%);
+            mask-image: radial-gradient(circle, transparent 27%, #000 30.5%);
             mix-blend-mode: screen;
             pointer-events: none;
+            will-change: opacity, transform;
+            animation: vinyl-glare-breathe 9s ease-in-out infinite alternate;
+        }
+
+        @keyframes vinyl-glare-breathe {
+            0%   { opacity: 0.7;  transform: translate(-50%, -50%) rotate(-1.6deg); }
+            100% { opacity: 1;    transform: translate(-50%, -50%) rotate(1.6deg); }
         }
 
         .vinyl-record::after {
@@ -589,16 +622,43 @@
 
         .vinyl-sticker {
             position: relative;
-            width: 106px;
-            height: 106px;
+            width: 116px;
+            height: 116px;
             border-radius: 50%;
-            background: url("https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/%E5%A4%A9%E5%A4%96%E6%9D%A5%E7%89%A9.jpg") center center / cover no-repeat;
-            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.58), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+            background: radial-gradient(circle at 50% 36%, #141d2e, #070c15);
+            box-shadow:
+                0 10px 22px rgba(0, 0, 0, 0.55),
+                0 0 0 4px rgba(6, 9, 16, 0.6),
+                0 0 0 5px rgba(255, 255, 255, 0.05),
+                inset 0 1px 2px rgba(255, 255, 255, 0.3),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.16);
             display: flex;
             justify-content: center;
             align-items: center;
             z-index: 2;
             overflow: hidden;
+        }
+
+        /* 封面层：两层交叉淡入，换图不再生硬；轻微缩放收束增加高级感 */
+        .vinyl-cover {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background-position: center;
+            background-size: cover;
+            background-repeat: no-repeat;
+            opacity: 0;
+            transform: scale(1.06);
+            z-index: 0;
+            transition: opacity 0.62s var(--fluid-ease), transform 0.78s var(--fluid-ease);
+            will-change: opacity, transform;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+
+        .vinyl-cover.is-active {
+            opacity: 1;
+            transform: scale(1);
         }
 
         .vinyl-sheen {
@@ -619,6 +679,7 @@
             mix-blend-mode: screen;
             opacity: 0.03;
             pointer-events: none;
+            z-index: 2;
             will-change: transform, opacity;
         }
 
@@ -629,14 +690,17 @@
             border-radius: 50%;
             background: linear-gradient(145deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 46%);
             pointer-events: none;
+            z-index: 1;
         }
 
         .vinyl-hole {
+            position: relative;
+            z-index: 3;
             width: 12px;
             height: 12px;
             border-radius: 50%;
             background-color: var(--bg-base);
-            box-shadow: 
+            box-shadow:
                 inset 0 2px 4px rgba(0, 0, 0, 1),
                 0 1px 0 rgba(255, 255, 255, 0.25);
         }
@@ -649,7 +713,7 @@
             align-items: center;
             gap: 0;
             z-index: 85;
-            transition: gap 0.58s var(--soft-spring), transform 0.58s var(--soft-spring);
+            transition: gap 0.58s var(--soft-spring), transform 0.58s var(--soft-spring), min-height 0.58s var(--soft-spring);
             will-change: gap, transform;
         }
 
@@ -745,6 +809,46 @@
             z-index: 0;
         }
 
+        /* 抽取按钮的玻璃扫光：大部分时间静止，每隔几秒短暂掠过一次，增加高级感 */
+        .btn-sheen {
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            overflow: hidden;
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        .btn-sheen::after {
+            content: "";
+            position: absolute;
+            top: -40%;
+            left: 0;
+            width: 56%;
+            height: 180%;
+            background: linear-gradient(100deg,
+                transparent 0%,
+                rgba(255, 255, 255, 0.05) 28%,
+                rgba(255, 255, 255, 0.26) 50%,
+                rgba(255, 255, 255, 0.05) 72%,
+                transparent 100%);
+            filter: blur(3px);
+            opacity: 0;
+            transform: translate3d(-150%, 0, 0) skewX(-12deg);
+            animation: btn-sheen-sweep 6.6s linear infinite;
+            will-change: transform, opacity;
+        }
+
+        /* 匀速滑行避免顿挫；亮度走钟形包络（淡入→中点最亮→淡出），边缘不再生硬弹出 */
+        @keyframes btn-sheen-sweep {
+            0%, 62%  { transform: translate3d(-150%, 0, 0) skewX(-12deg); opacity: 0; }
+            69%      { opacity: 0.5; }
+            75%      { opacity: 1; }
+            81%      { opacity: 0.45; }
+            88%      { transform: translate3d(250%, 0, 0) skewX(-12deg); opacity: 0; }
+            100%     { transform: translate3d(250%, 0, 0) skewX(-12deg); opacity: 0; }
+        }
+
         @media (hover: hover) and (pointer: fine) {
             .play-btn:hover {
                 background:
@@ -807,7 +911,7 @@
             overflow: hidden;
             line-height: 1.25;
             isolation: isolate;
-            transform: translateZ(0);
+            transform: translate3d(0, -0.5px, 0);
             -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 9%, #000 91%, transparent 100%);
             mask-image: linear-gradient(90deg, transparent 0%, #000 9%, #000 91%, transparent 100%);
         }
@@ -882,7 +986,9 @@
             padding-top: max(28px, calc(env(safe-area-inset-top) + 18px));
             padding-bottom: max(14vh, calc(env(safe-area-inset-bottom) + 72px));
             background:
-                radial-gradient(82% 58% at 50% 30%, rgba(181, 222, 255, 0.08), transparent 72%),
+                radial-gradient(82% 58% at 50% 30%, color-mix(in srgb, var(--cover-a) 12%, transparent), transparent 72%),
+                radial-gradient(64% 42% at 50% 88%, color-mix(in srgb, var(--cover-b) 7%, transparent), transparent 70%),
+                radial-gradient(132% 98% at 50% 40%, transparent 48%, rgba(2, 4, 9, 0.62) 100%),
                 rgba(5, 8, 14, 0.64);
             backdrop-filter: blur(16px) saturate(1.08);
             -webkit-backdrop-filter: blur(16px) saturate(1.08);
@@ -1439,6 +1545,15 @@
             transform: translate3d(0, 0, 0) scale(1);
         }
 
+        /* 入场轻微错峰：左右两枚不同时弹出，更有层次（退场仍即时） */
+        .playlist-toggle-btn.is-visible {
+            transition-delay: 0.05s;
+        }
+
+        .lyric-toggle-btn.is-visible {
+            transition-delay: 0.11s;
+        }
+
         .lyric-toggle-btn.is-visible::before,
         .playlist-toggle-btn.is-visible::before {
             animation: glass-control-drift 5.4s ease-in-out infinite;
@@ -1525,7 +1640,7 @@
             width: min(78vw, 520px);
             height: 46px;
             transform: translateX(-50%);
-            background: radial-gradient(ellipse at center, rgba(181, 222, 255, 0.13) 0%, rgba(181, 222, 255, 0) 74%);
+            background: radial-gradient(ellipse at center, color-mix(in srgb, var(--cover-a) 17%, transparent) 0%, transparent 74%);
             pointer-events: none;
         }
 
@@ -1603,7 +1718,7 @@
             opacity: 0;
             transform: translateY(20px);
             will-change: transform, opacity;
-            text-shadow: 0 0 14px rgba(180, 220, 255, 0.12);
+            text-shadow: 0 0 16px color-mix(in srgb, var(--cover-a) 30%, transparent);
         }
 
         .player-pill {
@@ -1628,50 +1743,86 @@
             max-inline-size: 292px;
             overflow: visible;
             pointer-events: none;
+            filter: blur(6px);
             transform: translate3d(-14px, 0, 0) scale(0.98);
             -webkit-transform: translate3d(-14px, 0, 0) scale(0.98);
             transform-origin: left center;
             transition:
                 inline-size 0.68s var(--soft-spring),
-                opacity 0.42s var(--fluid-ease),
-                transform 0.68s var(--soft-spring),
+                opacity 0.48s var(--fluid-ease),
+                transform 0.72s cubic-bezier(0.18, 1.16, 0.22, 1),
                 padding 0.68s var(--fluid-ease),
                 border-width 0.68s ease,
+                filter 0.58s var(--fluid-ease),
                 box-shadow 0.68s var(--fluid-ease);
-            will-change: transform, opacity, inline-size, padding, border-width;
+            will-change: transform, opacity, inline-size, padding, border-width, filter;
             position: relative;
+            isolation: isolate;
             flex-shrink: 0;
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
         }
 
-        .player-pill > * {
+        .player-pill::before,
+        .player-pill::after {
+            content: "";
+            position: absolute;
+            border-radius: inherit;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .player-pill::before {
+            inset: 1px;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.035) 46%, transparent 72%),
+                radial-gradient(80% 120% at 28% 0%, rgba(221, 241, 255, 0.15), transparent 60%);
+            opacity: 0.42;
+        }
+
+        .player-pill::after {
+            inset: 2px 10px;
+            background: linear-gradient(98deg, transparent 8%, rgba(255, 255, 255, 0.2) 42%, rgba(201, 231, 255, 0.16) 52%, transparent 78%);
+            filter: blur(3px);
             opacity: 0;
-            transform: translate3d(-8px, 0, 0);
-            transition: opacity 0.34s var(--fluid-ease), transform 0.46s var(--soft-spring);
+            transform: translate3d(-24px, 0, 0) scaleX(0.7);
+        }
+
+        .player-pill > * {
+            position: relative;
+            z-index: 1;
+            opacity: 0;
+            transform: translate3d(-6px, 4px, 0);
+            transition: opacity 0.34s var(--fluid-ease), transform 0.5s var(--soft-spring);
             transition-delay: 0s;
         }
 
         .dynamic-island.is-split .player-pill {
             opacity: 1;
             inline-size: 292px;
-            padding: 6px 14px 6px 8px;
+            padding: 6px 14px 6px 5px;
             border-width: 1px;
+            filter: blur(0);
             transform: scale(1) translateZ(0);
             -webkit-transform: scale(1) translateZ(0);
             pointer-events: auto;
         }
 
+        .dynamic-island.is-split .player-pill::after {
+            animation: player-pill-glide 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.06s both;
+        }
+
         .dynamic-island.is-split .player-pill > * {
             opacity: 1;
             transform: translateZ(0);
-            transition-delay: 0.12s;
+            transition-delay: 0.14s;
         }
 
         .player-ctrl-btn {
             width: 40px;
             height: 40px;
             flex-shrink: 0;
+            padding: 0;
             border-radius: 50%;
             background: rgba(255, 255, 255, 0.92);
             border: 1px solid rgba(255, 255, 255, 0.6);
@@ -1723,10 +1874,10 @@
             transform-origin: 50% 50%;
             transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }
-        .player-ctrl-btn.is-playing svg.icon-play { opacity: 0; transform: translateX(-1px) scale(0.6); position: absolute; }
-        .player-ctrl-btn.is-playing svg.icon-pause { opacity: 1; transform: scale(1); margin-left: 0; position: relative; }
+        .player-ctrl-btn.is-playing svg.icon-play { opacity: 0; transform: translateX(0) scale(0.6); position: absolute; }
+        .player-ctrl-btn.is-playing svg.icon-pause { opacity: 1; transform: translateZ(0) scale(1); margin-left: 0; position: relative; }
         .player-ctrl-btn:not(.is-playing) svg.icon-pause { opacity: 0; transform: scale(0.6); position: absolute; }
-        .player-ctrl-btn:not(.is-playing) svg.icon-play { opacity: 1; transform: translateX(-1px) scale(1); position: relative; }
+        .player-ctrl-btn:not(.is-playing) svg.icon-play { opacity: 1; transform: translateX(0) scale(1); position: relative; }
 
         .player-track-wrap {
             width: 20vw;
@@ -1752,14 +1903,15 @@
             transform: translateZ(0);
             pointer-events: none;
             box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+            transition: height 0.36s var(--fluid-ease), background 0.36s var(--fluid-ease), box-shadow 0.36s var(--fluid-ease);
         }
 
         .player-track-fill {
             width: 100%;
             height: 100%;
-            background: linear-gradient(90deg, #9bb8ff, #ffffff);
+            background: linear-gradient(90deg, color-mix(in srgb, var(--cover-a) 82%, #ffffff), #ffffff);
             border-radius: 6px;
-            box-shadow: 0 0 12px rgba(181, 216, 255, 0.85);
+            box-shadow: 0 0 12px color-mix(in srgb, var(--cover-a) 80%, transparent);
             transform: translate3d(-100%, 0, 0);
             transition: transform 0.2s linear;
             will-change: transform;
@@ -1952,6 +2104,20 @@
             }
         }
 
+        @keyframes player-pill-glide {
+            0% {
+                opacity: 0;
+                transform: translate3d(-32px, 0, 0) scaleX(0.72);
+            }
+            34% {
+                opacity: 0.4;
+            }
+            100% {
+                opacity: 0;
+                transform: translate3d(28px, 0, 0) scaleX(1.08);
+            }
+        }
+
         @keyframes copy-fade {
             0%,
             100% {
@@ -2043,36 +2209,36 @@
             }
 
             .dynamic-island {
-                width: min(100%, 320px);
-                margin-top: 16px;
+                width: min(82vw, 306px);
+                margin-top: 28px;
+                min-height: 48px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                gap: 0;
+                transform: translateZ(0);
             }
 
             .dynamic-island.is-split {
-                display: grid;
-                grid-template-columns: 44px minmax(96px, 108px) 44px;
-                grid-template-areas:
-                    "playlist play lyric"
-                    "player player player";
-                justify-content: center;
-                align-items: center;
-                column-gap: 8px;
-                row-gap: 10px;
-                gap: 10px 8px;
                 transform: translate3d(0, -1px, 0);
             }
 
             .dynamic-island::before {
-                width: min(84vw, 260px);
-                height: 112px;
-                opacity: 0.42;
+                width: min(84vw, 306px);
+                height: 62px;
+                opacity: 0.34;
+                transition: opacity 0.54s var(--fluid-ease), transform 0.64s var(--soft-spring);
+            }
+
+            .dynamic-island.is-split::before {
+                opacity: 0.48;
+                transform: translate(-50%, -50%) scaleX(1.04);
             }
 
             .play-btn {
-                grid-area: play;
-                width: 104px;
+                width: 106px;
                 height: 46px;
                 font-size: 13px;
-                justify-self: center;
             }
 
             .lyric-toggle-btn {
@@ -2089,19 +2255,33 @@
 
             .dynamic-island.is-split .lyric-toggle-btn,
             .dynamic-island.is-split .playlist-toggle-btn {
-                position: static;
-                top: auto;
-                right: auto;
+                top: calc(100% + 4px);
+            }
+
+            .lyric-toggle-btn,
+            .playlist-toggle-btn {
+                position: absolute;
+                top: calc(100% + 4px);
+                width: 40px;
+                height: 40px;
+                opacity: 0;
+                transform: translate3d(var(--float-x, 0), -6px, 0) scale(0.88);
+            }
+
+            .playlist-toggle-btn {
+                left: 0;
+                --float-x: 10px;
+            }
+
+            .lyric-toggle-btn {
                 left: auto;
-                justify-self: center;
+                right: 0;
+                --float-x: -10px;
             }
 
-            .dynamic-island.is-split .playlist-toggle-btn {
-                grid-area: playlist;
-            }
-
-            .dynamic-island.is-split .lyric-toggle-btn {
-                grid-area: lyric;
+            .lyric-toggle-btn.is-visible,
+            .playlist-toggle-btn.is-visible {
+                transform: translate3d(0, 0, 0) scale(1);
             }
 
             .lyric-toggle-btn svg,
@@ -2162,31 +2342,63 @@
                 font-size: 14px;
             }
 
+            .player-pill {
+                inline-size: 0;
+                max-inline-size: 192px;
+                min-height: 46px;
+                gap: 8px;
+                padding: 5px 0;
+                border-width: 0;
+                opacity: 0;
+                filter: blur(6px);
+                transform: translate3d(-8px, 0, 0) scale3d(0.965, 0.965, 1);
+                -webkit-transform: translate3d(-8px, 0, 0) scale3d(0.965, 0.965, 1);
+                transform-origin: left center;
+                transition:
+                    inline-size 0.68s var(--soft-spring),
+                    padding 0.68s var(--fluid-ease),
+                    border-width 0.68s ease,
+                    opacity 0.42s var(--fluid-ease),
+                    transform 0.7s cubic-bezier(0.18, 1.22, 0.22, 1),
+                    filter 0.52s var(--fluid-ease),
+                    box-shadow 0.52s var(--fluid-ease);
+                will-change: transform, opacity, inline-size, padding, border-width, filter;
+            }
+
             .dynamic-island.is-split .player-pill {
-                grid-area: player;
-                justify-self: center;
-                inline-size: min(calc(100vw - 56px), 300px);
-                max-inline-size: 300px;
-                gap: 10px;
-                padding: 5px 12px 5px 7px;
-                transform-origin: center top;
+                inline-size: min(calc(82vw - 116px), 190px);
+                padding: 5px 10px 5px 0;
+                border-width: 1px;
+                opacity: 1;
+                filter: blur(0);
+                transform: translate3d(0, 0, 0) scale(1);
+                -webkit-transform: translate3d(0, 0, 0) scale(1);
+            }
+
+            .player-pill > * {
+                transform: translate3d(-5px, 0, 0);
+            }
+
+            .dynamic-island.is-split .player-pill > * {
+                transform: translate3d(0, 0, 0);
             }
 
             .player-ctrl-btn {
-                width: 32px;
-                height: 32px;
+                width: 30px;
+                height: 30px;
+                margin-left: 7px;
             }
 
             .player-track-wrap {
                 flex: 1 1 0;
                 width: auto;
-                min-width: 0;
+                min-width: 48px;
                 max-width: none;
             }
 
             .player-time {
-                width: 28px;
-                font-size: 11px;
+                width: 25px;
+                font-size: 10px;
             }
 
             .loading-hero-wrap {
@@ -2226,7 +2438,8 @@
             .song-name,
             .playlist-item,
             .btn-text,
-            .btn-text-ghost {
+            .btn-text-ghost,
+            .player-pill {
                 filter: none !important;
             }
 
@@ -2237,7 +2450,8 @@
             .play-btn::before,
             .play-btn::after,
             .lyric-toggle-btn.is-visible::before,
-            .playlist-toggle-btn.is-visible::before {
+            .playlist-toggle-btn.is-visible::before,
+            .dynamic-island.is-split .player-pill::after {
                 animation: none !important;
             }
 
@@ -2261,8 +2475,10 @@
             .dynamic-island::before,
             .turntable::after,
             .vinyl-record::after,
+            .vinyl-highlight,
             .play-btn::before,
             .play-btn::after,
+            .btn-sheen::after,
             .lyric-toggle-btn::before,
             .playlist-toggle-btn::before {
                 animation: none !important;

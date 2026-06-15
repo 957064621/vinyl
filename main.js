@@ -938,11 +938,67 @@ const {
             }).join('');
         };
 
+        // ── 封面驱动的动态主色 + 封面交叉淡入 ──────────────────────────
+        const rootStyle = document.documentElement.style;
+        const coverLayerA = document.getElementById('vinylCoverA');
+        const coverLayerB = document.getElementById('vinylCoverB');
+
+        // OSS 无跨域头、无法前端取色，故按真实封面手工配色；索引与 COVER_ROTATION_FILES 一一对应
+        const COVER_COLORS = [
+            { a: [232, 74, 66],  b: [255, 134, 80] },   // 0 · 3.jpg 天外来物(新加坡)——烈焰红
+            { a: [120, 180, 233], b: [228, 180, 140] }, // 1 · 4.jpg 裂面——天空蓝 / 暖沙
+            { a: [150, 201, 237], b: [190, 204, 235] }, // 2 · 1.jpg 万兽之王——冰蓝银
+            { a: [122, 207, 215], b: [216, 199, 182] }, // 3 · 2.jpg 银色隧道——青瓷 / 香槟
+            { a: [237, 99, 112], b: [99, 160, 229] }    // 4 · 天外来物——珊瑚红 / 青
+        ];
+
+        // 用 OSS 图片处理取清晰小图（原图约 4MB，在旋转的合成层上会被低质降采样发糊）
+        const sizedCoverUrl = (index) => {
+            const dpr = Math.min(3, Math.max(1, Math.round(window.devicePixelRatio || 1)));
+            return `${getCoverSrcByLyricIndex(index)}?x-oss-process=image/resize,w_${132 * dpr}`;
+        };
+
+        let activeCoverLayer = coverLayerA;
+
+        // 预载后再交叉淡入，避免空白闪烁；两层互相淡入淡出
+        const swapCoverImage = (index) => {
+            if (!coverLayerA || !coverLayerB) return;
+            const url = sizedCoverUrl(index);
+            const incoming = activeCoverLayer === coverLayerA ? coverLayerB : coverLayerA;
+            const commit = () => {
+                incoming.style.backgroundImage = `url("${url}")`;
+                incoming.classList.add('is-active');
+                activeCoverLayer.classList.remove('is-active');
+                activeCoverLayer = incoming;
+            };
+            const pre = new Image();
+            pre.onload = commit;
+            pre.onerror = commit;
+            pre.src = url;
+        };
+
+        const applyCoverVisual = (index) => {
+            const pal = COVER_COLORS[Math.abs(index) % COVER_COLORS.length];
+            rootStyle.setProperty('--cover-a', `rgb(${pal.a.join(', ')})`);
+            rootStyle.setProperty('--cover-b', `rgb(${pal.b.join(', ')})`);
+            swapCoverImage(index);
+        };
+
+        // 抽取前的初始封面：默认「天外来物」(rotation 索引 4)，立即清晰显示并匹配其主色
+        if (coverLayerA) {
+            coverLayerA.style.backgroundImage = `url("${sizedCoverUrl(4)}")`;
+            coverLayerA.classList.add('is-active');
+            const initPal = COVER_COLORS[4];
+            rootStyle.setProperty('--cover-a', `rgb(${initPal.a.join(', ')})`);
+            rootStyle.setProperty('--cover-b', `rgb(${initPal.b.join(', ')})`);
+        }
+
         const updateCurrentLyric = (index) => {
             const result = lyricsPool[index];
             lyricEl.innerHTML = lyricToLinesHTML(result.text);
             songEl.innerText = '—— ' + result.song;
             currentLyricIndex = index;
+            applyCoverVisual(index);
             consumeLyricIndexFromQueue(index);
             updateMediaSessionMetadata(index);
             renderPlaylist();
@@ -1235,11 +1291,11 @@ const {
             });
 
             const lineAnimations = Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => safeAnimate(line, [
-                { opacity: 0, transform: 'translateY(12px) scale(0.992)', filter: 'blur(4px)' },
+                { opacity: 0, transform: 'translateY(14px) scale(0.99)', filter: 'blur(5px)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
             ], {
-                duration: 600,
-                delay: 90 + index * 54,
+                duration: 660,
+                delay: 100 + index * 66,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             }));
