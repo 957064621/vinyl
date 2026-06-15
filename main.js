@@ -149,7 +149,19 @@ const {
             });
         };
 
+        const motionFiltersEnabled = matchMedia('(hover: hover) and (pointer: fine)').matches && !prefersReducedMotion;
+        const normalizeMotionKeyframes = (keyframes) => {
+            if (motionFiltersEnabled || !Array.isArray(keyframes)) return keyframes;
+
+            return keyframes.map((frame) => {
+                if (!frame || typeof frame !== 'object' || !('filter' in frame)) return frame;
+                const { filter, ...rest } = frame;
+                return rest;
+            });
+        };
+
         const safeAnimate = (el, keyframes, options) => {
+            const motionKeyframes = normalizeMotionKeyframes(keyframes);
             if (canUseWebAnimations && typeof el.animate === 'function') {
                 const motionOptions = prefersReducedMotion
                     ? {
@@ -159,11 +171,11 @@ const {
                         easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
                     }
                     : options;
-                return el.animate(keyframes, motionOptions);
+                return el.animate(motionKeyframes, motionOptions);
             }
 
             // Older iOS/WebView builds may not support WAAPI; apply the final frame directly.
-            applyFinalKeyframe(el, keyframes);
+            applyFinalKeyframe(el, motionKeyframes);
             return createNoopAnimation();
         };
 
@@ -838,6 +850,46 @@ const {
         const easeInOutSine = t => -(Math.cos(Math.PI * t) - 1) / 2;
         const easeOutQuart = t => 1 - Math.pow(1 - t, 4);
 
+        const createTweenRunner = () => {
+            let frameId = null;
+
+            const cancel = () => {
+                if (frameId) cancelAnimationFrame(frameId);
+                frameId = null;
+            };
+
+            const run = ({ from, to, duration, easing, render }) => new Promise((resolve) => {
+                cancel();
+
+                if (prefersReducedMotion || duration <= 0 || Math.abs(to - from) < 0.001) {
+                    render(to);
+                    resolve();
+                    return;
+                }
+
+                let startTime = null;
+                const frame = (now) => {
+                    if (!startTime) startTime = now;
+                    const progress = Math.min(Math.max((now - startTime) / duration, 0), 1);
+                    const current = from + (to - from) * easing(progress);
+                    render(current);
+
+                    if (progress < 1) {
+                        frameId = requestAnimationFrame(frame);
+                        return;
+                    }
+
+                    frameId = null;
+                    render(to);
+                    resolve();
+                };
+
+                frameId = requestAnimationFrame(frame);
+            });
+
+            return { run, cancel };
+        };
+
         const ARM_REST_ANGLE = -96;
         const ARM_PLAY_ANGLE = -34;
 
@@ -847,67 +899,26 @@ const {
 
         setTonearmAngle(ARM_REST_ANGLE);
 
-        let currentArmAnimFrame = null;
-        const animateTonearm = ({ from, to, duration, easing }) => new Promise((resolve) => {
-            if (currentArmAnimFrame) cancelAnimationFrame(currentArmAnimFrame);
+        const tonearmTween = createTweenRunner();
+        const rateTween = createTweenRunner();
 
-            if (prefersReducedMotion || duration <= 0 || Math.abs(to - from) < 0.001) {
-                setTonearmAngle(to);
-                resolve();
-                return;
-            }
-            
-            let startTime = null;
-            const frame = (now) => {
-                if (!startTime) startTime = now;
-                const elapsed = now - startTime;
-                const progress = Math.min(Math.max(elapsed / duration, 0), 1);
-                const eased = easing(progress);
-                const currentAngle = from + (to - from) * eased;
-                setTonearmAngle(currentAngle);
-
-                if (progress < 1) {
-                    currentArmAnimFrame = requestAnimationFrame(frame);
-                } else {
-                    currentArmAnimFrame = null;
-                    resolve();
-                }
-            };
-
-            currentArmAnimFrame = requestAnimationFrame(frame);
+        const animateTonearm = ({ from, to, duration, easing }) => tonearmTween.run({
+            from,
+            to,
+            duration,
+            easing,
+            render: setTonearmAngle
         });
 
-        let currentRateAnimFrame = null;
-        const animateRate = ({ from, to, duration, easing }) => new Promise((resolve) => {
-            if (currentRateAnimFrame) cancelAnimationFrame(currentRateAnimFrame);
-
-            if (prefersReducedMotion || duration <= 0 || Math.abs(to - from) < 0.001) {
-                spinAnimation.playbackRate = to;
-                updateSheenByRate(to);
-                resolve();
-                return;
+        const animateRate = ({ from, to, duration, easing }) => rateTween.run({
+            from,
+            to,
+            duration,
+            easing,
+            render: (rate) => {
+                spinAnimation.playbackRate = rate;
+                updateSheenByRate(rate);
             }
-            
-            let startTime = null;
-            const frame = (now) => {
-                if (!startTime) startTime = now;
-                const elapsed = now - startTime;
-                const progress = Math.min(Math.max(elapsed / duration, 0), 1);
-                const eased = easing(progress);
-                const currentRate = from + (to - from) * eased;
-
-                spinAnimation.playbackRate = currentRate;
-                updateSheenByRate(currentRate);
-
-                if (progress < 1) {
-                    currentRateAnimFrame = requestAnimationFrame(frame);
-                } else {
-                    currentRateAnimFrame = null;
-                    resolve();
-                }
-            };
-
-            currentRateAnimFrame = requestAnimationFrame(frame);
         });
 
         const lyricToLinesHTML = (text) => {
@@ -928,6 +939,22 @@ const {
 
         const setOverlayControlsVisible = (visible) => {
             dynamicIsland.classList.toggle('is-overlay-control-visible', visible);
+        };
+
+        let controlMotionTimer = null;
+        const setControlSplit = (split) => {
+            const wasSplit = dynamicIsland.classList.contains('is-split');
+            if (wasSplit === split) return;
+
+            if (controlMotionTimer) clearTimeout(controlMotionTimer);
+            dynamicIsland.classList.remove('is-opening', 'is-collapsing');
+            dynamicIsland.classList.toggle('is-split', split);
+            dynamicIsland.classList.add(split ? 'is-opening' : 'is-collapsing');
+
+            controlMotionTimer = setTimeout(() => {
+                dynamicIsland.classList.remove('is-opening', 'is-collapsing');
+                controlMotionTimer = null;
+            }, split ? 760 : 620);
         };
 
         const renderPlaylist = () => {
@@ -1099,7 +1126,7 @@ const {
                 if (shouldOpenLyricAfterSwitch) {
                     animateLyricIn();
                 } else {
-                    dynamicIsland.classList.toggle('is-split', hadSplitState);
+                    setControlSplit(hadSplitState);
                     setFloatingButtonsVisible(true);
                 }
                 await toggleAudioState(true, { skipMotion: true });
@@ -1259,7 +1286,7 @@ const {
                 resultArea.classList.add('show-dismiss-hint');
                 hasShownDismissHint = true;
             }
-            dynamicIsland.classList.add('is-split');
+            setControlSplit(true);
             setOverlayControlsVisible(true);
 
             const cardAnim = safeAnimate(resultArea, [
@@ -1309,7 +1336,7 @@ const {
                 playlistArea.classList.add('show-dismiss-hint');
                 hasShownPlaylistHint = true;
             }
-            dynamicIsland.classList.add('is-split');
+            setControlSplit(true);
             setOverlayControlsVisible(false);
 
             const cardAnim = safeAnimate(playlistArea, [
@@ -1542,6 +1569,7 @@ const {
             setPlayButtonBusy(true);
 
             setFloatingButtonsVisible(false);
+            setControlSplit(false);
 
             const textUpdatePromise = updateButtonText('读取中');
 
@@ -1569,8 +1597,6 @@ const {
             const currentArmAngleStr = getComputedStyle(tonearm).getPropertyValue('--arm-angle');
             initialArmAngle = parseFloat(currentArmAngleStr) || ARM_REST_ANGLE;
 
-            dynamicIsland.classList.remove('is-split');
-            
             resetResultVisual();
             resetPlaylistVisual();
             turntable.classList.add('is-playing');
