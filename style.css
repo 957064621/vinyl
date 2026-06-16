@@ -18,7 +18,7 @@
             --fluid-ease: cubic-bezier(0.22, 1, 0.36, 1);
             --soft-spring: cubic-bezier(0.2, 1.08, 0.22, 1);
             --button-swap-ease: cubic-bezier(0.2, 0.86, 0.18, 1);
-            --button-settle-ease: cubic-bezier(0.2, 1.18, 0.24, 1);
+            --button-settle-ease: cubic-bezier(0.22, 1, 0.36, 1);
             --control-slide-ease: cubic-bezier(0.16, 1, 0.3, 1);
             --control-orbit-ease: cubic-bezier(0.18, 1.18, 0.2, 1);
             --control-drift-in-ease: cubic-bezier(0.24, 0.82, 0.18, 1);
@@ -877,7 +877,7 @@
             background: radial-gradient(ellipse at center, rgba(203, 232, 255, 0.16), transparent 68%);
             opacity: 0;
             transform: scale(0.92);
-            transition: opacity 0.52s var(--button-settle-ease), transform 0.52s var(--button-settle-ease);
+            transition: opacity 0.52s var(--fluid-ease), transform 0.52s var(--fluid-ease);
             pointer-events: none;
             z-index: 0;
         }
@@ -932,7 +932,7 @@
                     0 18px 34px rgba(0, 0, 0, 0.36),
                     0 0 20px rgba(181, 222, 255, 0.1),
                     inset 0 1px 1px rgba(255, 255, 255, 0.28);
-                --button-y: -1px;
+                --button-y: 0px;
                 transition: transform 0.32s var(--control-slide-ease), background 0.46s var(--fluid-ease), box-shadow 0.46s var(--fluid-ease), opacity 0.4s ease;
             }
 
@@ -1160,7 +1160,7 @@
             filter: blur(8px);
             transform: translate3d(8px, -8px, 0) scale(0.94);
             transition:
-                transform 0.42s var(--soft-spring),
+                transform 0.42s var(--fluid-ease),
                 filter 0.42s var(--fluid-ease),
                 border-color 0.34s var(--damping),
                 background 0.34s var(--damping),
@@ -1577,7 +1577,7 @@
             opacity: 0;
             pointer-events: none;
             transform: translate3d(var(--toggle-x), var(--toggle-y), 0) scale(var(--toggle-scale));
-            transition: transform 0.58s var(--soft-spring), opacity 0.42s var(--fluid-ease), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
+            transition: transform 0.48s var(--fluid-ease), opacity 0.42s var(--fluid-ease), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
             box-shadow: 
                 0 14px 28px rgba(0, 0, 0, 0.32),
                 0 0 16px rgba(181, 222, 255, 0.055),
@@ -1651,7 +1651,7 @@
         @media (hover: hover) and (pointer: fine) {
             .lyric-toggle-btn.is-visible:hover,
             .playlist-toggle-btn.is-visible:hover {
-                --toggle-y: -2px;
+                --toggle-y: 0px;
                 background: rgba(255, 255, 255, 0.1);
                 box-shadow: 
                     0 18px 34px rgba(0, 0, 0, 0.36),
@@ -1882,7 +1882,7 @@
             z-index: 1;
             opacity: 0;
             transform: translate3d(-6px, 4px, 0);
-            transition: opacity 0.34s var(--fluid-ease), transform 0.5s var(--soft-spring);
+            transition: opacity 0.34s var(--fluid-ease), transform 0.46s var(--control-drift-in-ease);
             transition-delay: 0s;
         }
 
@@ -1892,10 +1892,6 @@
             -webkit-transform: translate3d(-50%, 0, 0) scale(1);
             pointer-events: auto;
             transition-delay: 0.02s, 0.08s;
-        }
-
-        .dynamic-island.is-opening .player-pill {
-            animation: player-pill-breathe-in 0.78s var(--control-drift-in-ease) both;
         }
 
         .dynamic-island.is-collapsing .player-pill {
@@ -2056,16 +2052,12 @@
 
         @keyframes control-button-surface-in {
             0% {
-                transform: translateZ(0) scale3d(0.985, 0.985, 1);
+                transform: translateZ(0) scale3d(0.982, 0.982, 1);
                 opacity: 0.5;
             }
             42% {
-                transform: translateZ(0) scale3d(1.026, 1.026, 1);
-                opacity: 0.82;
-            }
-            68% {
-                transform: translateZ(0) scale3d(0.994, 0.994, 1);
-                opacity: 0.64;
+                transform: translateZ(0) scale3d(0.996, 0.996, 1);
+                opacity: 0.72;
             }
             100% {
                 transform: translateZ(0) scale3d(1, 1, 1);
@@ -2079,34 +2071,12 @@
                 opacity: 0.54;
             }
             38% {
-                transform: translateZ(0) scale3d(1.02, 1.02, 1);
-                opacity: 0.78;
-            }
-            72% {
-                transform: translateZ(0) scale3d(0.996, 0.996, 1);
-                opacity: 0.64;
+                transform: translateZ(0) scale3d(0.997, 0.997, 1);
+                opacity: 0.7;
             }
             100% {
                 transform: translateZ(0) scale3d(1, 1, 1);
                 opacity: 0.62;
-            }
-        }
-
-        @keyframes player-pill-breathe-in {
-            0% {
-                opacity: 0;
-                transform: translate3d(-50%, calc(var(--player-enter-y) - 4px), 0) scale3d(0.948, 0.9, 1);
-            }
-            38% {
-                opacity: 0.78;
-            }
-            66% {
-                opacity: 1;
-                transform: translate3d(-50%, 1.4px, 0) scale3d(1.012, 1.018, 1);
-            }
-            100% {
-                opacity: 1;
-                transform: translate3d(-50%, 0, 0) scale3d(1, 1, 1);
             }
         }
 
@@ -2119,21 +2089,6 @@
             }
         }
 
-        @keyframes btn-glass-settle {
-            0% {
-                transform: translate3d(0, 0, 0) scale(1);
-            }
-            34% {
-                transform: translate3d(0, -0.8px, 0) scale3d(1.026, 1.026, 1);
-            }
-            68% {
-                transform: translate3d(0, 0.35px, 0) scale3d(0.992, 0.992, 1);
-            }
-            100% {
-                transform: translate3d(0, 0, 0) scale(1);
-            }
-        }
-
         @keyframes btn-glass-bloom {
             0% {
                 opacity: 0.62;
@@ -2141,9 +2096,9 @@
                 transform: translate3d(0, 0, 0) scaleX(1);
             }
             46% {
-                opacity: 0.78;
+                opacity: 0.72;
                 filter: blur(0.08px);
-                transform: translate3d(0, 0, 0) scaleX(1.018);
+                transform: translate3d(0, 0, 0) scaleX(1);
             }
             100% {
                 opacity: 0.66;
@@ -2158,12 +2113,12 @@
                 transform: scale(0.96);
             }
             48% {
-                opacity: 0.28;
-                transform: scale(1.02);
+                opacity: 0.22;
+                transform: scale(0.99);
             }
             100% {
                 opacity: 0;
-                transform: scale(1.06);
+                transform: scale(1);
             }
         }
 
@@ -2189,12 +2144,12 @@
             0% {
                 opacity: 0;
                 filter: blur(3px) saturate(0.86);
-                transform: translate3d(0, 0.5px, 0) scale(1.012);
+                transform: translate3d(0, 0.5px, 0) scale(0.986);
             }
             42% {
                 opacity: 0.72;
                 filter: blur(0.9px) saturate(0.97);
-                transform: translate3d(0, 0.25px, 0) scale(1.006);
+                transform: translate3d(0, 0.25px, 0) scale(0.996);
             }
             72% {
                 opacity: 1;
@@ -2600,7 +2555,6 @@
             .btn-text-ghost,
             .dynamic-island.is-opening .play-btn,
             .dynamic-island.is-collapsing .play-btn,
-            .dynamic-island.is-opening .player-pill,
             .play-btn::before,
             .play-btn::after,
             .lyric-toggle-btn.is-visible::before,
