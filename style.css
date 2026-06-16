@@ -723,8 +723,8 @@
             --control-height: 48px;
             --play-shift: 0px;
             --island-lift: 0px;
-            --player-enter-x: -18px;
-            --player-exit-x: -10px;
+            --player-enter-y: -14px;
+            --player-exit-y: -10px;
             width: calc(var(--play-width) + var(--player-slot) + var(--player-gap));
             min-height: var(--control-height);
             transform: translate3d(0, var(--island-lift), 0);
@@ -750,15 +750,29 @@
             height: 58px;
             transform: translate(-50%, -50%);
             border-radius: 999px;
-            background: radial-gradient(ellipse at center, rgba(181, 222, 255, 0.12), transparent 72%);
+            background:
+                radial-gradient(ellipse at center, rgba(222, 241, 255, 0.14), rgba(181, 222, 255, 0.052) 38%, transparent 74%),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.032), transparent 72%);
             filter: blur(10px);
             opacity: 0.54;
             pointer-events: none;
+            transition:
+                width 0.64s var(--control-drift-in-ease),
+                height 0.64s var(--control-drift-in-ease),
+                opacity 0.48s var(--fluid-ease),
+                transform 0.64s var(--control-drift-in-ease);
+        }
+
+        .dynamic-island.is-split::before {
+            width: min(76vw, 320px);
+            height: 128px;
+            opacity: 0.46;
+            transform: translate(-50%, -24%) scaleX(1.02);
         }
 
         .dynamic-island.is-split {
-            --play-shift: calc((var(--player-slot) + var(--player-gap)) / -2);
-            --island-lift: -1px;
+            --play-shift: 0px;
+            --island-lift: -2px;
         }
 
         .dynamic-island.is-opening .play-btn {
@@ -1795,8 +1809,8 @@
 
         .player-pill {
             position: absolute;
-            top: 50%;
-            left: calc(50% - ((var(--player-slot) + var(--player-gap)) / 2) + (var(--play-width) / 2) + var(--player-gap));
+            top: calc(100% + 12px);
+            left: 50%;
             display: flex;
             align-items: center;
             gap: 12px;
@@ -1820,15 +1834,13 @@
             min-width: 0;
             overflow: visible;
             pointer-events: none;
-            filter: blur(6px);
-            transform: translate3d(var(--player-enter-x), -50%, 0) scale3d(0.955, 0.982, 1);
-            -webkit-transform: translate3d(var(--player-enter-x), -50%, 0) scale3d(0.955, 0.982, 1);
-            transform-origin: left center;
+            transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
+            -webkit-transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
+            transform-origin: center top;
             transition:
-                opacity 0.38s var(--fluid-ease),
-                transform 0.7s var(--control-drift-in-ease),
-                filter 0.34s var(--fluid-ease);
-            will-change: transform, opacity, filter;
+                opacity 0.42s var(--fluid-ease),
+                transform 0.74s var(--control-drift-in-ease);
+            will-change: transform, opacity;
             isolation: isolate;
             flex-shrink: 0;
             order: 2;
@@ -1873,11 +1885,10 @@
 
         .dynamic-island.is-split .player-pill {
             opacity: 1;
-            filter: blur(0);
-            transform: translate3d(0, -50%, 0) scale(1);
-            -webkit-transform: translate3d(0, -50%, 0) scale(1);
+            transform: translate3d(-50%, 0, 0) scale(1);
+            -webkit-transform: translate3d(-50%, 0, 0) scale(1);
             pointer-events: auto;
-            transition-delay: 0.02s, 0.08s, 0.02s;
+            transition-delay: 0.02s, 0.08s;
         }
 
         .dynamic-island.is-opening .player-pill {
@@ -1886,13 +1897,11 @@
 
         .dynamic-island.is-collapsing .player-pill {
             opacity: 0;
-            filter: blur(6px);
-            transform: translate3d(var(--player-exit-x), -50%, 0) scale3d(0.96, 0.984, 1);
-            -webkit-transform: translate3d(var(--player-exit-x), -50%, 0) scale3d(0.96, 0.984, 1);
+            transform: translate3d(-50%, var(--player-exit-y), 0) scale3d(0.965, 0.94, 1);
+            -webkit-transform: translate3d(-50%, var(--player-exit-y), 0) scale3d(0.965, 0.94, 1);
             transition:
                 opacity 0.24s ease,
-                transform 0.5s var(--control-drift-out-ease),
-                filter 0.2s ease;
+                transform 0.52s var(--control-drift-out-ease);
             transition-delay: 0s;
         }
 
@@ -2083,22 +2092,18 @@
         @keyframes player-pill-breathe-in {
             0% {
                 opacity: 0;
-                filter: blur(6px);
-                transform: translate3d(calc(var(--player-enter-x) - 4px), -50%, 0) scale3d(0.952, 0.98, 1);
+                transform: translate3d(-50%, calc(var(--player-enter-y) - 4px), 0) scale3d(0.948, 0.9, 1);
             }
             38% {
                 opacity: 0.78;
-                filter: blur(2px);
             }
             66% {
                 opacity: 1;
-                filter: blur(0.4px);
-                transform: translate3d(1.6px, -50%, 0) scale3d(1.01, 1.006, 1);
+                transform: translate3d(-50%, 1.4px, 0) scale3d(1.012, 1.018, 1);
             }
             100% {
                 opacity: 1;
-                filter: blur(0);
-                transform: translate3d(0, -50%, 0) scale3d(1, 1, 1);
+                transform: translate3d(-50%, 0, 0) scale3d(1, 1, 1);
             }
         }
 
@@ -2371,8 +2376,8 @@
                 --player-slot: min(calc(82vw - 116px), 190px);
                 --player-gap: 10px;
                 --control-height: 48px;
-                --player-enter-x: -12px;
-                --player-exit-x: -7px;
+                --player-enter-y: -10px;
+                --player-exit-y: -8px;
                 width: min(82vw, 306px);
                 margin-top: 28px;
                 min-height: 48px;
@@ -2384,20 +2389,20 @@
             }
 
             .dynamic-island.is-split {
-                --play-shift: calc((var(--player-slot) + var(--player-gap)) / -2);
-                --island-lift: -1px;
+                --play-shift: 0px;
+                --island-lift: -2px;
             }
 
             .dynamic-island::before {
                 width: min(84vw, 306px);
                 height: 62px;
                 opacity: 0.34;
-                transition: opacity 0.54s var(--fluid-ease), transform 0.64s var(--soft-spring);
             }
 
             .dynamic-island.is-split::before {
                 opacity: 0.48;
-                transform: translate(-50%, -50%) scaleX(1.04);
+                height: 122px;
+                transform: translate(-50%, -24%) scaleX(1.02);
             }
 
             .play-btn {
@@ -2508,28 +2513,27 @@
             }
 
             .player-pill {
+                top: calc(100% + 10px);
+                left: 50%;
                 max-width: 190px;
                 min-height: 46px;
                 gap: 8px;
                 padding: 5px 10px 5px 0;
                 border-width: 1px;
                 opacity: 0;
-                filter: blur(4px);
-                transform: translate3d(var(--player-enter-x), -50%, 0) scale3d(0.955, 0.982, 1);
-                -webkit-transform: translate3d(var(--player-enter-x), -50%, 0) scale3d(0.955, 0.982, 1);
-                transform-origin: left center;
+                transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
+                -webkit-transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
+                transform-origin: center top;
                 transition:
                     opacity 0.34s var(--fluid-ease),
-                    transform 0.64s var(--control-drift-in-ease),
-                    filter 0.28s var(--fluid-ease);
-                will-change: transform, opacity, filter;
+                    transform 0.64s var(--control-drift-in-ease);
+                will-change: transform, opacity;
             }
 
             .dynamic-island.is-split .player-pill {
                 opacity: 1;
-                filter: blur(0);
-                transform: translate3d(0, -50%, 0) scale(1);
-                -webkit-transform: translate3d(0, -50%, 0) scale(1);
+                transform: translate3d(-50%, 0, 0) scale(1);
+                -webkit-transform: translate3d(-50%, 0, 0) scale(1);
             }
 
             .player-pill > * {
