@@ -762,6 +762,8 @@
         }
 
         .dynamic-island.is-opening .play-btn {
+            --button-y: 0px;
+            --button-scale: 1;
             transition:
                 transform 0.72s var(--control-drift-in-ease) 0.06s,
                 background 0.52s var(--fluid-ease),
@@ -770,6 +772,8 @@
         }
 
         .dynamic-island.is-collapsing .play-btn {
+            --button-y: 0px;
+            --button-scale: 1;
             transition:
                 transform 0.56s var(--control-drift-out-ease) 0.04s,
                 background 0.46s var(--fluid-ease),
@@ -949,6 +953,8 @@
 
         .play-btn:disabled,
         .play-btn[data-busy] {
+            --button-y: 0px;
+            --button-scale: 1;
             opacity: 1;
             cursor: not-allowed;
         }
@@ -1525,6 +1531,9 @@
 
         .lyric-toggle-btn,
         .playlist-toggle-btn {
+            --toggle-x: var(--float-x, 0);
+            --toggle-y: -8px;
+            --toggle-scale: 0.88;
             position: absolute;
             top: calc(100% + 18px);
             width: 48px;
@@ -1550,7 +1559,7 @@
             z-index: 25;
             opacity: 0;
             pointer-events: none;
-            transform: translate3d(var(--float-x, 0), -8px, 0) scale(0.88);
+            transform: translate3d(var(--toggle-x), var(--toggle-y), 0) scale(var(--toggle-scale));
             transition: transform 0.58s var(--soft-spring), opacity 0.42s var(--fluid-ease), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
             box-shadow: 
                 0 14px 28px rgba(0, 0, 0, 0.32),
@@ -1597,9 +1606,11 @@
 
         .lyric-toggle-btn.is-visible,
         .playlist-toggle-btn.is-visible {
+            --toggle-x: 0px;
+            --toggle-y: 0px;
+            --toggle-scale: 1;
             opacity: 1;
             pointer-events: auto;
-            transform: translate3d(0, 0, 0) scale(1);
         }
 
         /* 入场轻微错峰：左右两枚不同时弹出，更有层次（退场仍即时） */
@@ -1621,20 +1632,21 @@
         }
 
         @media (hover: hover) and (pointer: fine) {
-            .lyric-toggle-btn:hover,
-            .playlist-toggle-btn:hover {
+            .lyric-toggle-btn.is-visible:hover,
+            .playlist-toggle-btn.is-visible:hover {
+                --toggle-y: -2px;
                 background: rgba(255, 255, 255, 0.1);
                 box-shadow: 
                     0 18px 34px rgba(0, 0, 0, 0.36),
                     0 0 18px rgba(181, 222, 255, 0.1),
                     inset 0 1px 1px rgba(255, 255, 255, 0.26);
-                transform: translateY(-2px);
             }
         }
 
-        .lyric-toggle-btn:active,
-        .playlist-toggle-btn:active {
-            transform: translateY(1px) scale(0.96);
+        .lyric-toggle-btn.is-visible:active,
+        .playlist-toggle-btn.is-visible:active {
+            --toggle-y: 1px;
+            --toggle-scale: 0.96;
             background: rgba(255, 255, 255, 0.06);
             box-shadow: 
                 0 8px 16px rgba(0, 0, 0, 0.4),
@@ -2417,8 +2429,8 @@
                 top: calc(100% + 4px);
                 width: 40px;
                 height: 40px;
+                --toggle-y: -6px;
                 opacity: 0;
-                transform: translate3d(var(--float-x, 0), -6px, 0) scale(0.88);
             }
 
             .playlist-toggle-btn {
@@ -2434,7 +2446,7 @@
 
             .lyric-toggle-btn.is-visible,
             .playlist-toggle-btn.is-visible {
-                transform: translate3d(0, 0, 0) scale(1);
+                --toggle-y: 0px;
             }
 
             .lyric-toggle-btn svg,
