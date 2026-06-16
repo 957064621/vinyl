@@ -723,6 +723,9 @@
             --control-height: 48px;
             --play-shift: 0px;
             --island-lift: 0px;
+            --control-rail-top: calc(100% + 12px);
+            --side-control-size: 48px;
+            --side-control-rail-offset: 3px;
             --player-enter-y: -14px;
             --player-exit-y: -10px;
             width: calc(var(--play-width) + var(--player-slot) + var(--player-gap));
@@ -1549,9 +1552,9 @@
             --toggle-y: -8px;
             --toggle-scale: 0.88;
             position: absolute;
-            top: calc(100% + 18px);
-            width: 48px;
-            height: 48px;
+            top: calc(var(--control-rail-top) + var(--side-control-rail-offset));
+            width: var(--side-control-size);
+            height: var(--side-control-size);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1809,7 +1812,7 @@
 
         .player-pill {
             position: absolute;
-            top: calc(100% + 12px);
+            top: var(--control-rail-top);
             left: 50%;
             display: flex;
             align-items: center;
@@ -2376,6 +2379,9 @@
                 --player-slot: min(calc(82vw - 116px), 190px);
                 --player-gap: 10px;
                 --control-height: 48px;
+                --control-rail-top: calc(100% + 10px);
+                --side-control-size: 40px;
+                --side-control-rail-offset: 3px;
                 --player-enter-y: -10px;
                 --player-exit-y: -8px;
                 width: min(82vw, 306px);
@@ -2411,31 +2417,15 @@
                 font-size: 13px;
             }
 
-            .lyric-toggle-btn {
-                width: 44px;
-                height: 44px;
-                padding: 0;
-            }
-
-            .playlist-toggle-btn {
-                width: 44px;
-                height: 44px;
-                padding: 0;
-            }
-
-            .dynamic-island.is-split .lyric-toggle-btn,
-            .dynamic-island.is-split .playlist-toggle-btn {
-                top: calc(100% + 4px);
-            }
-
             .lyric-toggle-btn,
             .playlist-toggle-btn {
                 position: absolute;
-                top: calc(100% + 4px);
-                width: 40px;
-                height: 40px;
+                top: calc(var(--control-rail-top) + var(--side-control-rail-offset));
+                width: var(--side-control-size);
+                height: var(--side-control-size);
                 --toggle-y: -6px;
                 opacity: 0;
+                padding: 0;
             }
 
             .playlist-toggle-btn {
@@ -2513,7 +2503,7 @@
             }
 
             .player-pill {
-                top: calc(100% + 10px);
+                top: var(--control-rail-top);
                 left: 50%;
                 max-width: 190px;
                 min-height: 46px;
