@@ -1951,13 +1951,14 @@
 
         .lyric-text {
             font-family: "Noto Serif SC", "Songti SC", serif;
-            font-size: clamp(22px, 5.2vw, 34px);
-            font-weight: 600;
-            line-height: 1.5;
+            font-size: clamp(22px, 5vw, 33px);
+            font-weight: 560;
+            line-height: 1.56;
             color: var(--text-main);
             margin-bottom: 16px;
             opacity: 0;
             transform: translateY(20px);
+            letter-spacing: 0;
             text-shadow:
                 0 12px 26px rgba(0, 0, 0, 0.58),
                 0 0 18px rgba(199, 228, 255, 0.08);
@@ -1967,7 +1968,7 @@
 
         .lyric-line {
             display: block;
-            margin: 3px 0;
+            margin: 4px 0;
             opacity: 0;
             transform: translateY(14px);
             will-change: transform, opacity;
@@ -2630,7 +2631,7 @@
 
             .lyric-text {
                 font-size: clamp(21px, 6.4vw, 29px);
-                line-height: 1.48;
+                line-height: 1.55;
             }
 
             .playlist-list {

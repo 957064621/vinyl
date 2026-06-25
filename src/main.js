@@ -1013,12 +1013,139 @@ import {
             .replace(/\s+/g, ' ')
             .trim();
 
+        const LYRIC_MAX_LINE_LENGTH = 12;
+        const LYRIC_MAX_VISIBLE_LINES = 6;
+
+        const getLyricVisualLength = (line = '') => Array.from(String(line).replace(/\s+/g, '')).length;
+
+        const getLyricCutScore = (left, right, targetLength, hasSpaceBreak) => {
+            const leftLength = getLyricVisualLength(left);
+            const rightLength = getLyricVisualLength(right);
+            let score = Math.abs(leftLength - targetLength) * 4 + Math.abs(leftLength - rightLength);
+
+            if (hasSpaceBreak) score -= 18;
+            if (/^(我们|你说|我说|如果|因为|可是|只是|反正|哪怕|直到|等到|原来|总感觉|不可以|别|请|让|把|像|在|为|被|带|留|用|和|与|才|就|都|还|要|会|能)/u.test(right)) score -= 8;
+            if (/(的|了|着|过|里|中|前|后|上|下|完|清|见|懂|一样|时候|世界|爱情|青春|生活|故事|雨停了)$/u.test(left)) score -= 4;
+            if (/^(的|了|着|过|吗|呢|吧|啊|呀)/u.test(right)) score += 16;
+            if (getLyricVisualLength(left) < 3 || getLyricVisualLength(right) < 3) score += 20;
+
+            return score;
+        };
+
+        const splitLongLyricLine = (line = '') => {
+            const cleanLine = stripLyricPunctuation(line);
+            if (!cleanLine) return [];
+            if (getLyricVisualLength(cleanLine) <= LYRIC_MAX_LINE_LENGTH) return [cleanLine];
+
+            const chars = Array.from(cleanLine);
+            const totalLength = getLyricVisualLength(cleanLine);
+            const targetLength = Math.min(LYRIC_MAX_LINE_LENGTH, Math.ceil(totalLength / 2));
+            let bestCut = -1;
+            let bestScore = Infinity;
+
+            for (let index = 1; index < chars.length; index += 1) {
+                const left = chars.slice(0, index).join('').trim();
+                const right = chars.slice(index).join('').trim();
+                const leftLength = getLyricVisualLength(left);
+                const rightLength = getLyricVisualLength(right);
+                if (!left || !right || leftLength > LYRIC_MAX_LINE_LENGTH) continue;
+
+                const hasSpaceBreak = chars[index - 1] === ' ' || chars[index] === ' ';
+                const overflowPenalty = rightLength > LYRIC_MAX_LINE_LENGTH ? 6 : 0;
+                const score = getLyricCutScore(left, right, targetLength, hasSpaceBreak) + overflowPenalty;
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestCut = index;
+                }
+            }
+
+            if (bestCut === -1) {
+                const fallbackLeft = chars.slice(0, LYRIC_MAX_LINE_LENGTH).join('').trim();
+                const fallbackRight = chars.slice(LYRIC_MAX_LINE_LENGTH).join('').trim();
+                return [fallbackLeft, ...splitLongLyricLine(fallbackRight)].filter(Boolean);
+            }
+
+            const left = chars.slice(0, bestCut).join('').trim();
+            const right = chars.slice(bestCut).join('').trim();
+            return [left, ...splitLongLyricLine(right)].filter(Boolean);
+        };
+
+        const scoreLyricLineForTrimming = (line, index, total) => {
+            const compactLine = String(line).replace(/\s+/g, '');
+            let score = Math.min(getLyricVisualLength(line), LYRIC_MAX_LINE_LENGTH);
+
+            if (/(.{2})\1{2,}/u.test(compactLine) || /(.{1})\1{3,}/u.test(compactLine)) score -= 10;
+            if (index === 0) score += 3;
+            if (index >= total - 2) score += 2;
+            if (getLyricVisualLength(line) <= 4) score -= 2;
+
+            return score;
+        };
+
+        const trimLyricLines = (lines) => {
+            if (lines.length <= LYRIC_MAX_VISIBLE_LINES) return lines;
+
+            const seenShortRepeats = new Set();
+            let trimmed = lines.filter((line) => {
+                const key = line.replace(/\s+/g, '');
+                if (key.length > 8 || !seenShortRepeats.has(key)) {
+                    seenShortRepeats.add(key);
+                    return true;
+                }
+                return false;
+            });
+
+            while (trimmed.length > LYRIC_MAX_VISIBLE_LINES) {
+                let removeIndex = 0;
+                let lowestScore = Infinity;
+                trimmed.forEach((line, index) => {
+                    const score = scoreLyricLineForTrimming(line, index, trimmed.length);
+                    if (score < lowestScore) {
+                        lowestScore = score;
+                        removeIndex = index;
+                    }
+                });
+                trimmed = trimmed.filter((_, index) => index !== removeIndex);
+            }
+
+            return trimmed;
+        };
+
+        const packLyricLines = (fragmentGroups) => {
+            const packed = [];
+
+            fragmentGroups.forEach((fragments) => {
+                const groupLines = [];
+
+                fragments.forEach((fragment) => {
+                    const cleanFragment = stripLyricPunctuation(fragment);
+                    if (!cleanFragment) return;
+
+                    const previous = groupLines[groupLines.length - 1];
+                    const joined = previous ? `${previous} ${cleanFragment}` : '';
+                    if (previous && getLyricVisualLength(joined) <= LYRIC_MAX_LINE_LENGTH) {
+                        groupLines[groupLines.length - 1] = joined;
+                        return;
+                    }
+
+                    groupLines.push(cleanFragment);
+                });
+
+                packed.push(...groupLines);
+            });
+
+            return trimLyricLines(packed);
+        };
+
         const lyricToLinesHTML = (text) => {
-            const lines = text
-                .split(/\n|[\uff0c\u3002\uff01\uff1f\uff1b,.!?;\uff1a:]/)
-                .map(stripLyricPunctuation)
-                .filter(Boolean)
-                .slice(0, 6);
+            const fragmentGroups = String(text)
+                .split(/\n/)
+                .map((sourceLine) => sourceLine
+                    .split(/[\uff0c\u3001\u3002\uff01\uff1f\uff1b,.!?;\uff1a:]/)
+                    .flatMap(splitLongLyricLine)
+                    .filter(Boolean))
+                .filter((group) => group.length > 0);
+            const lines = packLyricLines(fragmentGroups);
 
             return lines.map((line) => `<span class="lyric-line">${escapeHTML(line)}</span>`).join('');
         };
