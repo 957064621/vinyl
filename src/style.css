@@ -814,7 +814,8 @@
             z-index: 118;
         }
 
-        body.has-lyric-overlay .dynamic-island.is-overlay-control-visible .lyric-toggle-btn {
+        body.has-lyric-overlay .dynamic-island.is-overlay-control-visible .lyric-toggle-btn,
+        body.has-lyric-overlay .dynamic-island.is-overlay-control-visible .playlist-toggle-btn {
             opacity: 0;
             pointer-events: none;
             visibility: hidden;
@@ -1569,7 +1570,9 @@
 
         .playlist-group.is-current-group .playlist-album-title {
             color: rgba(249, 252, 255, 0.98);
-            text-shadow: 0 0 16px rgba(199, 228, 255, 0.32);
+            text-shadow:
+                0 0 16px color-mix(in srgb, var(--cover-accent) 42%, transparent),
+                0 8px 18px rgba(0, 0, 0, 0.28);
         }
 
         .playlist-item {
@@ -1599,7 +1602,7 @@
             top: 3px;
             bottom: 3px;
             border-radius: 999px;
-            background: radial-gradient(120% 172% at 50% 50%, color-mix(in srgb, var(--cover-accent) 34%, transparent) 0%, color-mix(in srgb, var(--cover-a) 14%, transparent) 42%, transparent 78%);
+            background: radial-gradient(120% 172% at 50% 50%, color-mix(in srgb, var(--cover-accent) 50%, transparent) 0%, color-mix(in srgb, var(--cover-a) 24%, transparent) 42%, transparent 78%);
             filter: blur(10px);
             opacity: 0;
             transform: scale(0.9);
@@ -1649,30 +1652,42 @@
 
         .playlist-item.is-current {
             color: rgba(248, 252, 255, 0.99);
+            background:
+                linear-gradient(90deg, color-mix(in srgb, var(--cover-accent) 13%, transparent), transparent 72%),
+                radial-gradient(118% 150% at 12% 50%, color-mix(in srgb, var(--cover-a) 11%, transparent), transparent 68%);
             transform: translateX(1px);
-            text-shadow: 0 0 16px color-mix(in srgb, var(--cover-accent) 42%, transparent);
+            text-shadow:
+                0 0 18px color-mix(in srgb, var(--cover-accent) 56%, transparent),
+                0 1px 10px rgba(0, 0, 0, 0.42);
+            box-shadow:
+                inset 2px 0 0 color-mix(in srgb, var(--cover-accent) 82%, rgba(255, 255, 255, 0.72)),
+                inset 0 0 0 1px color-mix(in srgb, var(--cover-accent) 12%, transparent);
         }
 
         .playlist-item.is-current::before {
-            opacity: 1;
+            opacity: 0.94;
             transform: scale(1);
             animation: playlist-current-breathe 2.1s var(--playlist-breathe-ease) infinite;
         }
 
         .playlist-item.is-current .playlist-index {
-            color: rgba(223, 237, 255, 0.98);
-            text-shadow: 0 0 12px color-mix(in srgb, var(--cover-accent) 38%, transparent);
+            color: color-mix(in srgb, var(--cover-accent) 72%, rgba(255, 255, 255, 0.98));
+            text-shadow:
+                0 0 14px color-mix(in srgb, var(--cover-accent) 58%, transparent),
+                0 1px 8px rgba(0, 0, 0, 0.48);
         }
 
         .playlist-item.is-current .playlist-song {
             font-weight: 700;
-            text-shadow: 0 0 14px color-mix(in srgb, var(--cover-accent) 42%, transparent);
+            text-shadow:
+                0 0 18px color-mix(in srgb, var(--cover-accent) 58%, transparent),
+                0 1px 9px rgba(0, 0, 0, 0.5);
         }
 
         .playlist-item.is-current::after {
             height: 2px;
-            background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--cover-accent) 12%, transparent) 12%, color-mix(in srgb, var(--cover-accent) 62%, transparent) 50%, color-mix(in srgb, var(--cover-accent) 12%, transparent) 88%, transparent 100%);
-            opacity: 0.86;
+            background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--cover-accent) 22%, transparent) 12%, color-mix(in srgb, var(--cover-accent) 88%, rgba(255, 255, 255, 0.52)) 50%, color-mix(in srgb, var(--cover-accent) 22%, transparent) 88%, transparent 100%);
+            opacity: 1;
         }
 
         @media (hover: hover) and (pointer: fine) {
@@ -2378,13 +2393,13 @@
         @keyframes playlist-current-breathe {
             0%,
             100% {
-                opacity: 0.42;
+                opacity: 0.74;
             }
             38% {
-                opacity: 0.62;
+                opacity: 0.88;
             }
             62% {
-                opacity: 0.74;
+                opacity: 0.96;
             }
         }
 
@@ -2473,10 +2488,10 @@
 
             .playlist-area::before {
                 inset: -36px;
-                opacity: 0.44;
+                opacity: 0.48;
                 filter: blur(24px) saturate(0.96) brightness(0.4);
-                animation: none !important;
-                will-change: opacity;
+                animation: playlist-backdrop-drift 12s var(--playlist-breathe-ease) infinite alternate;
+                will-change: transform, opacity;
             }
 
             .playlist-area::after {
@@ -2643,7 +2658,7 @@
             .playlist-item {
                 padding: 11px 12px;
                 border-radius: 0;
-                will-change: auto;
+                will-change: transform, opacity;
             }
 
             .playlist-group-header {

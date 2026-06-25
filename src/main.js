@@ -117,7 +117,8 @@ import {
         const canUseWebAnimations = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
         const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         const isCoarsePointer = window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
-        const shouldUseLeanPlaylistMotion = playbackPlatform.isIOS || isCoarsePointer || prefersReducedMotion;
+        const shouldUseCompactPlaylistMotion = playbackPlatform.isIOS || isCoarsePointer;
+        const shouldUseLeanPlaylistMotion = prefersReducedMotion;
 
         const createNoopAnimation = () => {
             let playbackRateValue = 1;
@@ -1023,8 +1024,7 @@ import {
         const setOverlayControlsVisible = (visible) => {
             dynamicIsland.classList.toggle('is-overlay-control-visible', visible);
             if (visible) {
-                lyricToggleBtn.classList.remove('is-visible');
-                playlistToggleBtn.classList.toggle('is-visible', currentLyricIndex !== -1);
+                setFloatingButtonsVisible(false);
                 return;
             }
 
@@ -1105,7 +1105,7 @@ import {
             const currentItem = playlistList.querySelector(`.playlist-item[data-index="${currentLyricIndex}"]`);
             if (!currentItem) return;
 
-            const scrollBehavior = shouldUseLeanPlaylistMotion ? 'auto' : behavior;
+            const scrollBehavior = shouldUseCompactPlaylistMotion || shouldUseLeanPlaylistMotion ? 'auto' : behavior;
 
             requestAnimationFrame(() => {
                 const listRect = playlistList.getBoundingClientRect();
@@ -1707,13 +1707,18 @@ import {
             });
 
             const currentItemPosition = playlistItems.findIndex((item) => Number(item.dataset.index) === currentLyricIndex);
-            const itemAnimationTargets = shouldUseLeanPlaylistMotion
-                ? []
-                : playlistItems.filter((item, index) => {
-                    if (index < 18) return true;
-                    if (currentItemPosition === -1) return false;
-                    return Math.abs(index - currentItemPosition) <= 10;
-                });
+            const itemAnimationTargets = playlistItems.filter((item, index) => {
+                if (shouldUseLeanPlaylistMotion) return false;
+
+                if (shouldUseCompactPlaylistMotion) {
+                    if (currentItemPosition === -1) return index < 10;
+                    return Math.abs(index - currentItemPosition) <= 8;
+                }
+
+                if (index < 18) return true;
+                if (currentItemPosition === -1) return false;
+                return Math.abs(index - currentItemPosition) <= 10;
+            });
 
             const itemAnimations = itemAnimationTargets.map((item, index) => safeAnimate(item, [
                 { opacity: 0, transform: 'translateY(7px) scale(0.992)' },
