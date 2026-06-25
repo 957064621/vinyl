@@ -116,6 +116,8 @@ import {
 
         const canUseWebAnimations = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
         const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const isCoarsePointer = window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+        const shouldUseLeanPlaylistMotion = playbackPlatform.isIOS || isCoarsePointer || prefersReducedMotion;
 
         const createNoopAnimation = () => {
             let playbackRateValue = 1;
@@ -1021,8 +1023,12 @@ import {
         const setOverlayControlsVisible = (visible) => {
             dynamicIsland.classList.toggle('is-overlay-control-visible', visible);
             if (visible) {
-                setFloatingButtonsVisible(false);
+                lyricToggleBtn.classList.remove('is-visible');
+                playlistToggleBtn.classList.toggle('is-visible', currentLyricIndex !== -1);
+                return;
             }
+
+            setFloatingButtonsVisible(false);
         };
 
         let controlMotionTimer = null;
@@ -1091,6 +1097,29 @@ import {
 
                 return `<section class="playlist-group${currentClass}" style="--playlist-group-cover: url(&quot;${releaseCover}&quot;)"><div class="playlist-group-header"><span class="playlist-album-title">${releaseTitle}</span><span class="playlist-album-meta">${releaseMeta}</span></div>${itemsHTML}</section>`;
             }).join('');
+        };
+
+        const scrollPlaylistToCurrentTrack = (behavior = 'smooth') => {
+            if (!playlistList || currentLyricIndex === -1) return;
+
+            const currentItem = playlistList.querySelector(`.playlist-item[data-index="${currentLyricIndex}"]`);
+            if (!currentItem) return;
+
+            const scrollBehavior = shouldUseLeanPlaylistMotion ? 'auto' : behavior;
+
+            requestAnimationFrame(() => {
+                const listRect = playlistList.getBoundingClientRect();
+                const itemRect = currentItem.getBoundingClientRect();
+                const centeredTop = playlistList.scrollTop
+                    + itemRect.top
+                    - listRect.top
+                    - ((playlistList.clientHeight - itemRect.height) / 2);
+
+                playlistList.scrollTo({
+                    top: Math.max(0, centeredTop),
+                    behavior: scrollBehavior
+                });
+            });
         };
 
         // ── 封面驱动的动态主色 + 封面交叉淡入 ──────────────────────────
@@ -1592,7 +1621,7 @@ import {
             playlistContent.style.filter = '';
         };
 
-        const animateLyricIn = () => {
+        const animateLyricIn = ({ showOverlayControls = true } = {}) => {
             resultArea.classList.add('is-visible');
             document.body.classList.add('has-lyric-overlay');
             if (!hasShownDismissHint) {
@@ -1600,7 +1629,7 @@ import {
                 hasShownDismissHint = true;
             }
             setControlSplit(true);
-            setOverlayControlsVisible(true);
+            setOverlayControlsVisible(showOverlayControls);
 
             const cardAnim = safeAnimate(resultArea, [
                 { opacity: 0, transform: 'translateY(8px)' },
@@ -1671,7 +1700,22 @@ import {
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
-            const itemAnimations = Array.from(playlistList.querySelectorAll('.playlist-item')).map((item, index) => safeAnimate(item, [
+            const playlistItems = Array.from(playlistList.querySelectorAll('.playlist-item'));
+            playlistItems.forEach((item) => {
+                item.style.opacity = '1';
+                item.style.transform = 'translateY(0) scale(1)';
+            });
+
+            const currentItemPosition = playlistItems.findIndex((item) => Number(item.dataset.index) === currentLyricIndex);
+            const itemAnimationTargets = shouldUseLeanPlaylistMotion
+                ? []
+                : playlistItems.filter((item, index) => {
+                    if (index < 18) return true;
+                    if (currentItemPosition === -1) return false;
+                    return Math.abs(index - currentItemPosition) <= 10;
+                });
+
+            const itemAnimations = itemAnimationTargets.map((item, index) => safeAnimate(item, [
                 { opacity: 0, transform: 'translateY(7px) scale(0.992)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)' }
             ], {
@@ -1682,6 +1726,7 @@ import {
             }));
 
             playlistAnimations = [cardAnim, contentAnim, ...itemAnimations];
+            scrollPlaylistToCurrentTrack();
         };
 
         const morphResultOut = () => {
@@ -1803,7 +1848,11 @@ import {
             try {
                 await morphPlaylistOut();
                 resetPlaylistVisual();
-                setFloatingButtonsVisible(true);
+                if (resultArea.classList.contains('is-visible')) {
+                    setOverlayControlsVisible(true);
+                } else {
+                    setFloatingButtonsVisible(true);
+                }
             } finally {
                 if (ownsInteractionLock) {
                     setPlayButtonBusy(false);
@@ -1968,7 +2017,7 @@ import {
             ]);
 
             // 唱针停止后再出现歌词层。
-            animateLyricIn();
+            animateLyricIn({ showOverlayControls: false });
             await toggleAudioState(true, { skipMotion: true });
 
             // 让文字在歌词展开时再变，避免时间上同步过于机械。
@@ -1990,6 +2039,9 @@ import {
                     })
                 ]);
             }
-            setPlayButtonBusy(false);
             isDrawing = false;
+            setPlayButtonBusy(false);
+            if (resultArea.classList.contains('is-visible')) {
+                setOverlayControlsVisible(true);
+            }
         });
