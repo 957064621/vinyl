@@ -1,14 +1,9 @@
-const VINYL_DATA = window.VINYL_DATA;
-if (!VINYL_DATA) {
-    throw new Error('Vinyl data is missing. Load data.js before main.js.');
-}
-
-const {
+import {
     COVER_BASE_URL,
     COVER_ROTATION_FILES,
-    MUSIC_BASE_URL,
+    releases,
     lyricsPool
-} = VINYL_DATA;
+} from './data.js';
 
         const loadingScreen = document.getElementById('loadingScreen');
         const appShell = document.getElementById('appShell');
@@ -110,11 +105,13 @@ const {
         const isIOSDevice = /iPad|iPhone|iPod/i.test(ua) || (platformName === 'MacIntel' && navigator.maxTouchPoints > 1);
         const isAndroidDevice = /Android/i.test(ua);
         const isWeChatWebView = /MicroMessenger/i.test(ua);
+        const isSafariBrowser = /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(ua);
         const playbackPlatform = {
             isIOS: isIOSDevice,
             isAndroid: isAndroidDevice,
             isDesktop: !isIOSDevice && !isAndroidDevice,
-            isWeChat: isWeChatWebView
+            isWeChat: isWeChatWebView,
+            isSafari: isSafariBrowser
         };
 
         const canUseWebAnimations = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
@@ -201,10 +198,49 @@ const {
             return `${m}:${s}`;
         };
 
-        const getCoverSrcByLyricIndex = (index) => {
+        const stripSongMarks = (song = '') => String(song || '').replace(/[《》]/g, '');
+
+        const escapeHTML = (value = '') => String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+        const escapeCSSUrl = (value = '') => String(value)
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"')
+            .replace(/\n|\r/g, '');
+
+        const getTrackByIndex = (index) => {
+            if (!Number.isInteger(index) || index < 0 || index >= lyricsPool.length) return null;
+            return lyricsPool[index];
+        };
+
+        const getFallbackCoverSrcByLyricIndex = (index) => {
             const normalizedIndex = Number.isInteger(index) ? Math.abs(index) : 0;
             const coverFile = COVER_ROTATION_FILES[normalizedIndex % COVER_ROTATION_FILES.length];
             return `${COVER_BASE_URL}${coverFile}`;
+        };
+
+        const getReleaseCoverSrc = (release) => release?.coverOssUrl || release?.sourceArtworkUrl || '';
+
+        const getCoverSrcByLyricIndex = (index) => {
+            const track = getTrackByIndex(index);
+            return track?.coverOssUrl || track?.sourceArtworkUrl || getFallbackCoverSrcByLyricIndex(index);
+        };
+
+        const toInlineCoverProxySrc = (src = '') => src;
+
+        const getPlayableMusicSrcByIndex = (index) => {
+            const track = getTrackByIndex(index);
+            return track?.musicOssUrl || '';
+        };
+
+        const getArtworkType = (src = '') => {
+            if (/\.png(?:\?|$)/i.test(src)) return 'image/png';
+            if (/\.webp(?:\?|$)/i.test(src)) return 'image/webp';
+            return 'image/jpeg';
         };
 
         const shouldUseHeadlessTrackSwitch = () => {
@@ -228,23 +264,44 @@ const {
             if (!Number.isInteger(index) || index < 0 || index >= lyricsPool.length) return;
 
             const track = lyricsPool[index];
-            const title = track.song.replace(/[《》]/g, '');
+            const title = stripSongMarks(track.song);
+            const artworkSrc = toInlineCoverProxySrc(getCoverSrcByLyricIndex(index));
 
             try {
                 navigator.mediaSession.metadata = new MediaMetadata({
                     title,
-                    artist: '薛之谦',
-                    album: '歌词抽取机',
+                    artist: track.artist || '薛之谦',
+                    album: track.album || '歌词抽取机',
                     artwork: [
                         {
-                            src: getCoverSrcByLyricIndex(index),
+                            src: artworkSrc,
                             sizes: '512x512',
-                            type: 'image/jpeg'
+                            type: getArtworkType(artworkSrc)
                         }
                     ]
                 });
             } catch (error) {
                 // Ignore metadata failures on constrained browsers/webviews.
+            }
+        };
+
+        const updateMediaSessionPositionState = () => {
+            if (!('mediaSession' in navigator) || typeof navigator.mediaSession.setPositionState !== 'function') return;
+
+            const duration = Number.isFinite(audioEl.duration) ? audioEl.duration : NaN;
+            if (!Number.isFinite(duration) || duration <= 0) return;
+
+            const playbackRate = Number.isFinite(audioEl.playbackRate) && audioEl.playbackRate > 0 ? audioEl.playbackRate : 1;
+            const position = Number.isFinite(audioEl.currentTime) ? audioEl.currentTime : 0;
+
+            try {
+                navigator.mediaSession.setPositionState({
+                    duration,
+                    playbackRate,
+                    position: Math.min(Math.max(0, position), duration)
+                });
+            } catch (error) {
+                // Ignore unsupported or transient position state updates.
             }
         };
 
@@ -270,12 +327,29 @@ const {
                 if (playerTime.innerText !== newTime) {
                     playerTime.innerText = newTime;
                 }
+                updateMediaSessionPositionState();
             });
         });
 
         audioEl.addEventListener('loadedmetadata', () => {
             playerTime.innerText = '0:00';
             trackFill.style.transform = 'translate3d(-100%, 0, 0)';
+            updateMediaSessionPositionState();
+        });
+        audioEl.addEventListener('durationchange', updateMediaSessionPositionState);
+        audioEl.addEventListener('ratechange', updateMediaSessionPositionState);
+        audioEl.addEventListener('seeked', updateMediaSessionPositionState);
+
+        let audioSourceTrackIndex = -1;
+        let audioSourceRequestId = 0;
+
+        audioEl.addEventListener('error', () => {
+            if (audioSourceTrackIndex === -1) return;
+            const song = lyricsPool[audioSourceTrackIndex];
+            console.warn('[vinyl] Audio playback failed.', {
+                song: song?.song,
+                src: audioEl.currentSrc || audioEl.src
+            });
         });
 
         const cancelVolumeFade = () => {
@@ -431,6 +505,7 @@ const {
             playerToggleBtn.classList.remove('is-disabled');
             setPlayerToggleState(true);
             updateMediaSessionPlaybackState();
+            updateMediaSessionPositionState();
             if (!isDrawing && !isTrackSwitching) {
                 animateTurntableToTargetRate({
                     targetRate: 0.68,
@@ -444,6 +519,7 @@ const {
             isAudioPlaying = false;
             setPlayerToggleState(false);
             updateMediaSessionPlaybackState();
+            updateMediaSessionPositionState();
             if (!isDrawing && !isTrackSwitching) {
                 animateTurntableToTargetRate({
                     targetRate: 0,
@@ -647,9 +723,9 @@ const {
             if (loadingCopy) loadingCopy.textContent = '信号已接入';
             await wait(prefersReducedMotion ? 0 : 220);
 
+            if (loadingCopy) loadingCopy.classList.add('is-hidden');
             if (loadingHeroWrap) loadingHeroWrap.classList.add('is-loaded');
             if (loadingAmbient) loadingAmbient.classList.add('is-loaded');
-            if (loadingCopy) loadingCopy.classList.add('is-hidden');
 
             let currentIndex = 0;
             const updateSlide = (dur) => {
@@ -921,14 +997,19 @@ const {
             }
         });
 
+        const stripLyricPunctuation = (line = '') => String(line)
+            .replace(/[\u300a\u300b\u300c\u300d\u300e\u300f\u201c\u201d\u2018\u2019"'.\u3002\uff0c\u3001\uff1b;\uff1a:\uff01\uff1f!?\uff08\uff09()\u3010\u3011\[\]{}<>\u3008\u3009\u2014\u2026\u00b7\u2022]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
         const lyricToLinesHTML = (text) => {
             const lines = text
-                .split(/\n|[，。！？；]/)
-                .map((line) => line.trim())
+                .split(/\n|[\uff0c\u3002\uff01\uff1f\uff1b,.!?;\uff1a:]/)
+                .map(stripLyricPunctuation)
                 .filter(Boolean)
-                .slice(0, 8);
+                .slice(0, 6);
 
-            return lines.map((line) => `<span class="lyric-line">${line}</span>`).join('');
+            return lines.map((line) => `<span class="lyric-line">${escapeHTML(line)}</span>`).join('');
         };
 
         const setFloatingButtonsVisible = (visible) => {
@@ -939,6 +1020,9 @@ const {
 
         const setOverlayControlsVisible = (visible) => {
             dynamicIsland.classList.toggle('is-overlay-control-visible', visible);
+            if (visible) {
+                setFloatingButtonsVisible(false);
+            }
         };
 
         let controlMotionTimer = null;
@@ -957,11 +1041,55 @@ const {
             }, split ? 860 : 700);
         };
 
+        const RELEASE_TYPE_LABELS = {
+            album: '专辑',
+            single: '单曲',
+            live: '现场',
+            'live-recording': '演唱会录音',
+            'associated-single': '关联单曲',
+            pending: '待核对'
+        };
+
+        const getReleaseMeta = (release, trackCount) => {
+            const typeLabel = RELEASE_TYPE_LABELS[release.type] || release.type || '发行';
+            const year = release.releaseDate ? release.releaseDate.slice(0, 4) : '';
+            return [typeLabel, year, `${trackCount}首`].filter(Boolean).join(' · ');
+        };
+
+        const getPlaylistTrackKey = (releaseTitle, track) => [
+            releaseTitle || '',
+            Number.isInteger(track?.trackNumber) ? track.trackNumber : '',
+            track?.title || stripSongMarks(track?.song || '')
+        ].join('\u0000');
+
         const renderPlaylist = () => {
-            playlistList.innerHTML = lyricsPool.map((item, index) => {
-                const activeClass = index === currentLyricIndex ? ' is-current' : '';
-                const displaySong = item.song.replace(/[《》]/g, '');
-                return `<button class="playlist-item${activeClass}" data-index="${index}" type="button"><span class="playlist-index">${String(index + 1).padStart(2, '0')}</span><span class="playlist-song">${displaySong}</span></button>`;
+            const trackIndexByTrack = new Map(lyricsPool.map((track, index) => [
+                getPlaylistTrackKey(track.album, track),
+                index
+            ]));
+            playlistList.innerHTML = releases.map((release) => {
+                const tracks = Array.isArray(release.tracks) ? release.tracks : [];
+                const itemIndexes = [];
+                const itemsHTML = tracks.map((item, releaseTrackIndex) => {
+                    const itemIndex = trackIndexByTrack.get(getPlaylistTrackKey(release.title, item));
+                    if (!item) return '';
+                    if (!Number.isInteger(itemIndex)) return '';
+                    itemIndexes.push(itemIndex);
+
+                    const activeClass = itemIndex === currentLyricIndex ? ' is-current' : '';
+                    const displaySong = stripSongMarks(item.song);
+                    const trackNumber = Number.isInteger(item.trackNumber) ? item.trackNumber : releaseTrackIndex + 1;
+                    return `<button class="playlist-item${activeClass}" data-index="${itemIndex}" type="button"><span class="playlist-index">${String(trackNumber).padStart(2, '0')}</span><span class="playlist-song">${escapeHTML(displaySong)}</span></button>`;
+                }).join('');
+
+                if (!itemsHTML) return '';
+
+                const currentClass = itemIndexes.includes(currentLyricIndex) ? ' is-current-group' : '';
+                const releaseTitle = escapeHTML(release.title || '未命名发行');
+                const releaseMeta = escapeHTML(getReleaseMeta(release, tracks.length));
+                const releaseCover = escapeCSSUrl(getReleaseCoverSrc(release));
+
+                return `<section class="playlist-group${currentClass}" style="--playlist-group-cover: url(&quot;${releaseCover}&quot;)"><div class="playlist-group-header"><span class="playlist-album-title">${releaseTitle}</span><span class="playlist-album-meta">${releaseMeta}</span></div>${itemsHTML}</section>`;
             }).join('');
         };
 
@@ -970,54 +1098,200 @@ const {
         const coverLayerA = document.getElementById('vinylCoverA');
         const coverLayerB = document.getElementById('vinylCoverB');
 
-        // OSS 无跨域头、无法前端取色，故按真实封面手工配色；索引与 COVER_ROTATION_FILES 一一对应
-        const COVER_COLORS = [
-            { a: [232, 74, 66],  b: [255, 134, 80] },   // 0 · 3.jpg 天外来物(新加坡)——烈焰红
-            { a: [120, 180, 233], b: [228, 180, 140] }, // 1 · 4.jpg 裂面——天空蓝 / 暖沙
-            { a: [150, 201, 237], b: [190, 204, 235] }, // 2 · 1.jpg 万兽之王——冰蓝银
-            { a: [122, 207, 215], b: [216, 199, 182] }, // 3 · 2.jpg 银色隧道——青瓷 / 香槟
-            { a: [237, 99, 112], b: [99, 160, 229] }    // 4 · 天外来物——珊瑚红 / 青
-        ];
-
-        // 用 OSS 图片处理取清晰小图（原图约 4MB，在旋转的合成层上会被低质降采样发糊）
-        const sizedCoverUrl = (index) => {
-            const dpr = Math.min(3, Math.max(1, Math.round(window.devicePixelRatio || 1)));
-            return `${getCoverSrcByLyricIndex(index)}?x-oss-process=image/resize,w_${132 * dpr}`;
+        const DEFAULT_COVER_PALETTE = {
+            a: [150, 201, 237],
+            b: [190, 204, 235],
+            accent: [224, 239, 255],
+            deep: [18, 26, 40]
         };
 
         let activeCoverLayer = coverLayerA;
+        let coverSwapRequestId = 0;
 
         // 预载后再交叉淡入，避免空白闪烁；两层互相淡入淡出
-        const swapCoverImage = (index) => {
-            if (!coverLayerA || !coverLayerB) return;
-            const url = sizedCoverUrl(index);
-            const incoming = activeCoverLayer === coverLayerA ? coverLayerB : coverLayerA;
-            const commit = () => {
-                incoming.style.backgroundImage = `url("${url}")`;
-                incoming.classList.add('is-active');
-                activeCoverLayer.classList.remove('is-active');
-                activeCoverLayer = incoming;
-            };
+        const preloadCoverImage = (src) => new Promise((resolve) => {
+            if (!src) {
+                resolve();
+                return;
+            }
+
             const pre = new Image();
-            pre.onload = commit;
-            pre.onerror = commit;
-            pre.src = url;
+            pre.onload = () => resolve();
+            pre.onerror = () => resolve();
+            pre.src = src;
+        });
+
+        const setCoverArtworkUrl = (artworkSrc) => {
+            rootStyle.setProperty('--cover-art-url', `url("${artworkSrc}")`);
+            if (document.body) {
+                document.body.style.setProperty('--cover-art-url', `url("${artworkSrc}")`);
+            }
         };
 
-        const applyCoverVisual = (index) => {
-            const pal = COVER_COLORS[Math.abs(index) % COVER_COLORS.length];
-            rootStyle.setProperty('--cover-a', `rgb(${pal.a.join(', ')})`);
-            rootStyle.setProperty('--cover-b', `rgb(${pal.b.join(', ')})`);
-            swapCoverImage(index);
+        const rgbToCss = (rgb) => `rgb(${rgb.map((value) => Math.round(value)).join(', ')})`;
+
+        const rgbToLuma = (rgb) => {
+            const [r, g, b] = rgb;
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
         };
 
-        // 抽取前的初始封面：默认「天外来物」(rotation 索引 4)，立即清晰显示并匹配其主色
+        const clampRgb = (rgb) => rgb.map((value) => Math.max(0, Math.min(255, Math.round(value))));
+
+        const darkenRgb = (rgb, ratio = 0.38) => clampRgb(rgb.map((value) => value * ratio));
+
+        const normalizePalette = (palette = DEFAULT_COVER_PALETTE) => {
+            const a = clampRgb(palette.a || DEFAULT_COVER_PALETTE.a);
+            const b = clampRgb(palette.b || DEFAULT_COVER_PALETTE.b);
+            const accent = clampRgb(palette.accent || (rgbToLuma(a) > rgbToLuma(b) ? a : b));
+            const baseDeep = clampRgb(rgbToLuma(a) < rgbToLuma(b) ? a : b);
+            const deep = clampRgb(palette.deep || darkenRgb(baseDeep, rgbToLuma(baseDeep) > 120 ? 0.34 : 0.52));
+            return { a, b, accent, deep };
+        };
+
+        const getTrackPaletteByIndex = (index) => normalizePalette(getTrackByIndex(index)?.palette || DEFAULT_COVER_PALETTE);
+
+        const colorDistance = (left, right) => Math.hypot(
+            left[0] - right[0],
+            left[1] - right[1],
+            left[2] - right[2]
+        );
+
+        const getColorSaturation = (rgb) => {
+            const max = Math.max(...rgb);
+            const min = Math.min(...rgb);
+            return max === 0 ? 0 : (max - min) / max;
+        };
+
+        const deriveCoverPaletteFromImage = async (src, fallbackPalette = DEFAULT_COVER_PALETTE) => {
+            const safeFallbackPalette = normalizePalette(fallbackPalette);
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.decoding = 'async';
+            img.referrerPolicy = 'no-referrer';
+
+            const loaded = new Promise((resolve, reject) => {
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+            });
+
+            img.src = src;
+            await loaded;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 32;
+            canvas.height = 32;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) return safeFallbackPalette;
+
+            try {
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const samples = [];
+                const centerX = (canvas.width - 1) / 2;
+                const centerY = (canvas.height - 1) / 2;
+                const maxCenterDistance = Math.hypot(centerX, centerY);
+
+                for (let i = 0; i < data.length; i += 4) {
+                    const alpha = data[i + 3];
+                    if (alpha < 180) continue;
+                    const rgb = [data[i], data[i + 1], data[i + 2]];
+                    const luma = rgbToLuma(rgb);
+                    if (luma < 24 || luma > 244) continue;
+
+                    const pixelIndex = i / 4;
+                    const x = pixelIndex % canvas.width;
+                    const y = Math.floor(pixelIndex / canvas.width);
+                    const centerWeight = 1 - Math.min(1, Math.hypot(x - centerX, y - centerY) / maxCenterDistance);
+                    const saturation = getColorSaturation(rgb);
+                    const score = saturation * 1.25 + centerWeight * 0.65 + (1 - Math.abs(luma - 142) / 142) * 0.48;
+                    samples.push({ rgb, luma, saturation, score });
+                }
+
+                if (!samples.length) return safeFallbackPalette;
+                samples.sort((a, b) => b.score - a.score);
+
+                const accentSample = samples[0] || { rgb: safeFallbackPalette.accent, luma: 180 };
+                const companionSample = samples.find((sample) => colorDistance(sample.rgb, accentSample.rgb) > 58)
+                    || samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.28))]
+                    || accentSample;
+                const deepSample = [...samples].sort((a, b) => a.luma - b.luma)[Math.floor(samples.length * 0.16)] || accentSample;
+
+                return normalizePalette({
+                    a: accentSample.rgb,
+                    b: companionSample.rgb,
+                    accent: accentSample.rgb,
+                    deep: deepSample.rgb
+                });
+            } catch (error) {
+                return safeFallbackPalette;
+            }
+        };
+
+        const canSampleCoverPalette = (src = '') => /mzstatic\.com/i.test(src);
+
+        const resolveCoverPalette = async (artworkSrc, fallbackPalette = DEFAULT_COVER_PALETTE) => {
+            if (!canSampleCoverPalette(artworkSrc)) {
+                return normalizePalette(fallbackPalette);
+            }
+
+            try {
+                return await deriveCoverPaletteFromImage(artworkSrc, fallbackPalette);
+            } catch (error) {
+                return normalizePalette(fallbackPalette);
+            }
+        };
+
+        const setCoverPalette = (palette) => {
+            const normalized = normalizePalette(palette);
+            rootStyle.setProperty('--cover-a', rgbToCss(normalized.a));
+            rootStyle.setProperty('--cover-b', rgbToCss(normalized.b));
+            rootStyle.setProperty('--cover-accent', rgbToCss(normalized.accent));
+            rootStyle.setProperty('--cover-deep', rgbToCss(normalized.deep));
+        };
+
+        const primeCoverVisual = async (index) => {
+            const artworkSrc = toInlineCoverProxySrc(getCoverSrcByLyricIndex(index));
+            const fallbackPalette = getTrackPaletteByIndex(index);
+            const [palette] = await Promise.all([
+                resolveCoverPalette(artworkSrc, fallbackPalette),
+                preloadCoverImage(artworkSrc)
+            ]);
+            return { artworkSrc, palette };
+        };
+
+        const applyCoverVisual = async (index) => {
+            if (!coverLayerA || !coverLayerB) return '';
+
+            const requestId = ++coverSwapRequestId;
+            const { artworkSrc, palette } = await primeCoverVisual(index);
+            if (requestId !== coverSwapRequestId || !artworkSrc) return artworkSrc;
+
+            const incoming = activeCoverLayer === coverLayerA ? coverLayerB : coverLayerA;
+            incoming.style.backgroundImage = `url("${artworkSrc}")`;
+            setCoverPalette(palette);
+            setCoverArtworkUrl(artworkSrc);
+            incoming.classList.add('is-active');
+            activeCoverLayer.classList.remove('is-active');
+            activeCoverLayer = incoming;
+            return artworkSrc;
+        };
+
+        const getInitialCoverVisual = () => {
+            const initialRelease = releases.find((release) => release.title === '万兽之王演唱会录音') || releases[0];
+            const artworkSrc = toInlineCoverProxySrc(getReleaseCoverSrc(initialRelease) || getFallbackCoverSrcByLyricIndex(0));
+            return {
+                artworkSrc,
+                palette: normalizePalette(initialRelease?.palette || DEFAULT_COVER_PALETTE)
+            };
+        };
+
+        // 抽取前的初始封面：默认「万兽之王演唱会录音」，避免用轮播数组序号导致封面语义漂移。
         if (coverLayerA) {
-            coverLayerA.style.backgroundImage = `url("${sizedCoverUrl(4)}")`;
+            const { artworkSrc: initialArtworkSrc, palette: initPal } = getInitialCoverVisual();
+            coverLayerA.style.backgroundImage = `url("${initialArtworkSrc}")`;
             coverLayerA.classList.add('is-active');
-            const initPal = COVER_COLORS[4];
-            rootStyle.setProperty('--cover-a', `rgb(${initPal.a.join(', ')})`);
-            rootStyle.setProperty('--cover-b', `rgb(${initPal.b.join(', ')})`);
+            setCoverPalette(initPal);
+            setCoverArtworkUrl(initialArtworkSrc);
         }
 
         const updateCurrentLyric = (index) => {
@@ -1025,7 +1299,7 @@ const {
             lyricEl.innerHTML = lyricToLinesHTML(result.text);
             songEl.innerText = '—— ' + result.song;
             currentLyricIndex = index;
-            applyCoverVisual(index);
+            void applyCoverVisual(index);
             consumeLyricIndexFromQueue(index);
             updateMediaSessionMetadata(index);
             renderPlaylist();
@@ -1044,10 +1318,23 @@ const {
             });
         };
 
-        const setAudioSourceByIndex = (index) => {
+        const setAudioSourceByIndex = async (index) => {
             const song = lyricsPool[index];
-            const audioFileName = song.song.replace(/[《》]/g, '') + '.mp3';
-            audioEl.src = `${MUSIC_BASE_URL}${encodeURIComponent(audioFileName)}`;
+            audioSourceTrackIndex = index;
+            const requestId = ++audioSourceRequestId;
+            const playbackSrc = getPlayableMusicSrcByIndex(index);
+            if (!playbackSrc) {
+                console.warn('[vinyl] Missing playable audio URL.', {
+                    song: song.song,
+                    musicOssUrl: song.musicOssUrl
+                });
+                audioEl.removeAttribute('src');
+                audioEl.load();
+                return;
+            }
+
+            if (requestId !== audioSourceRequestId) return;
+            audioEl.src = playbackSrc;
             audioEl.load();
         };
 
@@ -1060,6 +1347,7 @@ const {
             if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= lyricsPool.length) return;
 
             isTrackSwitching = true;
+            document.body.classList.add('is-track-transitioning');
             isDrawing = true;
             setPlayButtonBusy(true);
             setFloatingButtonsVisible(false);
@@ -1105,8 +1393,8 @@ const {
                     stopAndFadeOutAudio(stopDuration)
                 ]);
 
-                updateCurrentLyric(targetIndex);
-                setAudioSourceByIndex(targetIndex);
+                await updateCurrentLyric(targetIndex);
+                await setAudioSourceByIndex(targetIndex);
 
                 await Promise.all([
                     animateTonearm({
@@ -1132,6 +1420,7 @@ const {
                 await toggleAudioState(true, { skipMotion: true });
                 await updateButtonText('再次抽取');
             } finally {
+                document.body.classList.remove('is-track-transitioning');
                 setPlayButtonBusy(false);
                 isDrawing = false;
                 isTrackSwitching = false;
@@ -1143,15 +1432,16 @@ const {
             if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= lyricsPool.length) return;
 
             isTrackSwitching = true;
+            document.body.classList.add('is-track-transitioning');
 
             try {
-                updateCurrentLyric(targetIndex);
+                await updateCurrentLyric(targetIndex);
 
                 if (resultArea.classList.contains('is-visible')) {
                     revealLyricContentImmediately();
                 }
 
-                setAudioSourceByIndex(targetIndex);
+                await setAudioSourceByIndex(targetIndex);
                 await toggleAudioState(true, { skipMotion: true });
 
                 if (document.visibilityState === 'visible') {
@@ -1160,6 +1450,7 @@ const {
 
                 await updateButtonText('再次抽取');
             } finally {
+                document.body.classList.remove('is-track-transitioning');
                 isTrackSwitching = false;
             }
         };
@@ -1210,6 +1501,25 @@ const {
                 toggleAudioState(false, { skipMotion: true, stopDuration });
             });
 
+            setMediaSessionAction('seekto', (details = {}) => {
+                if (!Number.isFinite(details.seekTime)) return;
+                const duration = Number.isFinite(audioEl.duration) ? audioEl.duration : NaN;
+                const nextTime = Number.isFinite(duration) && duration > 0
+                    ? Math.min(Math.max(0, details.seekTime), duration)
+                    : Math.max(0, details.seekTime);
+
+                try {
+                    if (details.fastSeek && typeof audioEl.fastSeek === 'function') {
+                        audioEl.fastSeek(nextTime);
+                    } else {
+                        audioEl.currentTime = nextTime;
+                    }
+                    updateMediaSessionPositionState();
+                } catch (error) {
+                    // Ignore seek failures on constrained browsers.
+                }
+            });
+
             setMediaSessionAction('nexttrack', () => {
                 if (currentLyricIndex === -1) return;
                 const nextIndex = pickNextAutoLyricIndex();
@@ -1249,6 +1559,7 @@ const {
             lyricAnimations = [];
             resultArea.classList.remove('is-visible');
             resultArea.classList.remove('show-dismiss-hint');
+            document.body.classList.remove('has-lyric-overlay');
             setOverlayControlsVisible(false);
             resultArea.style.opacity = '0';
             resultArea.style.transform = 'none';
@@ -1269,6 +1580,7 @@ const {
             playlistAnimations = [];
             playlistArea.classList.remove('is-visible');
             playlistArea.classList.remove('show-dismiss-hint');
+            document.body.classList.remove('has-playlist-overlay');
             setOverlayControlsVisible(false);
             playlistArea.style.opacity = '0';
             playlistArea.style.transform = 'none';
@@ -1282,6 +1594,7 @@ const {
 
         const animateLyricIn = () => {
             resultArea.classList.add('is-visible');
+            document.body.classList.add('has-lyric-overlay');
             if (!hasShownDismissHint) {
                 resultArea.classList.add('show-dismiss-hint');
                 hasShownDismissHint = true;
@@ -1299,8 +1612,8 @@ const {
             });
 
             const lyricAnim = safeAnimate(lyricEl, [
-                { opacity: 0, transform: 'translateY(16px) scale(0.995)', filter: 'blur(5px)' },
-                { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
+                { opacity: 0, transform: 'translateY(16px) scale(0.995)' },
+                { opacity: 1, transform: 'translateY(0) scale(1)' }
             ], {
                 duration: 740,
                 fill: 'forwards',
@@ -1308,8 +1621,8 @@ const {
             });
 
             const songAnim = safeAnimate(songEl, [
-                { opacity: 0, transform: 'translateY(12px)', filter: 'blur(4px)' },
-                { opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)' }
+                { opacity: 0, transform: 'translateY(12px)' },
+                { opacity: 1, transform: 'translateY(0)' }
             ], {
                 duration: 660,
                 delay: 150,
@@ -1318,8 +1631,8 @@ const {
             });
 
             const lineAnimations = Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => safeAnimate(line, [
-                { opacity: 0, transform: 'translateY(14px) scale(0.99)', filter: 'blur(5px)' },
-                { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
+                { opacity: 0, transform: 'translateY(14px) scale(0.99)' },
+                { opacity: 1, transform: 'translateY(0) scale(1)' }
             ], {
                 duration: 660,
                 delay: 100 + index * 66,
@@ -1332,6 +1645,7 @@ const {
 
         const animatePlaylistIn = () => {
             playlistArea.classList.add('is-visible');
+            document.body.classList.add('has-playlist-overlay');
             if (!hasShownPlaylistHint) {
                 playlistArea.classList.add('show-dismiss-hint');
                 hasShownPlaylistHint = true;
@@ -1349,8 +1663,8 @@ const {
             });
 
             const contentAnim = safeAnimate(playlistContent, [
-                { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM, filter: 'blur(6px)' },
-                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM, filter: 'blur(0px)' }
+                { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
+                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
             ], {
                 duration: 680,
                 fill: 'forwards',
@@ -1358,8 +1672,8 @@ const {
             });
 
             const itemAnimations = Array.from(playlistList.querySelectorAll('.playlist-item')).map((item, index) => safeAnimate(item, [
-                { opacity: 0, transform: 'translateY(7px) scale(0.992)', filter: 'blur(3px)' },
-                { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'blur(0px)' }
+                { opacity: 0, transform: 'translateY(7px) scale(0.992)' },
+                { opacity: 1, transform: 'translateY(0) scale(1)' }
             ], {
                 duration: 430,
                 delay: Math.min(150, index * 16),
@@ -1384,8 +1698,8 @@ const {
             });
 
             const closeAnim = safeAnimate(lyricCloseBtn, [
-                { opacity: 1, transform: 'translateZ(0) scale(1)', filter: 'blur(0px)' },
-                { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)', filter: 'blur(6px)' }
+                { opacity: 1, transform: 'translateZ(0) scale(1)' },
+                { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)' }
             ], {
                 duration: 240,
                 fill: 'forwards',
@@ -1393,8 +1707,8 @@ const {
             });
 
             const contentAnim = safeAnimate(lyricEl, [
-                { opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)' },
-                { opacity: 0, transform: 'translateY(-8px)', filter: 'blur(4px)' }
+                { opacity: 1, transform: 'translateY(0)' },
+                { opacity: 0, transform: 'translateY(-8px)' }
             ], {
                 duration: 280,
                 fill: 'forwards',
@@ -1402,8 +1716,8 @@ const {
             });
 
             const songAnim = safeAnimate(songEl, [
-                { opacity: 1, transform: 'translateY(0)', filter: 'blur(0px)' },
-                { opacity: 0, transform: 'translateY(-6px)', filter: 'blur(4px)' }
+                { opacity: 1, transform: 'translateY(0)' },
+                { opacity: 0, transform: 'translateY(-6px)' }
             ], {
                 duration: 260,
                 fill: 'forwards',
@@ -1429,8 +1743,8 @@ const {
             });
 
             const closeAnim = safeAnimate(playlistCloseBtn, [
-                { opacity: 1, transform: 'translateZ(0) scale(1)', filter: 'blur(0px)' },
-                { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)', filter: 'blur(6px)' }
+                { opacity: 1, transform: 'translateZ(0) scale(1)' },
+                { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)' }
             ], {
                 duration: 240,
                 fill: 'forwards',
@@ -1438,8 +1752,8 @@ const {
             });
 
             const contentAnim = safeAnimate(playlistContent, [
-                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM, filter: 'blur(0px)' },
-                { opacity: 0, transform: 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) - 10px))', filter: 'blur(5px)' }
+                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM },
+                { opacity: 0, transform: 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) - 10px))' }
             ], {
                 duration: 300,
                 fill: 'forwards',
@@ -1632,10 +1946,10 @@ const {
             await wait(prefersReducedMotion ? 0 : 1200);
 
             const randomIndex = pickRandomLyricIndex(currentLyricIndex);
-            updateCurrentLyric(randomIndex);
+            await updateCurrentLyric(randomIndex);
 
             await toggleAudioState(false, { skipMotion: true, stopDuration: 260 });
-            setAudioSourceByIndex(randomIndex);
+            await setAudioSourceByIndex(randomIndex);
             
             // 错开显示歌词和按钮的变形时机
             await Promise.all([
