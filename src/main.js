@@ -117,8 +117,16 @@ import {
         const canUseWebAnimations = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
         const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         const isCoarsePointer = window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+        const shouldUseCompactOverlayMotion = playbackPlatform.isIOS || isCoarsePointer;
         const shouldUseCompactPlaylistMotion = playbackPlatform.isIOS || isCoarsePointer;
         const shouldUseLeanPlaylistMotion = prefersReducedMotion;
+        const overlayCardDuration = shouldUseCompactOverlayMotion ? 420 : 560;
+        const overlayLyricDuration = shouldUseCompactOverlayMotion ? 560 : 740;
+        const overlaySongDuration = shouldUseCompactOverlayMotion ? 500 : 660;
+        const overlayLineDuration = shouldUseCompactOverlayMotion ? 500 : 660;
+        const overlayLineDelayStep = shouldUseCompactOverlayMotion ? 44 : 66;
+        const playlistContentDuration = shouldUseCompactOverlayMotion ? 520 : 680;
+        const playlistItemDuration = shouldUseCompactOverlayMotion ? 360 : 430;
 
         const createNoopAnimation = () => {
             let playbackRateValue = 1;
@@ -1635,7 +1643,7 @@ import {
                 { opacity: 0, transform: 'translateY(8px)' },
                 { opacity: 1, transform: 'translateY(0)' }
             ], {
-                duration: 560,
+                duration: overlayCardDuration,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
@@ -1644,7 +1652,7 @@ import {
                 { opacity: 0, transform: 'translateY(16px) scale(0.995)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)' }
             ], {
-                duration: 740,
+                duration: overlayLyricDuration,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
@@ -1653,7 +1661,7 @@ import {
                 { opacity: 0, transform: 'translateY(12px)' },
                 { opacity: 1, transform: 'translateY(0)' }
             ], {
-                duration: 660,
+                duration: overlaySongDuration,
                 delay: 150,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
@@ -1663,8 +1671,8 @@ import {
                 { opacity: 0, transform: 'translateY(14px) scale(0.99)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)' }
             ], {
-                duration: 660,
-                delay: 100 + index * 66,
+                duration: overlayLineDuration,
+                delay: 100 + index * overlayLineDelayStep,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             }));
@@ -1686,7 +1694,7 @@ import {
                 { opacity: 0, transform: 'translateY(8px)' },
                 { opacity: 1, transform: 'translateY(0)' }
             ], {
-                duration: 560,
+                duration: overlayCardDuration,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
@@ -1695,7 +1703,7 @@ import {
                 { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
                 { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
             ], {
-                duration: 680,
+                duration: playlistContentDuration,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
@@ -1724,7 +1732,7 @@ import {
                 { opacity: 0, transform: 'translateY(7px) scale(0.992)' },
                 { opacity: 1, transform: 'translateY(0) scale(1)' }
             ], {
-                duration: 430,
+                duration: playlistItemDuration,
                 delay: Math.min(150, index * 16),
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
