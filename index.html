@@ -24,11 +24,11 @@
             position: fixed;
             inset: 0;
             z-index: 1000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: grid;
+            place-items: center;
             overflow: hidden;
-            background: rgba(7, 10, 18, 0.96);
+            padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+            background: #070a12;
         }
 
         .app-root {
@@ -36,17 +36,36 @@
         }
 
         .loading-intake {
-            width: min(88vw, 620px);
+            position: relative;
+            width: min(92vw, 680px);
+            height: min(88lvh, 820px);
         }
 
-        .loading-contact-sheet {
-            display: grid;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
-            gap: 8px;
+        .loading-controls {
+            position: absolute;
+            inset: 0;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
 
-        .loading-frame {
-            aspect-ratio: 3 / 4;
+        .loading-stage,
+        .loading-poster-stack,
+        .loading-frame,
+        .loading-particles,
+        .loading-light-slit {
+            position: absolute;
+        }
+
+        .loading-stage {
+            inset: 48px 0 72px;
+        }
+
+        .loading-poster-stack,
+        .loading-frame,
+        .loading-particles {
+            inset: 0;
         }
     </style>
     <link rel="stylesheet" href="./src/style.css">
@@ -54,19 +73,32 @@
 <body>
     <div class="loading-screen" id="loadingScreen" data-state="loading" aria-live="polite">
         <div class="loading-intake">
-            <div class="loading-intake-head">
-                <span>LIGHT ARCHIVE / INTAKE</span>
-                <output id="loadingProgress">00 / 05</output>
+            <div class="loading-controls">
+                <div class="loading-intake-head">
+                    <span>LIGHT ARCHIVE / PROJECTION</span>
+                    <output id="loadingProgress" aria-live="polite" aria-atomic="true">00 / 05</output>
+                </div>
+                <div class="loading-status">
+                    <p class="loading-copy" id="loadingCopy">影像读取中</p>
+                    <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
+                </div>
             </div>
-            <div class="loading-contact-sheet" id="loadingContactSheet">
-                <figure class="loading-frame" data-loading-slot="archive-01"><figcaption>AR-01</figcaption></figure>
-                <figure class="loading-frame" data-loading-slot="archive-02"><figcaption>AR-02</figcaption></figure>
-                <figure class="loading-frame" data-loading-slot="archive-03"><figcaption>AR-03</figcaption></figure>
-                <figure class="loading-frame" data-loading-slot="archive-04"><figcaption>AR-04</figcaption></figure>
-                <figure class="loading-frame" data-loading-slot="archive-05"><figcaption>AR-05</figcaption></figure>
+            <div class="loading-stage">
+                <div class="loading-poster-stack">
+                    <figure class="loading-frame" data-loading-slot="archive-01"><figcaption>AR-01</figcaption></figure>
+                    <figure class="loading-frame" data-loading-slot="archive-02"><figcaption>AR-02</figcaption></figure>
+                    <figure class="loading-frame" data-loading-slot="archive-03"><figcaption>AR-03</figcaption></figure>
+                    <figure class="loading-frame" data-loading-slot="archive-04"><figcaption>AR-04</figcaption></figure>
+                    <figure class="loading-frame" data-loading-slot="archive-05"><figcaption>AR-05</figcaption></figure>
+                </div>
+                <canvas class="loading-particles" id="loadingParticles" aria-hidden="true"></canvas>
+                <div class="loading-light-slit" id="loadingLightSlit" aria-hidden="true">
+                    <span class="loading-light-edge is-warm"></span>
+                    <span class="loading-light-core"></span>
+                    <span class="loading-light-edge is-cool"></span>
+                </div>
+                <div class="loading-progress-rail"><span></span></div>
             </div>
-            <p class="loading-copy" id="loadingCopy">影像读取中</p>
-            <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
         </div>
     </div>
 

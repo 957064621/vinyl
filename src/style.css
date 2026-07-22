@@ -179,41 +179,40 @@
         }
 
         .loading-screen {
+            --loading-progress: 0;
             position: fixed;
             inset: 0;
             z-index: 1000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: grid;
+            place-items: center;
             width: 100vw;
             height: 100lvh;
             padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
             overflow: hidden;
-            background: rgba(7, 10, 18, 0.96);
-            transform: translateY(0) translateZ(0);
-            -webkit-transform: translateY(0) translateZ(0);
+            background: #070a12;
             opacity: 1;
-            visibility: visible;
-            transition: transform 0.9s var(--hero-ease), opacity 0.48s var(--hero-ease), visibility 0.9s var(--hero-ease);
-            will-change: transform, opacity;
-            -webkit-backface-visibility: hidden;
-            backface-visibility: hidden;
-        }
-
-        .loading-screen[data-state="ready"] {
-            opacity: 0.94;
+            transition: opacity 480ms var(--hero-ease);
         }
 
         .loading-screen.is-exiting {
-            transform: translateY(-18%) translateZ(0);
-            -webkit-transform: translateY(-18%) translateZ(0);
             opacity: 0;
-            visibility: hidden;
             pointer-events: none;
         }
 
         .loading-intake {
-            width: min(88vw, 620px);
+            position: relative;
+            width: min(92vw, 680px);
+            height: min(88lvh, 820px);
+        }
+
+        .loading-controls {
+            position: absolute;
+            inset: 0;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            pointer-events: none;
         }
 
         .loading-intake-head {
@@ -221,7 +220,6 @@
             align-items: center;
             justify-content: space-between;
             gap: 16px;
-            margin-bottom: 12px;
             color: rgba(237, 245, 255, 0.82);
             font-family: "SFMono-Regular", Consolas, monospace;
             font-size: 11px;
@@ -229,78 +227,210 @@
             letter-spacing: 0;
         }
 
-        .loading-contact-sheet {
-            display: grid;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
-            gap: 8px;
+        .loading-stage {
+            position: absolute;
+            inset: 48px 0 72px;
+            min-height: 0;
+            perspective: 900px;
+        }
+
+        .loading-poster-stack,
+        .loading-particles {
+            position: absolute;
+            inset: 0;
+        }
+
+        .loading-poster-stack {
+            z-index: 2;
+            transform-style: preserve-3d;
         }
 
         .loading-frame {
-            position: relative;
-            aspect-ratio: 3 / 4;
+            --slot-index: 0;
+            position: absolute;
+            inset: 0;
+            width: min(100%, 520px);
+            height: 100%;
+            margin: auto;
             overflow: hidden;
-            border: 1px solid rgba(205, 229, 255, 0.18);
-            border-radius: 2px;
-            background: rgba(13, 20, 33, 0.76);
-            transition: border-color 0.24s ease, opacity 0.24s ease;
+            opacity: 0;
+            pointer-events: none;
+            transform-origin: center;
+            transition: opacity 80ms linear;
         }
 
-        .loading-frame[data-status="loading"] {
-            border-color: rgba(205, 229, 255, 0.38);
+        .loading-frame:nth-child(2) {
+            --slot-index: 1;
         }
 
-        .loading-frame.is-ready {
-            border-color: rgba(183, 221, 255, 0.5);
+        .loading-frame:nth-child(3) {
+            --slot-index: 2;
         }
 
+        .loading-frame:nth-child(4) {
+            --slot-index: 3;
+        }
+
+        .loading-frame:nth-child(5) {
+            --slot-index: 4;
+        }
+
+        .loading-frame.is-active,
         .loading-frame.is-failed {
-            border-color: rgba(255, 154, 176, 0.72);
-            opacity: 0.58;
+            opacity: 1;
         }
 
         .loading-frame figcaption {
             position: absolute;
-            right: 5px;
-            bottom: 4px;
-            z-index: 1;
-            color: rgba(247, 251, 255, 0.74);
+            left: calc(8px + (var(--slot-index) * 42px));
+            bottom: 8px;
+            z-index: 2;
+            color: rgba(237, 245, 255, 0.76);
             font-family: "SFMono-Regular", Consolas, monospace;
             font-size: 9px;
-            line-height: 1;
+            line-height: 1.2;
             letter-spacing: 0;
-            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.82);
+            opacity: 0;
+        }
+
+        .loading-frame.is-active figcaption,
+        .loading-frame.is-failed figcaption {
+            opacity: 1;
+        }
+
+        .loading-frame.is-failed figcaption {
+            color: #ffb3c3;
         }
 
         .loading-image {
-            display: block;
+            position: absolute;
+            inset: 0;
             width: 100%;
             height: 100%;
-            object-fit: cover;
+            object-fit: contain;
             opacity: 0;
-            transition: opacity 0.28s ease;
+            transform: scale(0.985);
+            clip-path: polygon(49.8% 0, 50.2% 0, 50.2% 100%, 49.8% 100%);
+            transition:
+                opacity var(--poster-reveal-ms, 180ms) linear,
+                transform var(--poster-reveal-ms, 180ms) var(--hero-ease),
+                clip-path var(--poster-reveal-ms, 180ms) var(--hero-ease);
         }
 
-        .loading-frame.is-ready .loading-image {
+        .loading-frame.is-active .loading-image {
             opacity: 1;
+            transform: translate3d(0, 0, 0) rotateX(0deg) scale(1);
+            clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+        }
+
+        .loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image {
+            opacity: 0;
+            transform: translate3d(4%, -1%, 0) rotateX(3deg) scale(0.985);
+            clip-path: polygon(7% 3%, 100% 0, 94% 96%, 0 100%);
+        }
+
+        .loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image {
+            opacity: 0;
+            transform: translate3d(-4%, 1%, 0) rotateX(-3deg) scale(0.985);
+            clip-path: polygon(0 0, 93% 3%, 100% 100%, 6% 96%);
+        }
+
+        .loading-particles {
+            z-index: 3;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .loading-light-slit {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            z-index: 4;
+            width: 100vw;
+            height: 100lvh;
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(-50%, -50%) scaleX(0.004);
+            transform-origin: center;
+        }
+
+        .loading-light-slit > span {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+        }
+
+        .loading-light-core {
+            left: 46%;
+            width: 8%;
+            background: rgba(255, 255, 255, 0.98);
+        }
+
+        .loading-light-edge.is-warm {
+            left: 0;
+            width: 46%;
+            background: rgba(255, 244, 222, 0.88);
+        }
+
+        .loading-light-edge.is-cool {
+            right: 0;
+            width: 46%;
+            background: rgba(220, 241, 255, 0.86);
+        }
+
+        .loading-light-slit.is-lit[data-direction="ltr"] {
+            animation: loading-slit-ltr 180ms linear both;
+        }
+
+        .loading-light-slit.is-lit[data-direction="rtl"] {
+            animation: loading-slit-rtl 180ms linear both;
+        }
+
+        .loading-screen.is-final-exposure .loading-light-slit {
+            opacity: 0.94;
+            transform: translate(-50%, -50%) scaleX(1);
+            transition: opacity 80ms linear, transform 360ms var(--hero-ease);
+            animation: none;
+        }
+
+        .loading-progress-rail {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            z-index: 5;
+            height: 1px;
+            overflow: hidden;
+            background: rgba(205, 229, 255, 0.18);
+        }
+
+        .loading-progress-rail span {
+            display: block;
+            width: calc(var(--loading-progress) * 20%);
+            height: 100%;
+            background: #edf7ff;
+            transition: width 180ms var(--hero-ease);
+        }
+
+        .loading-status {
+            min-height: 54px;
+            text-align: center;
         }
 
         .loading-copy {
             min-height: 1.5em;
-            margin-top: 14px;
             text-align: center;
             color: rgba(237, 245, 255, 0.9);
             font-weight: 600;
             font-size: 12px;
             line-height: 1.5;
             letter-spacing: 0;
-            text-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
-            animation: copy-fade 1.6s var(--hero-ease) infinite;
             transition: opacity 0.24s ease;
         }
 
         .loading-screen[data-state="error"] .loading-copy {
             color: #ffb3c3;
-            animation: none;
         }
 
         .loading-retry {
@@ -313,10 +443,73 @@
             background: rgba(13, 20, 33, 0.9);
             font: inherit;
             cursor: pointer;
+            pointer-events: auto;
         }
 
         .loading-retry[hidden] {
             display: none;
+        }
+
+        .loading-screen[data-motion-profile="compact"] .loading-stage {
+            perspective: none;
+        }
+
+        .loading-screen[data-motion-profile="compact"] .loading-poster-stack {
+            transform-style: flat;
+        }
+
+        .loading-screen[data-motion-profile="compact"] .loading-frame.is-active .loading-image {
+            z-index: 0;
+            transform: translate(0, 0) scale(1);
+        }
+
+        .loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image {
+            transform: translate(24px, -2px) scale(0.985);
+        }
+
+        .loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image {
+            transform: translate(-24px, 2px) scale(0.985);
+        }
+
+        .loading-screen[data-motion-profile="reduce"] .loading-particles,
+        .loading-screen[data-motion-profile="reduce"] .loading-light-slit {
+            display: none;
+        }
+
+        .loading-screen[data-motion-profile="reduce"] .loading-image {
+            transform: none;
+            clip-path: none;
+            transition: opacity 120ms linear;
+        }
+
+        @keyframes loading-slit-ltr {
+            0% {
+                opacity: 0;
+                transform: translate(-150%, -50%) scaleX(0.004);
+            }
+            18%,
+            82% {
+                opacity: 0.92;
+            }
+            100% {
+                opacity: 0;
+                transform: translate(50%, -50%) scaleX(0.004);
+            }
+        }
+
+        @keyframes loading-slit-rtl {
+            0% {
+                opacity: 0;
+                transform: translate(50%, -50%) scaleX(0.004);
+            }
+            18%,
+            82% {
+                opacity: 0.92;
+            }
+            100% {
+                opacity: 0;
+                transform: translate(-150%, -50%) scaleX(0.004);
+            }
         }
 
         .app-shell {
@@ -2740,7 +2933,6 @@
                 scroll-behavior: auto !important;
             }
 
-            .loading-image,
             .lyric-line,
             .lyric-text,
             .song-name,
@@ -2752,7 +2944,6 @@
             }
 
             .playlist-item.is-current::before,
-            .loading-copy,
             .btn-text,
             .btn-text-ghost,
             .dynamic-island.is-opening .play-btn,
@@ -2777,6 +2968,33 @@
                 filter: none !important;
                 transform: translateZ(0) scale(1) !important;
                 transition-delay: 0s !important;
+            }
+
+            .loading-screen {
+                transition: opacity 120ms linear !important;
+            }
+
+            .loading-stage {
+                perspective: none !important;
+            }
+
+            .loading-poster-stack {
+                transform-style: flat !important;
+            }
+
+            .loading-particles,
+            .loading-light-slit {
+                display: none !important;
+            }
+
+            .loading-frame,
+            .loading-image {
+                transform: none !important;
+                clip-path: none !important;
+            }
+
+            .loading-image {
+                transition: opacity 120ms linear !important;
             }
 
             body::before,

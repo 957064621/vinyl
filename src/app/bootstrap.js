@@ -9,9 +9,10 @@ export function startCriticalAssetGate({
   documentRef = document,
   viewportWidth = window.innerWidth,
   motionProfile = 'compact',
-  load = loadCriticalImages
+  load = loadCriticalImages,
+  createView = createLoadingScreen
 } = {}) {
-  const view = createLoadingScreen(documentRef);
+  const view = createView(documentRef, { motionProfile });
   const appRoot = documentRef.querySelector('#appRoot');
   const appShell = documentRef.querySelector('#appShell');
   let resolveReady;
@@ -35,6 +36,9 @@ export function startCriticalAssetGate({
       await view.exit(motionProfile);
       resolveReady(results);
     } catch (error) {
+      appRoot.setAttribute('inert', '');
+      appRoot.setAttribute('aria-hidden', 'true');
+      appShell.classList.remove('is-ready');
       view.showError(error, () => {
         void run();
       });
