@@ -80,6 +80,7 @@ export function createPosterTransition({
   let activeItem = null;
   let currentItem = null;
   let completedReadableHold = 0;
+  let compressedDrain = false;
   let generation = 0;
   let processingToken = null;
   let scheduledPump = null;
@@ -143,9 +144,10 @@ export function createPosterTransition({
     idleWaiters.clear();
   };
 
-  const timingFor = () => (
-    queue.length > 2 ? POSTER_TIMING.fast : POSTER_TIMING.normal
-  );
+  const timingFor = () => {
+    if (queue.length > 2) compressedDrain = true;
+    return compressedDrain ? POSTER_TIMING.fast : POSTER_TIMING.normal;
+  };
 
   const runReduceItem = async (item, token) => {
     await Promise.resolve(particleField.finish());
@@ -216,7 +218,7 @@ export function createPosterTransition({
   };
 
   const runItem = async (item, token) => {
-    const timing = timingFor();
+    const timing = currentProfile === 'reduce' ? POSTER_TIMING.normal : timingFor();
     const reveal = currentProfile === 'reduce' ? POSTER_TIMING.reduceFade : timing.reveal;
     item.slot.style.setProperty('--poster-reveal-ms', `${reveal}ms`);
 
@@ -241,6 +243,7 @@ export function createPosterTransition({
     errorReported = true;
     sealed = true;
     queue = [];
+    compressedDrain = false;
     abortController.abort();
     abortController = new AbortController();
     settleParticleField();
@@ -277,6 +280,7 @@ export function createPosterTransition({
         if (processingToken === token) {
           processingToken = null;
           if (currentItem === item) currentItem = null;
+          if (queue.length === 0) compressedDrain = false;
         }
         notifyIdle();
         if (queue.length > 0) ensurePump();
@@ -328,6 +332,7 @@ export function createPosterTransition({
     scheduledPump = null;
     currentItem = null;
     queue = [];
+    compressedDrain = false;
     slit.classList.remove('is-lit');
     delete slit.dataset.direction;
     root.style.removeProperty('--slit-duration');
@@ -355,6 +360,7 @@ export function createPosterTransition({
     processingToken = null;
     scheduledPump = null;
     currentItem = null;
+    compressedDrain = false;
     if (interruptedItem && !queue.includes(interruptedItem)) {
       queue.unshift(interruptedItem);
     }

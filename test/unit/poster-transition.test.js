@@ -261,17 +261,77 @@ test('enqueue rejects an undeclared mounted descendant and reset cannot leave it
   assert.equal(controller.getState().activeId, null);
 });
 
-test('rapid backlog uses fast intermediate phases and preserves final hold and exposure', async () => {
-  const { controller, sleeps, slots } = makeFixture();
-  slots.forEach((slot) => controller.enqueue(slot));
-  await controller.finish();
+test('rapid backlog stays compressed through one drain and a later isolated run returns to normal', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, slots } = makeFixture({ scheduler });
+  const releaseProcessingRounds = async () => {
+    const rounds = [];
+    while (controller.getState().processing) {
+      assert.ok(scheduler.pending > 0);
+      rounds.push(scheduler.durations);
+      while (scheduler.pending > 0) scheduler.releaseNext();
+      await flush();
+    }
+    return rounds;
+  };
 
-  assert.ok(sleeps.includes(POSTER_TIMING.fast.gather));
-  assert.ok(sleeps.includes(POSTER_TIMING.fast.scatter));
-  assert.ok(sleeps.includes(POSTER_TIMING.fast.reveal));
-  assert.ok(sleeps.includes(POSTER_TIMING.finalHold));
-  assert.equal(sleeps.at(-1), POSTER_TIMING.finalExposure);
-  assert.equal(slots[1].style.getPropertyValue('--poster-reveal-ms'), `${POSTER_TIMING.fast.reveal}ms`);
+  slots.forEach((slot) => controller.enqueue(slot));
+  const finishing = controller.finish();
+  await flush();
+
+  const compressedRounds = await releaseProcessingRounds();
+  assert.deepEqual(compressedRounds, [
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.reveal],
+    [POSTER_TIMING.fast.hold],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.scatter, POSTER_TIMING.fast.reveal],
+    [POSTER_TIMING.fast.hold],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.scatter, POSTER_TIMING.fast.reveal],
+    [POSTER_TIMING.fast.hold],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.scatter, POSTER_TIMING.fast.reveal],
+    [POSTER_TIMING.fast.hold],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.scatter, POSTER_TIMING.fast.reveal],
+    [POSTER_TIMING.finalHold]
+  ]);
+  const compressedWallClock = compressedRounds.reduce(
+    (total, durations) => total + Math.max(...durations),
+    0
+  );
+  assert.equal(
+    compressedWallClock,
+    (5 * POSTER_TIMING.fast.gather)
+      + POSTER_TIMING.fast.reveal
+      + (4 * Math.max(POSTER_TIMING.fast.scatter, POSTER_TIMING.fast.reveal))
+      + (4 * POSTER_TIMING.fast.hold)
+      + POSTER_TIMING.finalHold
+  );
+  assert.ok(slots.every(
+    (slot) => slot.style.getPropertyValue('--poster-reveal-ms')
+      === String(POSTER_TIMING.fast.reveal) + 'ms'
+  ));
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+  scheduler.releaseNext();
+  await finishing;
+
+  controller.reset();
+  controller.enqueue(slots[0]);
+  await flush();
+  const isolatedRounds = await releaseProcessingRounds();
+  await controller.waitForIdle();
+
+  assert.deepEqual(isolatedRounds, [
+    [POSTER_TIMING.normal.gather],
+    [POSTER_TIMING.normal.reveal],
+    [POSTER_TIMING.normal.hold]
+  ]);
+  assert.equal(
+    slots[0].style.getPropertyValue('--poster-reveal-ms'),
+    String(POSTER_TIMING.normal.reveal) + 'ms'
+  );
 });
 
 test('finish after an idle normal scene adds only the unread final hold remainder', async () => {
