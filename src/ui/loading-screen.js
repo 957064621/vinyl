@@ -21,6 +21,27 @@ export class VisualTransitionError extends Error {
   }
 }
 
+const createNoopParticleField = (initialProfile) => {
+  let profile = initialProfile;
+  let destroyed = false;
+  const settle = () => Promise.resolve();
+
+  return {
+    gather: settle,
+    scatter: settle,
+    finish: settle,
+    resize() {},
+    setProfile(nextProfile) {
+      if (!destroyed) profile = nextProfile;
+    },
+    clear() {},
+    destroy() {
+      destroyed = true;
+    },
+    getState: () => ({ profile, particleCount: 0, animating: false, destroyed })
+  };
+};
+
 const waitForTransition = (element, {
   propertyName = 'opacity',
   timeoutMs = 900
@@ -58,18 +79,42 @@ export function createLoadingScreen(documentRef = document, {
   const retry = documentRef.querySelector('#loadingRetry');
   const canvas = documentRef.querySelector('#loadingParticles');
   const slit = documentRef.querySelector('#loadingLightSlit');
+  const requiredNodes = {
+    loadingScreen: root,
+    loadingProgress: progress,
+    loadingCopy: copy,
+    loadingRetry: retry,
+    loadingParticles: canvas,
+    loadingLightSlit: slit
+  };
+  const missingNodes = Object.entries(requiredNodes)
+    .filter(([, node]) => !node)
+    .map(([name]) => `#${name}`);
+  if (missingNodes.length > 0) {
+    throw new TypeError(`Loading screen is missing required nodes: ${missingNodes.join(', ')}`);
+  }
+  const slotNodes = [...root.querySelectorAll('[data-loading-slot]')];
+  if (slotNodes.length !== 5) {
+    throw new TypeError(`Loading screen requires exactly 5 loading slots; found ${slotNodes.length}`);
+  }
   const slots = new Map(
-    [...root.querySelectorAll('[data-loading-slot]')]
+    slotNodes
       .map((slot) => [slot.dataset.loadingSlot, slot])
   );
   let visualQueueError = null;
 
-  const particleField = particleFactory({
-    canvas,
-    documentRef,
-    windowRef: documentRef.defaultView,
-    profile: motionProfile
-  });
+  let particleField;
+  try {
+    particleField = particleFactory({
+      canvas,
+      documentRef,
+      windowRef: documentRef.defaultView,
+      profile: motionProfile
+    });
+  } catch (error) {
+    if (!(error instanceof TypeError) || !/2D canvas context/i.test(error.message)) throw error;
+    particleField = createNoopParticleField(motionProfile);
+  }
   const transition = transitionFactory({
     root,
     slit,
@@ -117,6 +162,7 @@ export function createLoadingScreen(documentRef = document, {
         delete slot.dataset.slitDirection;
         slot.style.removeProperty('--poster-reveal-ms');
         slot.classList.remove(...VISUAL_SLOT_CLASSES);
+        slot.querySelector('figcaption')?.setAttribute('aria-hidden', 'true');
         slot.querySelector('img')?.remove();
       }
     },
@@ -129,6 +175,8 @@ export function createLoadingScreen(documentRef = document, {
         slot.dataset.status = status;
         slot.classList.toggle('is-ready', status === 'ready');
         slot.classList.toggle('is-failed', status === 'failed');
+        if (status === 'failed') slot.querySelector('figcaption')?.removeAttribute('aria-hidden');
+        else slot.querySelector('figcaption')?.setAttribute('aria-hidden', 'true');
       }
       if (status === 'ready' && result) mountImage(result);
       if (status === 'ready') copy.textContent = `已归档 ${completed} / ${total}`;
@@ -148,6 +196,7 @@ export function createLoadingScreen(documentRef = document, {
           slot.dataset.status = 'failed';
           slot.classList.remove('is-ready');
           slot.classList.add('is-failed');
+          slot.querySelector('figcaption')?.removeAttribute('aria-hidden');
         }
       }
       const failureIds = failures.map(({ id }) => id).join('、');
@@ -183,15 +232,13 @@ export function createLoadingScreen(documentRef = document, {
       if (profile !== 'reduce') {
         await waitForTransition(root, { timeoutMs: 900 });
       }
+      root.remove();
       try {
         transition.destroy();
-      } finally {
-        try {
-          particleField.destroy();
-        } finally {
-          root.remove();
-        }
-      }
+      } catch {}
+      try {
+        particleField.destroy();
+      } catch {}
     }
   };
 

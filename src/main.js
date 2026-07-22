@@ -234,8 +234,6 @@ startCriticalAssetGate({
             return `${COVER_BASE_URL}${coverFile}`;
         };
 
-        const getReleaseCoverSrc = (release) => release?.coverOssUrl || release?.sourceArtworkUrl || '';
-
         const getCoverSrcByLyricIndex = (index) => {
             const track = getTrackByIndex(index);
             return track?.coverOssUrl || track?.sourceArtworkUrl || getFallbackCoverSrcByLyricIndex(index);
@@ -1118,23 +1116,13 @@ startCriticalAssetGate({
             return artworkSrc;
         };
 
-        const getInitialCoverVisual = () => {
+        const getInitialCoverPalette = () => {
             const initialRelease = releases.find((release) => release.title === '万兽之王演唱会录音') || releases[0];
-            const artworkSrc = toInlineCoverProxySrc(getReleaseCoverSrc(initialRelease) || getFallbackCoverSrcByLyricIndex(0));
-            return {
-                artworkSrc,
-                palette: normalizePalette(initialRelease?.palette || DEFAULT_COVER_PALETTE)
-            };
+            return normalizePalette(initialRelease?.palette || DEFAULT_COVER_PALETTE);
         };
 
-        // 抽取前的初始封面：默认「万兽之王演唱会录音」，避免用轮播数组序号导致封面语义漂移。
-        if (coverLayerA) {
-            const { artworkSrc: initialArtworkSrc, palette: initPal } = getInitialCoverVisual();
-            coverLayerA.style.backgroundImage = `url("${initialArtworkSrc}")`;
-            coverLayerA.classList.add('is-active');
-            setCoverPalette(initPal);
-            setCoverArtworkUrl(initialArtworkSrc);
-        }
+        // 抽取前只使用初始发行的配色，封面网络请求由首次实际选曲触发。
+        setCoverPalette(getInitialCoverPalette());
 
         const updateCurrentLyric = (index) => {
             const result = lyricsPool[index];

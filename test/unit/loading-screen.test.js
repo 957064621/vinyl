@@ -11,19 +11,22 @@ import {
 } from '../../src/ui/loading-screen.js';
 
 const createFixture = () => new JSDOM(`
-  <div class="loading-screen" id="loadingScreen" data-state="loading" aria-live="polite">
+  <div class="loading-screen" id="loadingScreen" data-state="loading">
     <div class="loading-intake">
       <div class="loading-controls">
         <div class="loading-intake-head">
-          <span>LIGHT ARCHIVE / PROJECTION</span>
-          <output id="loadingProgress">00 / 05</output>
+          <output id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
         </div>
         <p class="loading-copy" id="loadingCopy">影像读取中</p>
         <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
       </div>
       <div class="loading-stage">
         <div class="loading-poster-stack">
-        <figure class="loading-frame" data-loading-slot="archive-01"><figcaption>AR-01</figcaption></figure>
+        <figure class="loading-frame" data-loading-slot="archive-01"><figcaption aria-hidden="true">AR-01</figcaption></figure>
+        <figure class="loading-frame" data-loading-slot="archive-02"><figcaption aria-hidden="true">AR-02</figcaption></figure>
+        <figure class="loading-frame" data-loading-slot="archive-03"><figcaption aria-hidden="true">AR-03</figcaption></figure>
+        <figure class="loading-frame" data-loading-slot="archive-04"><figcaption aria-hidden="true">AR-04</figcaption></figure>
+        <figure class="loading-frame" data-loading-slot="archive-05"><figcaption aria-hidden="true">AR-05</figcaption></figure>
         </div>
         <canvas class="loading-particles" id="loadingParticles"></canvas>
         <div class="loading-light-slit" id="loadingLightSlit"></div>
@@ -33,11 +36,18 @@ const createFixture = () => new JSDOM(`
   </div>
 `);
 
-const createControllerHarness = ({ finish } = {}) => {
+const createControllerHarness = ({
+  finish,
+  particleDestroy,
+  transitionDestroy
+} = {}) => {
   const calls = [];
   const particleField = {
     clear: () => calls.push('particles.clear'),
-    destroy: () => calls.push('particles.destroy')
+    destroy() {
+      calls.push('particles.destroy');
+      particleDestroy?.();
+    }
   };
   const transition = {
     enqueue(slot) {
@@ -51,7 +61,10 @@ const createControllerHarness = ({ finish } = {}) => {
     freeze: () => calls.push('transition.freeze'),
     reset: () => calls.push('transition.reset'),
     setProfile: (profile) => calls.push(['transition.setProfile', profile]),
-    destroy: () => calls.push('transition.destroy')
+    destroy() {
+      calls.push('transition.destroy');
+      transitionDestroy?.();
+    }
   };
   const factories = {
     particleFactory(options) {
@@ -85,9 +98,13 @@ const transitionEnd = (window, propertyName, { bubbles = false } = {}) => {
 };
 
 const createGateFixture = () => new JSDOM(`
-  <div class="loading-screen" id="loadingScreen" data-state="loading" aria-live="polite">
-    <output id="loadingProgress">00 / 05</output>
+  <div class="loading-screen" id="loadingScreen" data-state="loading">
+    <output id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
     <div data-loading-slot="archive-01"></div>
+    <div data-loading-slot="archive-02"></div>
+    <div data-loading-slot="archive-03"></div>
+    <div data-loading-slot="archive-04"></div>
+    <div data-loading-slot="archive-05"></div>
     <canvas id="loadingParticles"></canvas>
     <div id="loadingLightSlit"></div>
     <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
@@ -124,6 +141,52 @@ test('visual factories receive the loading stage dependencies and motion profile
   assert.strictEqual(transitionCall[1].particleField, harness.particleField);
   assert.equal(transitionCall[1].profile, 'full');
   assert.equal(typeof transitionCall[1].onError, 'function');
+});
+
+test('loading screen validates required nodes and the exact slot count', () => {
+  const missingProgress = createFixture();
+  missingProgress.window.document.getElementById('loadingProgress').remove();
+  assert.throws(
+    () => createLoadingScreen(missingProgress.window.document, createControllerHarness().factories),
+    /loadingProgress/
+  );
+
+  const missingSlot = createFixture();
+  missingSlot.window.document.querySelector('[data-loading-slot="archive-05"]').remove();
+  assert.throws(
+    () => createLoadingScreen(missingSlot.window.document, createControllerHarness().factories),
+    /exactly 5 loading slots/
+  );
+});
+
+test('unavailable canvas context falls back to a finite no-op particle field only', async () => {
+  const dom = createFixture();
+  dom.window.document.getElementById('loadingParticles').getContext = () => null;
+  let fallbackField;
+  const harness = createControllerHarness();
+  const view = createLoadingScreen(dom.window.document, {
+    motionProfile: 'reduce',
+    transitionFactory(options) {
+      fallbackField = options.particleField;
+      return harness.transition;
+    }
+  });
+
+  await fallbackField.gather({});
+  await fallbackField.scatter({});
+  await fallbackField.finish();
+  fallbackField.setProfile('compact');
+  fallbackField.clear();
+  assert.equal(fallbackField.getState().profile, 'compact');
+  await view.exit('reduce');
+
+  const programmerError = createFixture();
+  assert.throws(() => createLoadingScreen(programmerError.window.document, {
+    particleFactory() {
+      throw new TypeError('particle programmer error');
+    },
+    transitionFactory: harness.factories.transitionFactory
+  }), /particle programmer error/);
 });
 
 test('ready progress mounts the exact decoded image in its archive slot', () => {
@@ -196,6 +259,7 @@ test('showError exposes a retry that resets the view and invokes its callback on
 
   assert.equal(root.dataset.state, 'error');
   assert.equal(root.dataset.errorKind, 'asset');
+  assert.equal(root.querySelector('[data-loading-slot="archive-01"] figcaption').getAttribute('aria-hidden'), null);
   assert.equal(retry.hidden, false);
   assert.strictEqual(dom.window.document.activeElement, retry);
   assert.equal(dom.window.document.getElementById('loadingCopy').textContent, '影像读取失败：archive-01');
@@ -274,6 +338,7 @@ test('reset clears the queue, canvas, progress, images, and every visual slot cl
   assert.equal(slot.dataset.status, undefined);
   assert.equal(slot.className, 'loading-frame');
   assert.equal(slot.querySelector('img'), null);
+  assert.equal(slot.querySelector('figcaption').getAttribute('aria-hidden'), 'true');
 });
 
 test('compact exit ignores bubbled child transitions and removes on the root opacity transition', async () => {
@@ -304,6 +369,43 @@ test('reduced exit destroys transition then particles without waiting', async ()
 
   assert.deepEqual(harness.calls.slice(-2), ['transition.destroy', 'particles.destroy']);
   assert.equal(dom.window.document.getElementById('loadingScreen'), null);
+});
+
+test('throwing visual cleanup is best-effort and cannot re-enter the gate error path', async () => {
+  const dom = createGateFixture();
+  const document = dom.window.document;
+  const harness = createControllerHarness({
+    transitionDestroy() { throw new Error('transition cleanup failed'); },
+    particleDestroy() { throw new Error('particle cleanup failed'); }
+  });
+  const view = createLoadingScreen(document, {
+    motionProfile: 'reduce',
+    ...harness.factories
+  });
+  let showErrorCalls = 0;
+  const showError = view.showError;
+  view.showError = (...args) => {
+    showErrorCalls += 1;
+    return showError(...args);
+  };
+
+  const results = [{ id: 'archive-01' }];
+  const ready = startCriticalAssetGate({
+    documentRef: document,
+    viewportWidth: 390,
+    motionProfile: 'reduce',
+    createView: () => view,
+    load: async () => results
+  });
+
+  assert.strictEqual(await ready, results);
+  assert.equal(showErrorCalls, 0);
+  assert.equal(document.getElementById('loadingScreen'), null);
+  assert.equal(document.getElementById('appRoot').hasAttribute('inert'), false);
+  assert.deepEqual(
+    harness.calls.filter((call) => typeof call === 'string').slice(-2),
+    ['transition.destroy', 'particles.destroy']
+  );
 });
 
 test('failure keeps the application inert until one retry succeeds', async () => {
@@ -459,6 +561,8 @@ test('application markup starts as one inert root outside the loading screen', (
   assert.equal(appRoot.hasAttribute('inert'), true);
   assert.equal(appRoot.getAttribute('aria-hidden'), 'true');
   assert.equal(appRoot.contains(loadingScreen), false);
+  assert.equal(loadingScreen.hasAttribute('aria-live'), false);
+  assert.equal(loadingScreen.querySelectorAll('[aria-live]').length, 1);
   for (const id of ['appShell', 'resultArea', 'playlistArea', 'contactLink', 'copyToast']) {
     assert.equal(appRoot.contains(document.getElementById(id)), true, `${id} must be gated by appRoot`);
   }
@@ -468,6 +572,8 @@ test('application markup starts as one inert root outside the loading screen', (
     'archive-01', 'archive-02', 'archive-03', 'archive-04', 'archive-05'
   ]);
   assert.deepEqual(slots.map((slot) => slot.textContent.trim()), ['AR-01', 'AR-02', 'AR-03', 'AR-04', 'AR-05']);
+  assert.ok(slots.every((slot) => slot.querySelector('figcaption').getAttribute('aria-hidden') === 'true'));
+  assert.equal(loadingScreen.textContent.includes('LIGHT ARCHIVE / PROJECTION'), false);
   assert.equal(loadingScreen.querySelectorAll('canvas#loadingParticles').length, 1);
   assert.equal(loadingScreen.querySelectorAll('div#loadingLightSlit').length, 1);
   assert.equal(loadingScreen.querySelectorAll('button').length, 1);
@@ -476,6 +582,11 @@ test('application markup starts as one inert root outside the loading screen', (
   assert.equal(loadingScreen.querySelector('#loadingProgress').getAttribute('aria-live'), 'polite');
   assert.equal(loadingScreen.querySelector('#loadingProgress').getAttribute('aria-atomic'), 'true');
   assert.equal(loadingScreen.querySelector('.loading-progress-rail').getAttribute('aria-hidden'), 'true');
+
+  const criticalStyle = document.querySelector('style').textContent;
+  assert.match(criticalStyle, /\.loading-screen\s*\{[^}]*box-sizing:\s*border-box/s);
+  assert.match(criticalStyle, /padding:\s*max\(24px, env\(safe-area-inset-top\)\)\s+max\(24px, env\(safe-area-inset-right\)\)\s+max\(24px, env\(safe-area-inset-bottom\)\)\s+max\(24px, env\(safe-area-inset-left\)\)/s);
+  assert.match(criticalStyle, /\.loading-intake\s*\{[^}]*width:\s*min\(100%, 680px\)[^}]*height:\s*min\(100%, 820px\)/s);
 });
 
 test('loading CSS defines the projection layers and motion-specific fallbacks', () => {
@@ -483,6 +594,9 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   const loadingBlock = css.slice(css.indexOf('.loading-screen {'), css.indexOf('.app-shell {'));
 
   assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*z-index:\s*1000/s);
+  assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*box-sizing:\s*border-box/s);
+  assert.match(loadingBlock, /padding:\s*max\(24px, env\(safe-area-inset-top\)\)\s+max\(24px, env\(safe-area-inset-right\)\)\s+max\(24px, env\(safe-area-inset-bottom\)\)\s+max\(24px, env\(safe-area-inset-left\)\)/s);
+  assert.match(loadingBlock, /\.loading-intake\s*\{[^}]*width:\s*min\(100%, 680px\)[^}]*height:\s*min\(100%, 820px\)/s);
   assert.match(loadingBlock, /\.loading-poster-stack\s*\{[^}]*z-index:\s*2/s);
   assert.match(loadingBlock, /\.loading-particles\s*\{[^}]*z-index:\s*3/s);
   assert.match(loadingBlock, /\.loading-light-slit\s*\{[^}]*z-index:\s*4/s);
@@ -490,9 +604,100 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*object-fit:\s*contain/s);
   assert.match(loadingBlock, /\.loading-frame\s*\{[^}]*visibility:\s*hidden/s);
   assert.match(loadingBlock, /\.loading-frame\.is-active,\s*\.loading-frame\.is-failed\s*\{[^}]*visibility:\s*visible/s);
+  assert.doesNotMatch(loadingBlock, /\.loading-frame\.is-active figcaption/);
+  assert.match(loadingBlock, /\.loading-frame\.is-failed figcaption\s*\{[^}]*opacity:\s*1/s);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.match(loadingBlock, /\.loading-light-slit\.is-lit\[data-direction="ltr"\]\s*\{[^}]*animation:\s*loading-slit-ltr 180ms cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
+  assert.match(loadingBlock, /@keyframes loading-slit-ltr\s*\{[\s\S]*?12%\s*\{[^}]*opacity:\s*0\.16[\s\S]*?48%\s*\{[^}]*opacity:\s*0\.92[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
   assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image)[^{]*\{[^}]*(?:filter|box-shadow)\s*:/s);
   assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
   assert.match(loadingBlock, /data-motion-profile="compact"[^{]*\{[^}]*perspective:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-particles[\s\S]*display:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-image[\s\S]*120ms/s);
+});
+
+test('application startup assigns only the five critical images and leaves player artwork unset', async () => {
+  const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  const dom = new JSDOM(html, {
+    pretendToBeVisual: true,
+    url: 'http://localhost/'
+  });
+  const { document } = dom.window;
+  const srcAssignments = [];
+  const context = {
+    setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {},
+    moveTo() {}, lineTo() {}, stroke() {}
+  };
+  dom.window.HTMLCanvasElement.prototype.getContext = () => context;
+  const matchMedia = (query) => ({
+    matches: query.includes('prefers-reduced-motion'),
+    media: query,
+    addEventListener() {},
+    removeEventListener() {}
+  });
+  dom.window.matchMedia = matchMedia;
+
+  function StartupImage() {
+    const image = document.createElement('img');
+    let currentSrc = '';
+    Object.defineProperty(image, 'naturalWidth', { configurable: true, value: 320 });
+    Object.defineProperty(image, 'src', {
+      configurable: true,
+      get: () => currentSrc,
+      set(value) {
+        currentSrc = String(value);
+        srcAssignments.push(currentSrc);
+        queueMicrotask(() => image.onload?.());
+      }
+    });
+    image.decode = async () => {};
+    return image;
+  }
+
+  const globals = {
+    window: dom.window,
+    document,
+    navigator: dom.window.navigator,
+    Element: dom.window.Element,
+    Image: StartupImage,
+    matchMedia,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window)
+  };
+  const previous = new Map();
+  for (const [name, value] of Object.entries(globals)) {
+    previous.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+  }
+
+  try {
+    await import(new URL(`../../src/main.js?startup=${Date.now()}`, import.meta.url));
+    const deadline = Date.now() + 3000;
+    while (document.getElementById('loadingScreen') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    assert.equal(document.getElementById('loadingScreen'), null);
+    assert.equal(srcAssignments.length, 5);
+    assert.equal(new Set(srcAssignments).size, 5);
+    assert.ok(srcAssignments.every((src) => src.includes('/cover/') && src.includes('x-oss-process=')));
+    assert.equal(document.getElementById('vinylCoverA').style.backgroundImage, '');
+    assert.equal(document.getElementById('vinylCoverB').style.backgroundImage, '');
+    assert.equal(document.documentElement.style.getPropertyValue('--cover-art-url'), '');
+    assert.equal(document.body.style.getPropertyValue('--cover-art-url'), '');
+  } finally {
+    for (const [name, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
+    dom.window.close();
+  }
+
+  const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+  const startupCoverBlock = mainSource.slice(
+    mainSource.indexOf('// 抽取前'),
+    mainSource.indexOf('const updateCurrentLyric')
+  );
+  assert.doesNotMatch(startupCoverBlock, /backgroundImage|setCoverArtworkUrl|artworkSrc/);
 });
