@@ -32,6 +32,9 @@ const defaultScheduler = Object.freeze({
   }
 });
 
+const defaultScheduleMicrotask = globalThis.queueMicrotask?.bind(globalThis)
+  ?? ((callback) => { void Promise.resolve().then(callback); });
+
 const assertProfile = (profile) => {
   if (!PROFILES.includes(profile)) {
     throw new RangeError(`Unknown poster transition profile: ${profile}`);
@@ -48,7 +51,8 @@ export function createPosterTransition({
   particleField,
   profile = 'compact',
   scheduler = defaultScheduler,
-  onError = () => {}
+  onError = () => {},
+  scheduleMicrotask = defaultScheduleMicrotask
 } = {}) {
   if (!hasMethods(root, ['contains', 'querySelectorAll']) || !root.classList || !root.dataset) {
     throw new TypeError('Poster transition root is required');
@@ -65,34 +69,46 @@ export function createPosterTransition({
   if (typeof onError !== 'function') {
     throw new TypeError('Poster transition onError callback must be a function');
   }
+  if (typeof scheduleMicrotask !== 'function') {
+    throw new TypeError('Poster transition microtask scheduler must be a function');
+  }
   assertProfile(profile);
 
   let currentProfile = profile;
   let queue = [];
   let accepted = new Set();
   let activeItem = null;
+  let currentItem = null;
+  let completedReadableHold = 0;
   let generation = 0;
   let processingToken = null;
+  let scheduledPump = null;
   let abortController = new AbortController();
   let sealed = false;
   let destroyed = false;
   let lastError = null;
   let errorReported = false;
   let finishPromise = null;
+  let runToken = {};
   const idleWaiters = new Set();
 
   const slots = () => [...root.querySelectorAll('[data-loading-slot]')];
 
   const imageFor = (slot) => {
-    if (
-      !slot
-      || !root.contains(slot)
-      || typeof slot.matches !== 'function'
-      || !slot.matches('[data-loading-slot]')
-      || typeof slot.querySelectorAll !== 'function'
-    ) return null;
-    const images = slot.querySelectorAll('img');
-    return images.length === 1 ? images[0] : null;
+    try {
+      if (
+        !slot
+        || slot.nodeType !== 1
+        || typeof slot.matches !== 'function'
+        || typeof slot.querySelectorAll !== 'function'
+        || !root.contains(slot)
+        || !slot.matches('[data-loading-slot]')
+      ) return null;
+      const images = slot.querySelectorAll('img');
+      return images.length === 1 ? images[0] : null;
+    } catch {
+      return null;
+    }
   };
 
   const isCurrent = (token) => (
@@ -122,7 +138,7 @@ export function createPosterTransition({
   };
 
   const notifyIdle = () => {
-    if (queue.length > 0 || processingToken !== null) return;
+    if (queue.length > 0 || processingToken !== null || scheduledPump !== null) return;
     for (const resolve of idleWaiters) resolve();
     idleWaiters.clear();
   };
@@ -141,6 +157,7 @@ export function createPosterTransition({
     }
 
     activeItem = item;
+    completedReadableHold = 0;
     setActive(activeItem, true);
     activeItem.slot.classList.add('is-revealing');
     if (!await sleep(POSTER_TIMING.reduceFade, token)) return;
@@ -172,6 +189,7 @@ export function createPosterTransition({
     }
 
     activeItem = item;
+    completedReadableHold = 0;
     slit.classList.add('is-lit');
     setActive(activeItem, true);
     activeItem.slot.classList.add('is-revealing');
@@ -182,7 +200,12 @@ export function createPosterTransition({
 
     const finalItem = sealed && queue.length === 0;
     const hold = finalItem ? POSTER_TIMING.finalHold : timing.hold;
-    await sleep(hold, token);
+    if (await sleep(hold, token) && activeItem === item) {
+      completedReadableHold = Math.min(
+        POSTER_TIMING.finalHold,
+        completedReadableHold + hold
+      );
+    }
   };
 
   const runItem = async (item, token) => {
@@ -223,26 +246,53 @@ export function createPosterTransition({
     }
   };
 
-  const ensurePump = () => {
-    if (destroyed || processingToken !== null || queue.length === 0) return;
-    const token = generation;
+  const runPump = (token) => {
     processingToken = token;
 
     void (async () => {
+      let item = null;
       try {
         while (isCurrent(token) && queue.length > 0) {
-          const item = queue.shift();
+          item = queue.shift();
+          currentItem = item;
           await runItem(item, token);
+          if (isCurrent(token) && currentItem === item) currentItem = null;
+          item = null;
         }
       } catch (error) {
+        if (isCurrent(token) && currentItem === item) currentItem = null;
         fail(error, token);
       } finally {
-        if (processingToken === token) processingToken = null;
+        if (processingToken === token) {
+          processingToken = null;
+          if (currentItem === item) currentItem = null;
+        }
         notifyIdle();
         if (queue.length > 0) ensurePump();
       }
     })();
   };
+
+  function ensurePump() {
+    if (
+      destroyed
+      || processingToken !== null
+      || scheduledPump !== null
+      || queue.length === 0
+    ) return;
+
+    const reservation = { generation };
+    scheduledPump = reservation;
+    scheduleMicrotask(() => {
+      if (scheduledPump !== reservation) return;
+      scheduledPump = null;
+      if (!isCurrent(reservation.generation) || queue.length === 0) {
+        notifyIdle();
+        return;
+      }
+      runPump(reservation.generation);
+    });
+  }
 
   const clearSlotState = () => {
     for (const slot of slots()) {
@@ -255,13 +305,17 @@ export function createPosterTransition({
       }
     }
     activeItem = null;
+    completedReadableHold = 0;
   };
 
   const cancelWork = ({ preserveActive }) => {
     generation += 1;
+    runToken = {};
     abortController.abort();
     abortController = new AbortController();
     processingToken = null;
+    scheduledPump = null;
+    currentItem = null;
     queue = [];
     slit.classList.remove('is-lit');
     delete slit.dataset.direction;
@@ -276,8 +330,37 @@ export function createPosterTransition({
     idleWaiters.clear();
   };
 
+  const switchRunningWorkToReduce = () => {
+    const interruptedItem = currentItem;
+    generation += 1;
+    abortController.abort();
+    abortController = new AbortController();
+    processingToken = null;
+    scheduledPump = null;
+    currentItem = null;
+    if (interruptedItem && !queue.includes(interruptedItem)) {
+      queue.unshift(interruptedItem);
+    }
+
+    slit.classList.remove('is-lit');
+    delete slit.dataset.direction;
+    root.classList.remove('is-final-exposure');
+    delete root.dataset.transitionSettled;
+    for (const slot of slots()) {
+      slot.classList.remove('is-revealing', 'is-scattering');
+      if (activeItem?.slot === slot) slot.classList.add('is-stable');
+    }
+    settleParticleField();
+    ensurePump();
+    notifyIdle();
+  };
+
   const waitForIdle = () => {
-    if (queue.length === 0 && processingToken === null) return Promise.resolve();
+    if (
+      queue.length === 0
+      && processingToken === null
+      && scheduledPump === null
+    ) return Promise.resolve();
     return new Promise((resolve) => idleWaiters.add(resolve));
   };
 
@@ -287,8 +370,9 @@ export function createPosterTransition({
 
   return {
     enqueue(slot) {
+      if (destroyed || sealed) return false;
       const image = imageFor(slot);
-      if (destroyed || sealed || !image || accepted.has(slot)) return false;
+      if (!image || accepted.has(slot)) return false;
 
       const order = accepted.size + 1;
       const direction = order % 2 === 1 ? 'ltr' : 'rtl';
@@ -307,17 +391,38 @@ export function createPosterTransition({
     finish() {
       if (finishPromise) return finishPromise;
       sealed = true;
-      const token = generation;
+      const finishingRun = runToken;
       ensurePump();
       finishPromise = (async () => {
-        await waitForIdle();
-        if (!isCurrent(token)) return;
-        if (lastError) throw lastError;
+        while (!destroyed && runToken === finishingRun) {
+          await waitForIdle();
+          if (destroyed || runToken !== finishingRun) return;
+          if (lastError) throw lastError;
 
-        root.classList.add('is-final-exposure');
-        const duration = currentProfile === 'reduce' ? 0 : POSTER_TIMING.finalExposure;
-        if (!await sleep(duration, token)) return;
-        root.dataset.transitionSettled = 'true';
+          const token = generation;
+          if (currentProfile !== 'reduce' && activeItem) {
+            const remainingHold = Math.max(
+              0,
+              POSTER_TIMING.finalHold - completedReadableHold
+            );
+            if (remainingHold > 0) {
+              if (!await sleep(remainingHold, token)) {
+                if (generation !== token) continue;
+                return;
+              }
+              completedReadableHold += remainingHold;
+            }
+          }
+
+          root.classList.add('is-final-exposure');
+          const duration = currentProfile === 'reduce' ? 0 : POSTER_TIMING.finalExposure;
+          if (duration > 0 && !await sleep(duration, token)) {
+            if (generation !== token) continue;
+            return;
+          }
+          root.dataset.transitionSettled = 'true';
+          return;
+        }
       })();
       return finishPromise;
     },
@@ -341,9 +446,11 @@ export function createPosterTransition({
     setProfile(nextProfile) {
       assertProfile(nextProfile);
       if (destroyed) return;
+      const switchingToReduce = nextProfile === 'reduce' && currentProfile !== 'reduce';
       currentProfile = nextProfile;
       root.dataset.motionProfile = nextProfile;
       particleField.setProfile(nextProfile);
+      if (switchingToReduce) switchRunningWorkToReduce();
     },
 
     destroy() {
@@ -358,7 +465,7 @@ export function createPosterTransition({
         profile: currentProfile,
         queued: queue.length,
         activeId: activeItem?.slot.dataset.loadingSlot ?? null,
-        processing: processingToken !== null,
+        processing: processingToken !== null || scheduledPump !== null,
         sealed,
         destroyed
       };

@@ -19,9 +19,11 @@ const makeImmediateScheduler = (sleeps) => ({
 
 const makeManualScheduler = () => {
   const pending = [];
+  const sleepCalls = [];
 
   return {
     sleep(ms, signal) {
+      sleepCalls.push(ms);
       return new Promise((resolve) => {
         let settled = false;
         const entry = {
@@ -53,6 +55,9 @@ const makeManualScheduler = () => {
     },
     get durations() {
       return pending.map(({ ms }) => ms);
+    },
+    get sleepCalls() {
+      return [...sleepCalls];
     }
   };
 };
@@ -79,7 +84,13 @@ const makeDeferredParticleField = () => {
   };
 };
 
-const makeFixture = ({ scheduler, particleField, profile = 'full', onError } = {}) => {
+const makeFixture = ({
+  scheduler,
+  particleField,
+  profile = 'full',
+  onError,
+  scheduleMicrotask
+} = {}) => {
   const dom = new JSDOM(`
     <div id="root">
       <div id="slit"></div>
@@ -128,7 +139,8 @@ const makeFixture = ({ scheduler, particleField, profile = 'full', onError } = {
     particleField: particleField || defaultParticleField,
     profile,
     scheduler: scheduler || makeImmediateScheduler(sleeps),
-    onError: onError || ((error) => errors.push(error))
+    onError: onError || ((error) => errors.push(error)),
+    scheduleMicrotask
   });
 
   return {
@@ -211,6 +223,25 @@ test('enqueue accepts only mounted image slots inside its root', () => {
   assert.equal(controller.enqueue(slots[0]), true);
 });
 
+test('enqueue returns false for arbitrary non-Element values', () => {
+  const { controller, document } = makeFixture();
+  const values = [
+    0,
+    1,
+    'archive-01',
+    Symbol('slot'),
+    {},
+    [],
+    () => {},
+    document.createTextNode('not an element')
+  ];
+
+  for (const value of values) {
+    assert.doesNotThrow(() => controller.enqueue(value));
+    assert.equal(controller.enqueue(value), false);
+  }
+});
+
 test('enqueue rejects an undeclared mounted descendant and reset cannot leave it exposed', async () => {
   const { controller, document, root } = makeFixture();
   const undeclared = document.createElement('div');
@@ -241,6 +272,117 @@ test('rapid backlog uses fast intermediate phases and preserves final hold and e
   assert.ok(sleeps.includes(POSTER_TIMING.finalHold));
   assert.equal(sleeps.at(-1), POSTER_TIMING.finalExposure);
   assert.equal(slots[1].style.getPropertyValue('--poster-reveal-ms'), `${POSTER_TIMING.fast.reveal}ms`);
+});
+
+test('finish after an idle normal scene adds only the unread final hold remainder', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, slots } = makeFixture({ scheduler });
+  controller.enqueue(slots[0]);
+  await flush();
+
+  while (controller.getState().processing) {
+    assert.ok(scheduler.pending > 0);
+    scheduler.releaseNext();
+    await flush();
+  }
+  await controller.waitForIdle();
+  assert.deepEqual(scheduler.sleepCalls, [
+    POSTER_TIMING.normal.gather,
+    POSTER_TIMING.normal.reveal,
+    POSTER_TIMING.normal.hold
+  ]);
+
+  const finishing = controller.finish();
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalHold - POSTER_TIMING.normal.hold]);
+  scheduler.releaseNext();
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+  scheduler.releaseNext();
+  await finishing;
+});
+
+test('finish during a pre-classified normal hold waits its remainder before exposure', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, slots } = makeFixture({ scheduler });
+  controller.enqueue(slots[0]);
+  await flush();
+  scheduler.releaseNext();
+  await flush();
+  scheduler.releaseNext();
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.hold]);
+
+  const finishing = controller.finish();
+  scheduler.releaseNext();
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalHold - POSTER_TIMING.normal.hold]);
+  scheduler.releaseNext();
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+  scheduler.releaseNext();
+  await finishing;
+});
+
+test('switching to reduce during the final hold remainder settles finish immediately', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, root, slots } = makeFixture({ scheduler });
+  controller.enqueue(slots[0]);
+  await flush();
+  while (controller.getState().processing) {
+    scheduler.releaseNext();
+    await flush();
+  }
+
+  const finishing = controller.finish();
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalHold - POSTER_TIMING.normal.hold]);
+  controller.setProfile('reduce');
+  await finishing;
+
+  assert.equal(scheduler.pending, 0);
+  assert.equal(root.dataset.transitionSettled, 'true');
+});
+
+test('enqueue defers collaborators to one microtask and stale reservations cannot start work', async () => {
+  const microtasks = [];
+  const scheduleMicrotask = (callback) => microtasks.push(callback);
+  const fixture = makeFixture({ scheduleMicrotask });
+  let boundsCalls = 0;
+  fixture.slots[0].getBoundingClientRect = () => {
+    boundsCalls += 1;
+    return { left: 20, top: 30, right: 200, bottom: 270, width: 180, height: 240 };
+  };
+  const initialParticleCalls = fixture.particleCalls.length;
+
+  assert.equal(fixture.controller.enqueue(fixture.slots[0]), true);
+  assert.equal(fixture.controller.enqueue(fixture.slots[1]), true);
+  assert.equal(microtasks.length, 1);
+  assert.equal(boundsCalls, 0);
+  assert.equal(fixture.particleCalls.length, initialParticleCalls);
+  assert.deepEqual(fixture.sleeps, []);
+
+  fixture.controller.reset();
+  assert.equal(fixture.controller.enqueue(fixture.slots[2]), true);
+  assert.equal(microtasks.length, 2);
+  const callsAfterReset = fixture.particleCalls.length;
+  microtasks.shift()();
+  await flush();
+  assert.equal(fixture.particleCalls.length, callsAfterReset);
+  assert.deepEqual(fixture.sleeps, []);
+
+  microtasks.shift()();
+  await fixture.controller.waitForIdle();
+  assert.equal(fixture.controller.getState().activeId, 'archive-03');
+
+  const destroyed = makeFixture({ scheduleMicrotask });
+  assert.equal(destroyed.controller.enqueue(destroyed.slots[0]), true);
+  const staleDestroyTask = microtasks.shift();
+  destroyed.controller.destroy();
+  const callsAfterDestroy = destroyed.particleCalls.length;
+  staleDestroyTask();
+  await flush();
+  assert.equal(destroyed.particleCalls.length, callsAfterDestroy);
 });
 
 test('waitForIdle settles before finish completes its final exposure', async () => {
@@ -358,6 +500,68 @@ test('reduce profile uses direct fades without gather, scatter, or a lit slit', 
   assert.equal(slit.classList.contains('is-lit'), false);
   assert.ok(sleeps.includes(POSTER_TIMING.reduceFade));
   assert.equal(sleeps.includes(POSTER_TIMING.finalExposure), false);
+});
+
+test('switching to reduce mid-gather cancels animation and resumes every item as a fade', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, particleCalls, slit, slots } = makeFixture({ scheduler });
+  controller.enqueue(slots[0]);
+  controller.enqueue(slots[1]);
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+
+  controller.setProfile('reduce');
+  await flush();
+  while (controller.getState().processing) {
+    assert.ok(scheduler.pending > 0);
+    scheduler.releaseNext();
+    await flush();
+  }
+  await controller.waitForIdle();
+
+  assert.equal(scheduler.sleepCalls.includes(POSTER_TIMING.normal.reveal), false);
+  assert.deepEqual(
+    scheduler.sleepCalls,
+    [POSTER_TIMING.normal.gather, POSTER_TIMING.reduceFade, POSTER_TIMING.reduceFade]
+  );
+  assert.ok(particleCalls.some(([name]) => name === 'finish'));
+  assert.equal(slit.classList.contains('is-lit'), false);
+  assert.equal(slots[0].classList.contains('is-active'), false);
+  assert.equal(slots[1].classList.contains('is-active'), true);
+  assert.equal(slots[1].classList.contains('is-stable'), true);
+  assert.equal(controller.getState().activeId, 'archive-02');
+});
+
+test('a late gather completion cannot clear tracking for the same resumed reduce item', async () => {
+  const scheduler = makeManualScheduler();
+  const particleField = makeDeferredParticleField();
+  const { controller, slots } = makeFixture({ particleField, scheduler });
+  controller.enqueue(slots[0]);
+  await flush();
+  const staleGather = particleField.pending.shift();
+
+  controller.setProfile('reduce');
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.reduceFade]);
+  staleGather.resolve();
+  await flush();
+
+  controller.setProfile('compact');
+  controller.setProfile('reduce');
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.reduceFade]);
+  assert.equal(controller.getState().processing, true);
+
+  scheduler.releaseNext();
+  await flush();
+  await controller.waitForIdle();
+  assert.deepEqual(scheduler.sleepCalls, [
+    POSTER_TIMING.normal.gather,
+    POSTER_TIMING.reduceFade,
+    POSTER_TIMING.reduceFade
+  ]);
+  assert.equal(slots[0].classList.contains('is-active'), true);
+  assert.equal(slots[0].classList.contains('is-stable'), true);
 });
 
 test('animation errors stabilize the current poster, reject finish once, and reset recovers', async () => {
