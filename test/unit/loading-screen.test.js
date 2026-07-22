@@ -27,7 +27,7 @@ const createFixture = () => new JSDOM(`
         </div>
         <canvas class="loading-particles" id="loadingParticles"></canvas>
         <div class="loading-light-slit" id="loadingLightSlit"></div>
-        <div class="loading-progress-rail"><span></span></div>
+        <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
       </div>
     </div>
   </div>
@@ -90,7 +90,7 @@ const createGateFixture = () => new JSDOM(`
     <div data-loading-slot="archive-01"></div>
     <canvas id="loadingParticles"></canvas>
     <div id="loadingLightSlit"></div>
-    <div class="loading-progress-rail"><span></span></div>
+    <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
     <button id="loadingRetry" type="button" hidden>重新载入</button>
     <p id="loadingCopy">影像读取中</p>
   </div>
@@ -240,8 +240,9 @@ test('ready sequence applies its profile and wraps transition failures', async (
     (error) => error instanceof VisualTransitionError && error.cause === cause
   );
 
-  assert.equal(dom.window.document.getElementById('loadingScreen').dataset.state, 'ready');
-  assert.equal(dom.window.document.getElementById('loadingCopy').textContent, '档案接入完成');
+  assert.equal(dom.window.document.getElementById('loadingScreen').dataset.state, 'error');
+  assert.equal(dom.window.document.getElementById('loadingScreen').dataset.errorKind, 'visual');
+  assert.equal(dom.window.document.getElementById('loadingCopy').textContent, '影像呈现失败，请重新载入');
   assert.deepEqual(harness.calls.slice(-3), [
     ['transition.setProfile', 'full'],
     'transition.freeze',
@@ -474,6 +475,7 @@ test('application markup starts as one inert root outside the loading screen', (
   assert.equal(loadingScreen.querySelector('[src]'), null);
   assert.equal(loadingScreen.querySelector('#loadingProgress').getAttribute('aria-live'), 'polite');
   assert.equal(loadingScreen.querySelector('#loadingProgress').getAttribute('aria-atomic'), 'true');
+  assert.equal(loadingScreen.querySelector('.loading-progress-rail').getAttribute('aria-hidden'), 'true');
 });
 
 test('loading CSS defines the projection layers and motion-specific fallbacks', () => {
@@ -486,6 +488,8 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-light-slit\s*\{[^}]*z-index:\s*4/s);
   assert.match(loadingBlock, /\.loading-controls\s*\{[^}]*z-index:\s*5/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*object-fit:\s*contain/s);
+  assert.match(loadingBlock, /\.loading-frame\s*\{[^}]*visibility:\s*hidden/s);
+  assert.match(loadingBlock, /\.loading-frame\.is-active,\s*\.loading-frame\.is-failed\s*\{[^}]*visibility:\s*visible/s);
   assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image)[^{]*\{[^}]*(?:filter|box-shadow)\s*:/s);
   assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
   assert.match(loadingBlock, /data-motion-profile="compact"[^{]*\{[^}]*perspective:\s*none/s);

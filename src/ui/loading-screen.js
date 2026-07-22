@@ -170,6 +170,9 @@ export function createLoadingScreen(documentRef = document, {
         await transition.finish();
         if (visualQueueError) throw visualQueueError;
       } catch (error) {
+        root.dataset.state = 'error';
+        root.dataset.errorKind = 'visual';
+        copy.textContent = '影像呈现失败，请重新载入';
         transition.freeze();
         particleField.clear();
         throw new VisualTransitionError(visualQueueError || error);

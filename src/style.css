@@ -254,6 +254,7 @@
             margin: auto;
             overflow: hidden;
             opacity: 0;
+            visibility: hidden;
             pointer-events: none;
             transform-origin: center;
             transition: opacity 80ms linear;
@@ -278,6 +279,7 @@
         .loading-frame.is-active,
         .loading-frame.is-failed {
             opacity: 1;
+            visibility: visible;
         }
 
         .loading-frame figcaption {
