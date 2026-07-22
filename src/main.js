@@ -5,9 +5,14 @@ import {
     lyricsPool
 } from './data.js';
 import { renderLyricLinesHTML } from './lyrics/format.js';
+import { startCriticalAssetGate } from './app/bootstrap.js';
 
-        const loadingScreen = document.getElementById('loadingScreen');
-        const appShell = document.getElementById('appShell');
+startCriticalAssetGate({
+    motionProfile: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'reduce'
+        : 'compact'
+});
+
         const turntable = document.getElementById('turntable');
         const tonearm = document.getElementById('tonearm');
         const vinyl = document.getElementById('vinylRecord');
@@ -680,120 +685,6 @@ import { renderLyricLinesHTML } from './lyrics/format.js';
 
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-        const preloadImage = (src, timeout = 1400) => new Promise((resolve) => {
-            const img = new Image();
-            let settled = false;
-            const done = () => {
-                if (settled) return;
-                settled = true;
-                resolve();
-            };
-
-            const timer = setTimeout(done, timeout);
-            img.onload = async () => {
-                try {
-                    if (typeof img.decode === 'function') {
-                        await img.decode();
-                    }
-                } catch (error) {
-                    // decode() may reject for cached/cross-origin images in some WebViews.
-                } finally {
-                    clearTimeout(timer);
-                    done();
-                }
-            };
-            img.onerror = () => {
-                clearTimeout(timer);
-                done();
-            };
-            img.src = src;
-        });
-
-        const runLoadingSequence = async () => {
-            const loadingSources = COVER_ROTATION_FILES.map((name) => `${COVER_BASE_URL}${name}`);
-            const preloadTimeout = playbackPlatform.isWeChat ? 900 : 1200;
-            let loadingFinished = false;
-            const finishLoadingSequence = () => {
-                if (loadingFinished) return;
-                loadingFinished = true;
-                loadingScreen.classList.add('is-exiting');
-                appShell.classList.add('is-ready');
-            };
-
-            loadingSources.forEach((src) => preloadImage(src, preloadTimeout));
-
-            await wait(prefersReducedMotion ? 120 : 1200);
-
-            const holeLoader = document.getElementById('holeLoader');
-            const loadingCopy = document.getElementById('loadingCopy');
-            const loadingHeroWrap = document.getElementById('loadingHeroWrap');
-            const loadingAmbient = document.getElementById('loadingAmbient');
-            const slides = document.querySelectorAll('.loading-slide');
-            
-            // 隐藏波纹和文字
-            if (holeLoader) holeLoader.classList.add('is-hidden');
-            if (loadingCopy) loadingCopy.textContent = '信号已接入';
-            await wait(prefersReducedMotion ? 0 : 220);
-
-            if (loadingCopy) loadingCopy.classList.add('is-hidden');
-            if (loadingHeroWrap) loadingHeroWrap.classList.add('is-loaded');
-            if (loadingAmbient) loadingAmbient.classList.add('is-loaded');
-
-            let currentIndex = 0;
-            const updateSlide = (dur) => {
-                if (slides.length > 0) {
-                    slides.forEach((slide, idx) => {
-                        if (dur) {
-                            const transformDur = Math.max(dur + 780, 1200);
-                            slide.style.transition = `opacity ${dur}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), filter ${dur}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform ${transformDur}ms cubic-bezier(0.22, 1, 0.36, 1)`;
-                        }
-
-                        if (idx === currentIndex) {
-                            slide.classList.add('is-active');
-                            slide.classList.remove('is-previous');
-                        } else if (slide.classList.contains('is-active')) {
-                            slide.classList.remove('is-active');
-                            slide.classList.add('is-previous');
-                        } else {
-                            slide.classList.remove('is-active', 'is-previous');
-                        }
-                    });
-                    if (loadingHeroWrap) {
-                        loadingHeroWrap.style.setProperty('--hero-bg', `url("${loadingSources[currentIndex]}")`);
-                    }
-                    if (loadingAmbient) {
-                        if (dur) loadingAmbient.style.transitionDuration = `${dur + 180}ms`;
-                        loadingAmbient.style.backgroundImage = `url(${loadingSources[currentIndex]})`;
-                    }
-                }
-            };
-            
-            updateSlide(600); // 初始图
-            // 编排切换时间轴：前两张轻快切换，后两张慢溶到最终封面。
-            const sequenceSteps = [
-                { index: 1, delay: 220, dur: 220 },
-                { index: 2, delay: 520, dur: 720 },
-                { index: 3, delay: 760, dur: 720 },
-                { index: 4, delay: 760, dur: 720 }
-            ];
-
-            if (prefersReducedMotion) {
-                currentIndex = 4;
-                updateSlide(0);
-            } else {
-                for (const step of sequenceSteps) {
-                    await wait(step.delay);
-                    currentIndex = step.index;
-                    updateSlide(step.dur);
-                }
-            }
-
-            // 最后一张驻留后淡出
-            await wait(prefersReducedMotion ? 80 : 900);
-            
-            setTimeout(finishLoadingSequence, prefersReducedMotion ? 0 : 320);
-        };
-
         const createShuffledDrawQueue = (avoidIndex = -1) => {
             const indices = lyricsPool.map((_, index) => index);
             for (let i = indices.length - 1; i > 0; i -= 1) {
@@ -889,18 +780,6 @@ import { renderLyricLinesHTML } from './lyrics/format.js';
 
             return pickRandomLyricIndex(currentLyricIndex);
         };
-
-        if (document.readyState === 'complete') {
-            runLoadingSequence();
-        } else {
-            window.addEventListener('load', runLoadingSequence);
-        }
-
-        loadingScreen.addEventListener('transitionend', (event) => {
-            if (event.target === loadingScreen && event.propertyName === 'opacity') {
-                loadingScreen.remove();
-            }
-        });
 
         const spinAnimation = safeAnimate(vinyl, [
             { transform: 'translateZ(0) rotate(0deg)' },
