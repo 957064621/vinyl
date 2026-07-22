@@ -6,6 +6,8 @@ import {
 } from './data.js';
 import { renderLyricLinesHTML } from './lyrics/format.js';
 import { startCriticalAssetGate } from './app/bootstrap.js';
+import { ossImageDerivative } from './config/assets.js';
+import { createPlaylist } from './ui/playlist.js';
 
 startCriticalAssetGate({
     motionProfile: window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -216,18 +218,6 @@ startCriticalAssetGate({
         };
 
         const stripSongMarks = (song = '') => String(song || '').replace(/[《》]/g, '');
-
-        const escapeHTML = (value = '') => String(value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-
-        const escapeCSSUrl = (value = '') => String(value)
-            .replace(/\\/g, '\\\\')
-            .replace(/"/g, '\\"')
-            .replace(/\n|\r/g, '');
 
         const getTrackByIndex = (index) => {
             if (!Number.isInteger(index) || index < 0 || index >= lyricsPool.length) return null;
@@ -920,58 +910,6 @@ startCriticalAssetGate({
             }, split ? 860 : 700);
         };
 
-        const RELEASE_TYPE_LABELS = {
-            album: '专辑',
-            single: '单曲',
-            live: '现场',
-            'live-recording': '演唱会录音',
-            'associated-single': '关联单曲',
-            pending: '待核对'
-        };
-
-        const getReleaseMeta = (release, trackCount) => {
-            const typeLabel = RELEASE_TYPE_LABELS[release.type] || release.type || '发行';
-            const year = release.releaseDate ? release.releaseDate.slice(0, 4) : '';
-            return [typeLabel, year, `${trackCount}首`].filter(Boolean).join(' · ');
-        };
-
-        const getPlaylistTrackKey = (releaseTitle, track) => [
-            releaseTitle || '',
-            Number.isInteger(track?.trackNumber) ? track.trackNumber : '',
-            track?.title || stripSongMarks(track?.song || '')
-        ].join('\u0000');
-
-        const renderPlaylist = () => {
-            const trackIndexByTrack = new Map(lyricsPool.map((track, index) => [
-                getPlaylistTrackKey(track.album, track),
-                index
-            ]));
-            playlistList.innerHTML = releases.map((release) => {
-                const tracks = Array.isArray(release.tracks) ? release.tracks : [];
-                const itemIndexes = [];
-                const itemsHTML = tracks.map((item, releaseTrackIndex) => {
-                    const itemIndex = trackIndexByTrack.get(getPlaylistTrackKey(release.title, item));
-                    if (!item) return '';
-                    if (!Number.isInteger(itemIndex)) return '';
-                    itemIndexes.push(itemIndex);
-
-                    const activeClass = itemIndex === currentLyricIndex ? ' is-current' : '';
-                    const displaySong = stripSongMarks(item.song);
-                    const trackNumber = Number.isInteger(item.trackNumber) ? item.trackNumber : releaseTrackIndex + 1;
-                    return `<button class="playlist-item${activeClass}" data-index="${itemIndex}" type="button"><span class="playlist-index">${String(trackNumber).padStart(2, '0')}</span><span class="playlist-song">${escapeHTML(displaySong)}</span></button>`;
-                }).join('');
-
-                if (!itemsHTML) return '';
-
-                const currentClass = itemIndexes.includes(currentLyricIndex) ? ' is-current-group' : '';
-                const releaseTitle = escapeHTML(release.title || '未命名发行');
-                const releaseMeta = escapeHTML(getReleaseMeta(release, tracks.length));
-                const releaseCover = escapeCSSUrl(getReleaseCoverSrc(release));
-
-                return `<section class="playlist-group${currentClass}" style="--playlist-group-cover: url(&quot;${releaseCover}&quot;)"><div class="playlist-group-header"><span class="playlist-album-title">${releaseTitle}</span><span class="playlist-album-meta">${releaseMeta}</span></div>${itemsHTML}</section>`;
-            }).join('');
-        };
-
         const scrollPlaylistToCurrentTrack = (behavior = 'smooth') => {
             if (!playlistList || currentLyricIndex === -1) return;
 
@@ -1204,7 +1142,7 @@ startCriticalAssetGate({
             void applyCoverVisual(index);
             consumeLyricIndexFromQueue(index);
             updateMediaSessionMetadata(index);
-            renderPlaylist();
+            updatePlaylistActiveTrack(index);
         };
 
         const revealLyricContentImmediately = () => {
@@ -1329,6 +1267,25 @@ startCriticalAssetGate({
             }
         };
 
+        const playlist = createPlaylist({
+            listEl: playlistList,
+            releases,
+            tracks: lyricsPool,
+            getCoverCandidates: (release) => {
+                const fallback = release.coverOssUrl;
+                if (!fallback) return null;
+
+                return {
+                    src: ossImageDerivative(fallback, 480),
+                    srcset: `${ossImageDerivative(fallback, 480)} 480w, ${ossImageDerivative(fallback, 960)} 960w`,
+                    fallback
+                };
+            },
+            onSelect: (index) => switchToTrackWithTransition(index, { stopDuration: 320 })
+        });
+
+        const updatePlaylistActiveTrack = (index) => playlist.setActive(index);
+
         const switchToTrackHeadless = async (targetIndex) => {
             if (isTrackSwitching) return;
             if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= lyricsPool.length) return;
@@ -1439,7 +1396,6 @@ startCriticalAssetGate({
             });
         };
 
-        renderPlaylist();
         updatePlaybackModeUI();
         setupMediaSessionHandlers();
 
@@ -1555,14 +1511,22 @@ startCriticalAssetGate({
             setControlSplit(true);
             setOverlayControlsVisible(false);
 
-            const cardAnim = safeAnimate(playlistArea, [
-                { opacity: 0, transform: 'translateY(8px)' },
-                { opacity: 1, transform: 'translateY(0)' }
-            ], {
-                duration: overlayCardDuration,
-                fill: 'forwards',
-                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
-            });
+            const useContentOnlyMotion = shouldUseCompactPlaylistMotion || shouldUseLeanPlaylistMotion;
+            const cardAnim = useContentOnlyMotion
+                ? null
+                : safeAnimate(playlistArea, [
+                    { opacity: 0, transform: 'translateY(8px)' },
+                    { opacity: 1, transform: 'translateY(0)' }
+                ], {
+                    duration: overlayCardDuration,
+                    fill: 'forwards',
+                    easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+                });
+
+            if (useContentOnlyMotion) {
+                playlistArea.style.opacity = '1';
+                playlistArea.style.transform = 'translateY(0)';
+            }
 
             const contentAnim = safeAnimate(playlistContent, [
                 { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
@@ -1579,19 +1543,13 @@ startCriticalAssetGate({
                 item.style.transform = 'translateY(0) scale(1)';
             });
 
-            const currentItemPosition = playlistItems.findIndex((item) => Number(item.dataset.index) === currentLyricIndex);
-            const itemAnimationTargets = playlistItems.filter((item, index) => {
-                if (shouldUseLeanPlaylistMotion) return false;
-
-                if (shouldUseCompactPlaylistMotion) {
-                    if (currentItemPosition === -1) return index < 10;
-                    return Math.abs(index - currentItemPosition) <= 8;
-                }
-
-                if (index < 18) return true;
-                if (currentItemPosition === -1) return false;
-                return Math.abs(index - currentItemPosition) <= 10;
-            });
+            const listRect = playlistList.getBoundingClientRect();
+            const itemAnimationTargets = useContentOnlyMotion
+                ? []
+                : playlistItems.filter((item) => {
+                    const itemRect = item.getBoundingClientRect();
+                    return itemRect.bottom >= listRect.top && itemRect.top <= listRect.bottom;
+                });
 
             const itemAnimations = itemAnimationTargets.map((item, index) => safeAnimate(item, [
                 { opacity: 0, transform: 'translateY(7px) scale(0.992)' },
@@ -1603,7 +1561,7 @@ startCriticalAssetGate({
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             }));
 
-            playlistAnimations = [cardAnim, contentAnim, ...itemAnimations];
+            playlistAnimations = [cardAnim, contentAnim, ...itemAnimations].filter(Boolean);
             scrollPlaylistToCurrentTrack();
         };
 
@@ -1783,8 +1741,9 @@ startCriticalAssetGate({
 
         playlistToggleBtn.addEventListener('click', () => {
             if (isDrawing || currentLyricIndex === -1) return;
+            playlist.ensureRendered();
+            playlist.setActive(currentLyricIndex);
             setFloatingButtonsVisible(false);
-            renderPlaylist();
             animatePlaylistIn();
         });
 
@@ -1793,16 +1752,6 @@ startCriticalAssetGate({
                 cyclePlaybackMode();
             });
         }
-
-        playlistList.addEventListener('click', async (event) => {
-            const playlistItem = event.target.closest('.playlist-item');
-            if (!playlistItem || isDrawing || isTrackSwitching) return;
-
-            const nextIndex = Number(playlistItem.dataset.index);
-            if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= lyricsPool.length) return;
-
-            await switchToTrackWithTransition(nextIndex, { stopDuration: 320 });
-        });
 
         playButton.addEventListener('click', async () => {
             if (isDrawing) return;
