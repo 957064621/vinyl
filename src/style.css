@@ -473,6 +473,10 @@
             display: none;
         }
 
+        .loading-screen[data-motion-profile="reduce"] .loading-frame {
+            transition: none;
+        }
+
         .loading-screen[data-motion-profile="reduce"] .loading-image {
             transform: none;
             clip-path: none;

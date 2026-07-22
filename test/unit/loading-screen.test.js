@@ -9,6 +9,7 @@ import {
   VisualTransitionError,
   createLoadingScreen
 } from '../../src/ui/loading-screen.js';
+import { POSTER_TIMING } from '../../src/ui/poster-transition.js';
 
 const createFixture = () => new JSDOM(`
   <div class="loading-screen" id="loadingScreen" data-state="loading">
@@ -613,7 +614,14 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /--slit-duration:\s*180ms/);
   assert.match(loadingBlock, /\.loading-light-slit\.is-lit\[data-direction="ltr"\]\s*\{[^}]*animation:\s*loading-slit-ltr var\(--slit-duration, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
   assert.match(loadingBlock, /@keyframes loading-slit-ltr\s*\{[\s\S]*?12%\s*\{[^}]*opacity:\s*0\.12[\s\S]*?48%\s*\{[^}]*opacity:\s*0\.78[\s\S]*?82%\s*\{[^}]*opacity:\s*0\.18[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
-  assert.match(loadingBlock, /\.loading-screen\.is-final-exposure \.loading-light-slit\s*\{[^}]*animation:\s*loading-final-exposure 520ms cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
+  const finalExposureRule = loadingBlock.match(
+    /\.loading-screen\.is-final-exposure \.loading-light-slit\s*\{[^}]*\}/s
+  )?.[0] ?? '';
+  assert.ok(
+    finalExposureRule.includes('loading-final-exposure ' + POSTER_TIMING.finalExposure + 'ms'),
+    'the CSS exposure envelope must match POSTER_TIMING.finalExposure'
+  );
+  assert.match(finalExposureRule, /cubic-bezier\(0\.22, 1, 0\.36, 1\) both/);
   assert.match(loadingBlock, /@keyframes loading-final-exposure\s*\{[\s\S]*?0%\s*\{[^}]*opacity:\s*0[\s\S]*?38%\s*\{[^}]*opacity:\s*0\.72[\s\S]*?72%\s*\{[^}]*opacity:\s*0\.36[\s\S]*?100%\s*\{[^}]*opacity:\s*0\.08/s);
   assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
   assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
@@ -625,6 +633,7 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.doesNotMatch(loadingBlock, /letter-spacing:\s*-/);
   assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
   assert.match(loadingBlock, /data-motion-profile="compact"[^{]*\{[^}]*perspective:\s*none/s);
+  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\] \.loading-frame\s*\{[^}]*transition:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-particles[\s\S]*display:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-image[\s\S]*120ms/s);
 });

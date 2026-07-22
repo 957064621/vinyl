@@ -2,7 +2,7 @@ export const POSTER_TIMING = Object.freeze({
   normal: Object.freeze({ gather: 160, scatter: 160, reveal: 180, hold: 300 }),
   fast: Object.freeze({ gather: 80, scatter: 100, reveal: 100, hold: 160 }),
   finalHold: 520,
-  finalExposure: 360,
+  finalExposure: 520,
   reduceFade: 120
 });
 

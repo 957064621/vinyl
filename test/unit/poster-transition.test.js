@@ -162,7 +162,7 @@ test('timing tables are deeply frozen and preserve exact phase totals', () => {
     normal: { gather: 160, scatter: 160, reveal: 180, hold: 300 },
     fast: { gather: 80, scatter: 100, reveal: 100, hold: 160 },
     finalHold: 520,
-    finalExposure: 360,
+    finalExposure: 520,
     reduceFade: 120
   });
   assert.equal(Object.values(POSTER_TIMING.normal).reduce((sum, value) => sum + value, 0), 800);
