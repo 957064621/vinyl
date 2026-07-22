@@ -1665,7 +1665,172 @@ Expected: exactly those five integration files are staged; the diff leaves non-l
 
 ---
 
-### Task 4: Verify browser visuals, pixels, network concurrency, and frame/performance settlement
+### Task 4: Refine nonlinear continuity, light decay, and visual text density
+
+**Files:**
+- Modify: `src/ui/poster-transition.js`
+- Modify: `test/unit/poster-transition.test.js`
+- Modify: `src/style.css`
+- Modify: `test/unit/loading-screen.test.js`
+
+**Interfaces:**
+- Preserves the existing queue API and exact decoded-node ownership.
+- Adds the transient visual class `is-outgoing`; it never carries `is-active` or exposed image semantics.
+- Publishes `--slit-duration` on the loading root so the DOM light envelope matches the current normal or compressed reveal duration.
+
+- [ ] **Step 1: Write failing continuity and light-envelope tests**
+
+Extend `test/unit/poster-transition.test.js` with a manual-scheduler test that advances the second poster through gather and then inspects state before scatter/reveal settlement:
+
+```js
+test('incoming reveal overlaps outgoing decay without a blank stage', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, particleCalls, root, slots } = makeFixture({ scheduler });
+  controller.enqueue(slots[0]);
+  controller.enqueue(slots[1]);
+  await flush();
+
+  while (!slots[0].classList.contains('is-stable')) {
+    scheduler.releaseNext();
+    await flush();
+  }
+  scheduler.releaseNext();
+  await flush();
+
+  assert.equal(slots[0].classList.contains('is-outgoing'), true);
+  assert.equal(slots[0].classList.contains('is-active'), false);
+  assert.equal(slots[0].querySelector('img').getAttribute('aria-hidden'), 'true');
+  assert.equal(slots[1].classList.contains('is-active'), true);
+  assert.equal(slots[1].classList.contains('is-revealing'), true);
+  assert.equal(root.querySelectorAll('.is-active').length, 1);
+  assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 2);
+  assert.ok(particleCalls.some(([name]) => name === 'scatter'));
+
+  while (scheduler.pending) {
+    scheduler.releaseNext();
+    await flush();
+  }
+  await controller.waitForIdle();
+  assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
+  assert.equal(root.querySelectorAll('.is-active').length, 1);
+});
+```
+
+Extend the reset/freeze/destroy tests so every path removes `is-outgoing` and the root `--slit-duration` property. Extend `test/unit/loading-screen.test.js` static assertions with:
+
+```js
+assert.doesNotMatch(html, /LIGHT ARCHIVE|PROJECTION/);
+assert.match(css, /\.loading-frame\.is-outgoing\s*\{[^}]*visibility:\s*visible/s);
+assert.match(css, /--slit-duration/);
+assert.match(css, /loading-final-exposure/);
+assert.doesNotMatch(css, /\.loading-(?:image|light-slit)[^{]*\{[^}]*transition:[^}]*\blinear\b/s);
+```
+
+Keep the existing reduced-motion assertion allowing its direct `opacity 120ms linear` rule.
+
+- [ ] **Step 2: Run the focused tests to prove the red state**
+
+Run:
+
+```bash
+node --test test/unit/poster-transition.test.js test/unit/loading-screen.test.js
+```
+
+Expected: FAIL because `is-outgoing`, root `--slit-duration`, the overlapping state, and the final-exposure envelope are not implemented.
+
+- [ ] **Step 3: Overlap outgoing decay with incoming reveal**
+
+In `runAnimatedItem`, keep the existing gather phase. Replace the sequential outgoing scatter followed by incoming reveal with one cross-phase:
+
+```js
+const outgoing = activeItem;
+if (outgoing) {
+  setActive(outgoing, false);
+  outgoing.slot.classList.remove('is-stable');
+  outgoing.slot.classList.add('is-outgoing', 'is-scattering');
+}
+
+activeItem = item;
+completedReadableHold = 0;
+root.style.setProperty('--slit-duration', `${timing.reveal}ms`);
+slit.classList.add('is-lit');
+setActive(activeItem, true);
+activeItem.slot.classList.add('is-revealing');
+
+const [, scattered, revealed] = await Promise.all([
+  outgoing
+    ? Promise.resolve(particleField.scatter(outgoing.slot.getBoundingClientRect()))
+    : Promise.resolve(),
+  sleep(outgoing ? timing.scatter : 0, token),
+  sleep(timing.reveal, token)
+]);
+if (!isCurrent(token) || scattered === false || revealed === false) return;
+
+if (outgoing) {
+  outgoing.slot.classList.remove('is-outgoing', 'is-scattering');
+}
+activeItem.slot.classList.remove('is-revealing');
+activeItem.slot.classList.add('is-stable');
+slit.classList.remove('is-lit');
+```
+
+Retain exactly one `.is-active` item and make the outgoing image `aria-hidden="true"` before overlap starts. Add `is-outgoing` to every cleanup/reset/freeze/destroy class list and remove `--slit-duration` during reset/destroy. Cancellation tokens remain authoritative; a stale overlap completion must not remove classes from a later run.
+
+- [ ] **Step 4: Apply a finite nonlinear light envelope and outgoing visual layer**
+
+In `src/style.css`, add `.loading-frame.is-outgoing` to the visible-frame rule while keeping it semantically inactive:
+
+```css
+.loading-frame.is-active,
+.loading-frame.is-outgoing,
+.loading-frame.is-failed {
+    opacity: 1;
+    visibility: visible;
+}
+```
+
+Change the slit animations to use `var(--slit-duration, 180ms)` and the existing non-linear easing. Keep their opacity progression at `0 -> 0.12 -> 0.78 -> 0.18 -> 0`. Replace the static final exposure with a finite animation:
+
+```css
+.loading-screen.is-final-exposure .loading-light-slit {
+    animation: loading-final-exposure 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes loading-final-exposure {
+    0% { opacity: 0; transform: translate(-50%, -50%) scaleX(0.004); }
+    38% { opacity: 0.72; transform: translate(-50%, -50%) scaleX(1); }
+    72% { opacity: 0.36; transform: translate(-50%, -50%) scaleX(1); }
+    100% { opacity: 0.08; transform: translate(-50%, -50%) scaleX(1); }
+}
+```
+
+Use `cubic-bezier(0.22, 1, 0.36, 1)` for full/compact poster opacity, transform, clip-path, slit, progress rail, copy, and loading-screen exit transitions. Do not add blur, filter, shadow animation, negative letter spacing, new visible text, or new DOM elements. Preserve the reduced-motion direct opacity rule.
+
+- [ ] **Step 5: Run focused and complete verification**
+
+Run:
+
+```bash
+node --test test/unit/poster-transition.test.js test/unit/loading-screen.test.js
+npm run verify
+git diff --check
+```
+
+Expected: all focused and project tests PASS. During an animated handoff there is one `.is-active` and at most one `.is-outgoing`; after idle only one `.is-active` remains. Static assertions find no visible English archive heading, no normal caption opacity, and no full/compact linear loading transition.
+
+- [ ] **Step 6: Commit the continuity refinement**
+
+```bash
+git add src/ui/poster-transition.js test/unit/poster-transition.test.js src/style.css test/unit/loading-screen.test.js
+git diff --cached --check
+git commit -m "refine: smooth loading poster choreography"
+```
+
+Expected: exactly the queue, queue tests, loading CSS, and loading static tests are staged; no media, audio, or broader Task 12 files are included.
+
+---
+
+### Task 5: Verify browser visuals, pixels, network concurrency, and frame/performance settlement
 
 **Files:**
 - Create: `test/e2e/loading-poster-transition.spec.js`

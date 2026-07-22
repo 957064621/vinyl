@@ -49,6 +49,14 @@ When all five images have decoded, `playReadySequence()` waits for the visual qu
 
 When several images decode faster than the animation queue, timing compresses rather than making the user wait through five long scenes. Normal timing targets about `800 ms` per poster. With a backlog of more than two posters, intermediate scenes compress to about `440 ms`; the final poster retains a readable hold. After the fifth decode, the remaining sequence should settle within roughly `2.8 s` on a healthy device.
 
+### Elegance Refinement
+
+The visual tone is restrained, elegant, and continuous rather than flash-cut or explosive. Once a first poster is visible, no subsequent transition may create a blank stage between posters. The outgoing poster becomes an `is-outgoing` visual layer and is immediately hidden from the accessibility tree; the incoming poster becomes the sole `is-active` semantic layer while both visual opacity envelopes overlap briefly.
+
+All full and compact poster movement uses the same non-linear `cubic-bezier(0.22, 1, 0.36, 1)` family. The light slit follows a finite intensity envelope: low ignition, controlled peak below solid white, then gradual decay to zero. Removing the slit class occurs only after its opacity has reached zero, so no light layer appears or disappears in one frame. The final full-width exposure also peaks below opaque white and fades down before the loading screen exits.
+
+The normal loading state displays only decoded progress and a short Chinese status. English archive headings and normal-state accession captions are not visible. `AR-01` through `AR-05` identifiers appear only when the corresponding failed slots must be named. Decorative text remains `aria-hidden`; progress remains the single polite live region.
+
 ## Particle Field
 
 Create a focused Canvas controller with no image sampling and no CORS dependency. It receives poster bounds and exposes gather, scatter, resize, profile-change, and destroy operations.
