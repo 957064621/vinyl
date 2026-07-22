@@ -4,6 +4,12 @@ import assert from 'node:assert/strict';
 import { lyricsPool, releases } from '../../src/data.js';
 import { buildAuditDocuments } from '../../scripts/generate-audits.mjs';
 
+const currentLibraryRows = (document) => {
+  const match = document.match(/## 当前曲库\n\n\|[^\n]+\|\n\|[^\n]+\|\n(?<rows>[\s\S]*?)\n\n## /);
+  assert.ok(match);
+  return match.groups.rows.split('\n');
+};
+
 test('builds deterministic audit documents from library data', () => {
   const { audioManifest, libraryAudit } = buildAuditDocuments({
     releases,
@@ -22,6 +28,12 @@ test('builds deterministic audit documents from library data', () => {
   assert.match(audioManifest, /更新时间：2026-07-18/);
   assert.ok(audioManifest.includes(summary));
   assert.ok(libraryAudit.includes(summary));
+  for (const document of [audioManifest, libraryAudit]) {
+    const rows = currentLibraryRows(document);
+    assert.equal(rows.length, 142);
+    assert.ok(rows.some((row) => row.startsWith('| 认真的雪 | 薛之谦 |')));
+    assert.ok(rows.some((row) => row.startsWith('| 认真的雪 | 未完成的歌 |')));
+  }
   assert.match(audioManifest, /\| 曲库歌曲条目 \| 142 \|/);
   assert.match(audioManifest, /\| 唯一音频标题 \| 131 \|/);
   assert.match(audioManifest, /\| 媚人 \| 万兽之王演唱会录音 \| 已填 6 行 \| OSS \|/);

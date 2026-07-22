@@ -33,7 +33,7 @@ export const buildAuditDocuments = ({ releases, lyricsPool, updatedAt }) => {
     return `| ${md(release.title)} | ${md(release.type)} | ${md(release.releaseDate || '待核对')} | ${tracks.length} | ${missingLyricCount} | ${missingMusicCount} | ${release.sourceArtworkUrl ? 'Y' : 'N'} | ${release.coverOssUrl ? 'Y' : 'N'} |`;
   }).join('\n');
 
-  const trackRows = uniqueTracks.map((track) => {
+  const trackRows = lyricsPool.map((track) => {
     const lyricState = track.needsLyric ? '待补歌词' : `已填 ${lineCount(track.text)} 行`;
     const musicState = track.musicOssUrl ? 'OSS' : '待补 OSS';
     const coverState = track.coverOssUrl || track.sourceArtworkUrl || '待补封面';
