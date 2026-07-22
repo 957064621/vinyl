@@ -84,7 +84,13 @@ export function createPosterTransition({
   const slots = () => [...root.querySelectorAll('[data-loading-slot]')];
 
   const imageFor = (slot) => {
-    if (!slot || !root.contains(slot) || typeof slot.querySelectorAll !== 'function') return null;
+    if (
+      !slot
+      || !root.contains(slot)
+      || typeof slot.matches !== 'function'
+      || !slot.matches('[data-loading-slot]')
+      || typeof slot.querySelectorAll !== 'function'
+    ) return null;
     const images = slot.querySelectorAll('img');
     return images.length === 1 ? images[0] : null;
   };
@@ -191,9 +197,9 @@ export function createPosterTransition({
     await runAnimatedItem(item, token, timing);
   };
 
-  const safelyFinishParticles = () => {
+  const settleParticleField = () => {
     try {
-      particleField.finish();
+      void Promise.resolve(particleField.finish()).catch(() => {});
     } catch {
       // Cancellation and error cleanup must preserve the original outcome.
     }
@@ -207,7 +213,7 @@ export function createPosterTransition({
     queue = [];
     abortController.abort();
     abortController = new AbortController();
-    safelyFinishParticles();
+    settleParticleField();
     slit.classList.remove('is-lit');
     stabilize(activeItem);
     try {
@@ -261,7 +267,7 @@ export function createPosterTransition({
     delete slit.dataset.direction;
     root.classList.remove('is-final-exposure');
     delete root.dataset.transitionSettled;
-    safelyFinishParticles();
+    settleParticleField();
 
     if (preserveActive) stabilize(activeItem);
     else clearSlotState();

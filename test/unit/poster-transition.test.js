@@ -211,6 +211,25 @@ test('enqueue accepts only mounted image slots inside its root', () => {
   assert.equal(controller.enqueue(slots[0]), true);
 });
 
+test('enqueue rejects an undeclared mounted descendant and reset cannot leave it exposed', async () => {
+  const { controller, document, root } = makeFixture();
+  const undeclared = document.createElement('div');
+  const image = document.createElement('img');
+  image.alt = 'undeclared';
+  image.setAttribute('aria-hidden', 'true');
+  undeclared.append(image);
+  root.append(undeclared);
+
+  const accepted = controller.enqueue(undeclared);
+  await controller.waitForIdle();
+  controller.reset();
+
+  assert.equal(accepted, false);
+  assert.equal(undeclared.classList.contains('is-active'), false);
+  assert.equal(image.getAttribute('aria-hidden'), 'true');
+  assert.equal(controller.getState().activeId, null);
+});
+
 test('rapid backlog uses fast intermediate phases and preserves final hold and exposure', async () => {
   const { controller, sleeps, slots } = makeFixture();
   slots.forEach((slot) => controller.enqueue(slot));
@@ -405,6 +424,49 @@ test('an asynchronous animation error aborts pending timing and seals the run un
 
   controller.reset();
   assert.equal(controller.getState().sealed, false);
+});
+
+test('cleanup adopts rejected particle finish promises without replacing outcomes', async () => {
+  const cleanupError = new Error('particle cleanup failed');
+  const originalError = new Error('original visual failure');
+  const unhandled = [];
+  const handleUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', handleUnhandled);
+
+  try {
+    let cleanupCalls = 0;
+    const cleanupField = {
+      gather() {},
+      scatter() {},
+      finish() {
+        cleanupCalls += 1;
+        return Promise.reject(cleanupError);
+      },
+      setProfile() {}
+    };
+    const cleanupFixture = makeFixture({ particleField: cleanupField });
+    cleanupFixture.controller.reset();
+    cleanupFixture.controller.freeze();
+    cleanupFixture.controller.reset();
+    cleanupFixture.controller.destroy();
+
+    const failureField = {
+      gather: () => Promise.reject(originalError),
+      scatter() {},
+      finish: () => Promise.reject(cleanupError),
+      setProfile() {}
+    };
+    const failureFixture = makeFixture({ particleField: failureField });
+    failureFixture.controller.enqueue(failureFixture.slots[0]);
+    await assert.rejects(failureFixture.controller.finish(), originalError);
+    await flush();
+
+    assert.equal(cleanupCalls, 4);
+    assert.deepEqual(failureFixture.errors, [originalError]);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener('unhandledRejection', handleUnhandled);
+  }
 });
 
 test('setProfile forwards valid changes and destroy is idempotent and terminal', async () => {
