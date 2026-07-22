@@ -46,6 +46,7 @@ export const createLightParticleField = ({
   let particles = [];
   let command = null;
   let frameId = null;
+  let frameToken = 0;
   let destroyed = false;
 
   const setCanvasData = (name, value) => {
@@ -70,6 +71,7 @@ export const createLightParticleField = ({
   };
 
   const cancelPendingFrame = () => {
+    frameToken += 1;
     if (frameId === null) return;
     unscheduleFrame(frameId);
     frameId = null;
@@ -162,10 +164,13 @@ export const createLightParticleField = ({
 
   const schedule = () => {
     if (!command || destroyed || isHidden() || frameId !== null) return;
-    frameId = scheduleFrame(onFrame);
+    frameToken += 1;
+    const token = frameToken;
+    frameId = scheduleFrame((timestamp) => onFrame(timestamp, token));
   };
 
-  function onFrame(timestamp) {
+  function onFrame(timestamp, token) {
+    if (token !== frameToken) return;
     frameId = null;
     if (!command || destroyed || isHidden()) return;
 
@@ -189,6 +194,7 @@ export const createLightParticleField = ({
   const start = (phase, bounds) => {
     if (destroyed) return Promise.resolve();
     if (command || frameId !== null || particles.length > 0) settleCommand();
+    if (profileName !== 'reduce') resize();
 
     const duration = phase === 'gather' ? settings.gatherMs : settings.scatterMs;
     if (settings.count === 0 || duration === 0) {

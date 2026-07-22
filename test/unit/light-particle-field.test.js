@@ -42,6 +42,11 @@ const createScheduler = () => {
       pending.clear();
       for (const callback of entries) callback(timestamp);
     },
+    takeCallbacks() {
+      const entries = [...pending.values()];
+      pending.clear();
+      return entries;
+    },
     get pendingCount() {
       return pending.size;
     }
@@ -133,6 +138,13 @@ test('exports exact frozen profiles and caps backing-store DPR', () => {
     fullFixture.context.calls.find(([name]) => name === 'setTransform'),
     ['setTransform', 1.5, 0, 0, 1.5, 0, 0]
   );
+  const clearStart = fullFixture.context.calls.length;
+  full.clear();
+  assert.deepEqual(fullFixture.context.calls.slice(clearStart), [
+    ['setTransform', 1, 0, 0, 1, 0, 0],
+    ['clearRect', 0, 0, 300, 150],
+    ['setTransform', 1.5, 0, 0, 1.5, 0, 0]
+  ]);
 
   const compactFixture = createFixture({ width: 200, height: 100, dpr: 3 });
   const compact = createField(compactFixture, 'compact');
@@ -188,6 +200,58 @@ test('scatter renders 28 particles and a replacement command settles the prior p
   field.destroy();
 });
 
+test('a copied stale frame cannot mutate or duplicate a replacement command frame', async () => {
+  const fixture = createFixture();
+  const field = createField(fixture, 'compact');
+  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 });
+  const [staleFrame] = fixture.scheduler.takeCallbacks();
+  assert.equal(typeof staleFrame, 'function');
+
+  const scattering = field.scatter({ left: 60, top: 50, width: 100, height: 80 });
+  await gathering;
+  assert.equal(fixture.scheduler.pendingCount, 1);
+
+  staleFrame(500);
+  assert.equal(fixture.scheduler.pendingCount, 1, 'stale callback must leave the valid frame untouched');
+  assert.equal(fixture.canvas.dataset.frameCount, '0');
+  assert.equal(fixture.canvas.dataset.phase, 'scatter');
+
+  field.destroy();
+  await scattering;
+  assert.equal(fixture.scheduler.pendingCount, 0);
+});
+
+test('each animated command refreshes CSS size and DPR before creating particles', async () => {
+  const fixture = createFixture({ width: 200, height: 100, dpr: 1 });
+  const field = createField(fixture, 'full');
+  assert.equal(fixture.canvas.width, 200);
+  assert.equal(field.getState().dpr, 1);
+
+  fixture.canvas.getBoundingClientRect = () => ({
+    x: 30,
+    y: 40,
+    left: 30,
+    top: 40,
+    right: 153.4,
+    bottom: 107.6,
+    width: 123.4,
+    height: 67.6
+  });
+  Object.defineProperty(fixture.dom.window, 'devicePixelRatio', {
+    configurable: true,
+    value: 3
+  });
+
+  const gathering = field.gather({ left: 50, top: 50, width: 80, height: 40 });
+  assert.equal(fixture.canvas.width, 185);
+  assert.equal(fixture.canvas.height, 101);
+  assert.equal(field.getState().dpr, 1.5);
+  assert.equal(field.getState().particleCount, 64);
+
+  field.destroy();
+  await gathering;
+});
+
 test('visibility pause cancels its frame and excludes hidden wall time on one-frame resume', async () => {
   const fixture = createFixture();
   const field = createField(fixture, 'compact');
@@ -230,17 +294,23 @@ test('reduce schedules no frames and clear erases the complete backing store', a
   field.destroy();
 });
 
-test('profile changes resize and destroy is idempotent with an exact terminal state', () => {
+test('finish, clear, and destroy settle promises and destroy has an exact terminal state', async () => {
   const fixture = createFixture({ width: 200, height: 100, dpr: 3 });
   const field = createField(fixture, 'full');
   field.setProfile('compact');
   assert.equal(fixture.canvas.width, 250);
   assert.equal(fixture.canvas.height, 125);
 
-  field.gather({ left: 20, top: 30, width: 40, height: 50 });
+  const finished = field.gather({ left: 20, top: 30, width: 40, height: 50 });
   field.finish();
-  assert.equal(fixture.scheduler.pendingCount, 0);
+  await finished;
+  const cleared = field.scatter({ left: 20, top: 30, width: 40, height: 50 });
+  field.clear();
+  await cleared;
+  const destroyed = field.gather({ left: 20, top: 30, width: 40, height: 50 });
   field.destroy();
+  await destroyed;
+  assert.equal(fixture.scheduler.pendingCount, 0);
   field.destroy();
 
   assert.equal(fixture.canvas.width, 0);
