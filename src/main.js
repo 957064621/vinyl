@@ -7,7 +7,11 @@ import {
 import { renderLyricLinesHTML } from './lyrics/format.js';
 import { startCriticalAssetGate } from './app/bootstrap.js';
 import { ossImageDerivative } from './config/assets.js';
-import { createPlaylist } from './ui/playlist.js';
+import {
+    createPlaylist,
+    createPlaylistSelectionGuard,
+    getPlaylistViewportItems
+} from './ui/playlist.js';
 
 startCriticalAssetGate({
     motionProfile: window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -918,18 +922,16 @@ startCriticalAssetGate({
 
             const scrollBehavior = shouldUseCompactPlaylistMotion || shouldUseLeanPlaylistMotion ? 'auto' : behavior;
 
-            requestAnimationFrame(() => {
-                const listRect = playlistList.getBoundingClientRect();
-                const itemRect = currentItem.getBoundingClientRect();
-                const centeredTop = playlistList.scrollTop
-                    + itemRect.top
-                    - listRect.top
-                    - ((playlistList.clientHeight - itemRect.height) / 2);
+            const listRect = playlistList.getBoundingClientRect();
+            const itemRect = currentItem.getBoundingClientRect();
+            const centeredTop = playlistList.scrollTop
+                + itemRect.top
+                - listRect.top
+                - ((playlistList.clientHeight - itemRect.height) / 2);
 
-                playlistList.scrollTo({
-                    top: Math.max(0, centeredTop),
-                    behavior: scrollBehavior
-                });
+            playlistList.scrollTo({
+                top: Math.max(0, centeredTop),
+                behavior: scrollBehavior
             });
         };
 
@@ -1281,7 +1283,10 @@ startCriticalAssetGate({
                     fallback
                 };
             },
-            onSelect: (index) => switchToTrackWithTransition(index, { stopDuration: 320 })
+            onSelect: createPlaylistSelectionGuard({
+                isLocked: () => isDrawing || isTrackSwitching,
+                onSelect: (index) => switchToTrackWithTransition(index, { stopDuration: 320 })
+            })
         });
 
         const updatePlaylistActiveTrack = (index) => playlist.setActive(index);
@@ -1543,26 +1548,33 @@ startCriticalAssetGate({
                 item.style.transform = 'translateY(0) scale(1)';
             });
 
-            const listRect = playlistList.getBoundingClientRect();
-            const itemAnimationTargets = useContentOnlyMotion
-                ? []
-                : playlistItems.filter((item) => {
-                    const itemRect = item.getBoundingClientRect();
-                    return itemRect.bottom >= listRect.top && itemRect.top <= listRect.bottom;
-                });
+            playlistAnimations = [cardAnim, contentAnim].filter(Boolean);
+            if (useContentOnlyMotion) return;
 
-            const itemAnimations = itemAnimationTargets.map((item, index) => safeAnimate(item, [
-                { opacity: 0, transform: 'translateY(7px) scale(0.992)' },
-                { opacity: 1, transform: 'translateY(0) scale(1)' }
-            ], {
-                duration: playlistItemDuration,
-                delay: Math.min(150, index * 16),
-                fill: 'forwards',
-                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
-            }));
+            requestAnimationFrame(() => {
+                if (!playlistArea.classList.contains('is-visible')) return;
 
-            playlistAnimations = [cardAnim, contentAnim, ...itemAnimations].filter(Boolean);
-            scrollPlaylistToCurrentTrack();
+                const listRect = playlistList.getBoundingClientRect();
+                const currentItemPosition = playlistItems.findIndex(
+                    (item) => Number(item.dataset.index) === currentLyricIndex
+                );
+                const itemAnimationTargets = getPlaylistViewportItems(
+                    playlistItems,
+                    listRect,
+                    currentItemPosition
+                );
+                const itemAnimations = itemAnimationTargets.map((item, index) => safeAnimate(item, [
+                    { opacity: 0, transform: 'translateY(7px) scale(0.992)' },
+                    { opacity: 1, transform: 'translateY(0) scale(1)' }
+                ], {
+                    duration: playlistItemDuration,
+                    delay: Math.min(150, index * 16),
+                    fill: 'forwards',
+                    easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+                }));
+
+                playlistAnimations.push(...itemAnimations);
+            });
         };
 
         const morphResultOut = () => {
@@ -1743,6 +1755,7 @@ startCriticalAssetGate({
             if (isDrawing || currentLyricIndex === -1) return;
             playlist.ensureRendered();
             playlist.setActive(currentLyricIndex);
+            scrollPlaylistToCurrentTrack('auto');
             setFloatingButtonsVisible(false);
             animatePlaylistIn();
         });

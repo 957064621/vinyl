@@ -1,9 +1,57 @@
 import { getTrackKey } from '../data.js';
 
+export function createPlaylistSelectionGuard({ isLocked, onSelect }) {
+  return (index) => {
+    if (isLocked()) return;
+    return onSelect(index);
+  };
+}
+
+export function getPlaylistViewportItems(items, viewportRect, anchorIndex = -1) {
+  const visibleItems = [];
+
+  if (Number.isInteger(anchorIndex) && anchorIndex >= 0 && anchorIndex < items.length) {
+    for (let index = anchorIndex; index >= 0; index -= 1) {
+      const item = items[index];
+      const itemRect = item.getBoundingClientRect();
+      if (itemRect.bottom < viewportRect.top) break;
+      if (itemRect.top <= viewportRect.bottom) visibleItems.unshift(item);
+    }
+
+    for (let index = anchorIndex + 1; index < items.length; index += 1) {
+      const item = items[index];
+      const itemRect = item.getBoundingClientRect();
+      if (itemRect.top > viewportRect.bottom) break;
+      if (itemRect.bottom >= viewportRect.top) visibleItems.push(item);
+    }
+
+    return visibleItems;
+  }
+
+  for (const item of items) {
+    const itemRect = item.getBoundingClientRect();
+    if (itemRect.bottom < viewportRect.top) continue;
+    if (itemRect.top > viewportRect.bottom) break;
+    visibleItems.push(item);
+  }
+
+  return visibleItems;
+}
+
 export function createPlaylist({ listEl, releases, tracks, getCoverCandidates, onSelect }) {
-  const trackIndexByKey = new Map(
-    tracks.map((track, index) => [getTrackKey(track.album, track), index])
+  const isTrackRecord = (track, requireAlbum = false) => Boolean(
+    track
+    && typeof track === 'object'
+    && typeof track.title === 'string'
+    && track.title.trim()
+    && (track.trackNumber == null || Number.isInteger(track.trackNumber))
+    && (!requireAlbum || (typeof track.album === 'string' && track.album.trim()))
   );
+  const trackIndexByKey = new Map();
+  tracks.forEach((track, index) => {
+    if (!isTrackRecord(track, true)) return;
+    trackIndexByKey.set(getTrackKey(track.album, track), index);
+  });
   let rendered = false;
   let activeIndex = -1;
 
@@ -14,6 +62,19 @@ export function createPlaylist({ listEl, releases, tracks, getCoverCandidates, o
     const fragment = document.createDocumentFragment();
 
     for (const release of releases) {
+      if (!release || typeof release !== 'object' || typeof release.title !== 'string') continue;
+
+      const releaseTracks = Array.isArray(release.tracks) ? release.tracks : [];
+      const matchedTracks = [];
+      releaseTracks.forEach((track, releaseTrackIndex) => {
+        if (!isTrackRecord(track)) return;
+
+        const index = trackIndexByKey.get(getTrackKey(release.title, track));
+        if (!Number.isInteger(index)) return;
+        matchedTracks.push({ index, releaseTrackIndex, track });
+      });
+      if (matchedTracks.length === 0) continue;
+
       const group = document.createElement('section');
       group.className = 'playlist-group';
       group.dataset.release = release.title;
@@ -46,8 +107,7 @@ export function createPlaylist({ listEl, releases, tracks, getCoverCandidates, o
       heading.append(title);
       group.append(heading);
 
-      for (const track of release.tracks) {
-        const index = trackIndexByKey.get(getTrackKey(release.title, track));
+      for (const { index, releaseTrackIndex, track } of matchedTracks) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'playlist-item';
@@ -55,7 +115,10 @@ export function createPlaylist({ listEl, releases, tracks, getCoverCandidates, o
 
         const trackNumber = document.createElement('span');
         trackNumber.className = 'playlist-track-no playlist-index';
-        trackNumber.textContent = String(track.trackNumber).padStart(2, '0');
+        const displayTrackNumber = Number.isInteger(track.trackNumber)
+          ? track.trackNumber
+          : releaseTrackIndex + 1;
+        trackNumber.textContent = String(displayTrackNumber).padStart(2, '0');
 
         const trackName = document.createElement('span');
         trackName.className = 'playlist-track-name playlist-song';
@@ -75,8 +138,15 @@ export function createPlaylist({ listEl, releases, tracks, getCoverCandidates, o
   const setActive = (index) => {
     if (!rendered || index === activeIndex) return;
 
-    listEl.querySelector(`.playlist-item[data-index="${activeIndex}"]`)?.classList.remove('is-current');
-    listEl.querySelector(`.playlist-item[data-index="${index}"]`)?.classList.add('is-current');
+    const previousItem = listEl.querySelector(`.playlist-item[data-index="${activeIndex}"]`);
+    previousItem?.classList.remove('is-current');
+    previousItem?.removeAttribute('aria-current');
+    previousItem?.closest('.playlist-group')?.classList.remove('is-current-group');
+
+    const nextItem = listEl.querySelector(`.playlist-item[data-index="${index}"]`);
+    nextItem?.classList.add('is-current');
+    nextItem?.setAttribute('aria-current', 'true');
+    nextItem?.closest('.playlist-group')?.classList.add('is-current-group');
     activeIndex = index;
   };
 
