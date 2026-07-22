@@ -88,16 +88,25 @@ export async function loadCriticalImages(manifest, {
     throw new TypeError('concurrency must be a positive integer');
   }
   const results = new Array(manifest.length);
-  const failures = [];
+  const failures = new Array(manifest.length);
+  const progressErrors = [];
   let nextIndex = 0;
   let completed = 0;
+
+  const emitProgress = async (event) => {
+    try {
+      await onProgress(event);
+    } catch (error) {
+      progressErrors.push(error);
+    }
+  };
 
   const worker = async () => {
     while (nextIndex < manifest.length) {
       const index = nextIndex;
       nextIndex += 1;
       const entry = manifest[index];
-      onProgress({ id: entry.id, status: 'loading', completed, total: manifest.length });
+      await emitProgress({ id: entry.id, status: 'loading', completed, total: manifest.length });
       try {
         results[index] = await loadSlot(entry, {
           selectCandidates,
@@ -105,25 +114,30 @@ export async function loadCriticalImages(manifest, {
           retries,
           retryDelayMs
         });
-        completed += 1;
-        onProgress({
-          id: entry.id,
-          status: 'ready',
-          completed,
-          total: manifest.length,
-          src: results[index].src,
-          result: results[index]
-        });
       } catch (error) {
-        failures.push({ id: entry.id, error, attempts: error.attempts });
-        onProgress({ id: entry.id, status: 'failed', completed, total: manifest.length });
+        failures[index] = { id: entry.id, error, attempts: error.attempts };
+        await emitProgress({ id: entry.id, status: 'failed', completed, total: manifest.length });
+        continue;
       }
+      completed += 1;
+      await emitProgress({
+        id: entry.id,
+        status: 'ready',
+        completed,
+        total: manifest.length,
+        src: results[index].src,
+        result: results[index]
+      });
     }
   };
 
   await Promise.all(
     Array.from({ length: Math.min(concurrency, manifest.length) }, () => worker())
   );
-  if (failures.length > 0) throw new CriticalAssetError(failures);
+  const orderedFailures = failures.filter(Boolean);
+  if (orderedFailures.length > 0) throw new CriticalAssetError(orderedFailures);
+  if (progressErrors.length > 0) {
+    throw new AggregateError(progressErrors, 'Progress observer failed');
+  }
   return results;
 }
