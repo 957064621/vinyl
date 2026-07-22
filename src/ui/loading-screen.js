@@ -88,6 +88,7 @@ export function createLoadingScreen(documentRef = document) {
         view.reset();
         onRetry();
       };
+      retry.focus();
     },
     async playReadySequence(profile) {
       root.dataset.state = 'ready';

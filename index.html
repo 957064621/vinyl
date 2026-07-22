@@ -23,12 +23,16 @@
         .loading-screen {
             position: fixed;
             inset: 0;
-            z-index: 30;
+            z-index: 1000;
             display: flex;
             align-items: center;
             justify-content: center;
             overflow: hidden;
             background: rgba(7, 10, 18, 0.96);
+        }
+
+        .app-root {
+            display: contents;
         }
 
         .loading-intake {
@@ -66,6 +70,7 @@
         </div>
     </div>
 
+    <div class="app-root" id="appRoot" inert aria-hidden="true">
     <main class="app-shell" id="appShell">
         <div class="header">
             <h1>歌词抽取机</h1>
@@ -166,6 +171,7 @@
 
     <a class="footer-link" id="contactLink">联系我</a>
     <div class="toast" id="copyToast">微信号 Michael_Yuuu 已复制</div>
+    </div>
 
     <script type="module" src="./src/main.js"></script>
 </body>

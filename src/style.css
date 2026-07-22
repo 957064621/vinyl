@@ -174,10 +174,14 @@
             background-color: #060910;
         }
 
+        .app-root {
+            display: contents;
+        }
+
         .loading-screen {
             position: fixed;
             inset: 0;
-            z-index: 30;
+            z-index: 1000;
             display: flex;
             align-items: center;
             justify-content: center;

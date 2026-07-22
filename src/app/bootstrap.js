@@ -12,6 +12,7 @@ export function startCriticalAssetGate({
   load = loadCriticalImages
 } = {}) {
   const view = createLoadingScreen(documentRef);
+  const appRoot = documentRef.querySelector('#appRoot');
   const appShell = documentRef.querySelector('#appShell');
   let resolveReady;
   const ready = new Promise((resolve) => {
@@ -28,6 +29,8 @@ export function startCriticalAssetGate({
         onProgress: (event) => view.setProgress(event)
       });
       await view.playReadySequence(motionProfile);
+      appRoot.removeAttribute('inert');
+      appRoot.removeAttribute('aria-hidden');
       appShell.classList.add('is-ready');
       await view.exit(motionProfile);
       resolveReady(results);
