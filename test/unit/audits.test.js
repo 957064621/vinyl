@@ -10,8 +10,18 @@ test('builds deterministic audit documents from library data', () => {
     lyricsPool,
     updatedAt: '2026-07-18'
   });
+  const summary = `| 项目 | 数量 |
+| --- | ---: |
+| 曲库歌曲条目 | 142 |
+| 唯一音频标题 | 131 |
+| 已配置 OSS 链接 | 142 |
+| 待补 OSS | 0 |
+| 待补歌词 | 0 |
+| 待补封面 OSS | 22 |`;
 
   assert.match(audioManifest, /更新时间：2026-07-18/);
+  assert.ok(audioManifest.includes(summary));
+  assert.ok(libraryAudit.includes(summary));
   assert.match(audioManifest, /\| 曲库歌曲条目 \| 142 \|/);
   assert.match(audioManifest, /\| 唯一音频标题 \| 131 \|/);
   assert.match(audioManifest, /\| 媚人 \| 万兽之王演唱会录音 \| 已填 6 行 \| OSS \|/);

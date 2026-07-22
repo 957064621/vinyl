@@ -44,20 +44,22 @@ export const buildAuditDocuments = ({ releases, lyricsPool, updatedAt }) => {
     `| ${md(track.title)} | ${md(track.album)} | ${md(track.musicOssUrl || '待补 OSS')} | ${md(track.sourceArtworkUrl || track.coverOssUrl || '待补封面')} |`
   )).join('\n') || '| 无 |  |  |  |';
 
-  const audioManifest = `# Vinyl 音频清单
-
-更新时间：${updatedAt}
-
-## 总览
-
-| 项目 | 数量 |
+  const summary = `| 项目 | 数量 |
 | --- | ---: |
 | 曲库歌曲条目 | ${lyricsPool.length} |
 | 唯一音频标题 | ${uniqueTracks.length} |
 | 已配置 OSS 链接 | ${lyricsPool.filter((track) => Boolean(track.musicOssUrl)).length} |
 | 待补 OSS | ${missingMusic.length} |
 | 待补歌词 | ${missingLyrics.length} |
-| 待补封面 OSS | ${missingCoverOss.length} |
+| 待补封面 OSS | ${missingCoverOss.length} |`;
+
+  const audioManifest = `# Vinyl 音频清单
+
+更新时间：${updatedAt}
+
+## 总览
+
+${summary}
 
 ## 当前曲库
 
@@ -84,15 +86,7 @@ ${missingLyricRows}
 
 ## 总览
 
-| 项目 | 数量 |
-| --- | ---: |
-| 发行组 | ${releases.length} |
-| 已入库歌曲条目 | ${lyricsPool.length} |
-| 唯一音频标题 | ${uniqueTracks.length} |
-| 缺高潮歌词 | ${missingLyrics.length} |
-| 待补 OSS | ${missingMusic.length} |
-| 已配置 OSS | ${lyricsPool.filter((track) => Boolean(track.musicOssUrl)).length} |
-| 缺封面 OSS | ${missingCoverOss.length} |
+${summary}
 
 ## 发行组统计
 
