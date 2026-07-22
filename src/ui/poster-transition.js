@@ -132,7 +132,7 @@ export function createPosterTransition({
 
   const stabilize = (item) => {
     if (!item) return;
-    item.slot.classList.remove('is-revealing', 'is-scattering');
+    item.slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
     item.slot.classList.add('is-stable');
     setActive(item, true);
   };
@@ -175,25 +175,32 @@ export function createPosterTransition({
     ]);
     if (!isCurrent(token) || gathered === false) return;
 
-    if (activeItem) {
-      const outgoing = activeItem;
-      outgoing.slot.classList.remove('is-stable');
-      outgoing.slot.classList.add('is-scattering');
-      const [, scattered] = await Promise.all([
-        Promise.resolve(particleField.scatter(outgoing.slot.getBoundingClientRect())),
-        sleep(timing.scatter, token)
-      ]);
-      if (!isCurrent(token) || scattered === false) return;
+    const outgoing = activeItem;
+    if (outgoing) {
       setActive(outgoing, false);
-      outgoing.slot.classList.remove('is-scattering');
+      outgoing.slot.classList.remove('is-stable');
+      outgoing.slot.classList.add('is-outgoing', 'is-scattering');
     }
 
     activeItem = item;
     completedReadableHold = 0;
+    root.style.setProperty('--slit-duration', String(timing.reveal) + 'ms');
     slit.classList.add('is-lit');
     setActive(activeItem, true);
     activeItem.slot.classList.add('is-revealing');
-    if (!await sleep(timing.reveal, token)) return;
+    const scatterWork = outgoing
+      ? Promise.all([
+          Promise.resolve(particleField.scatter(outgoing.slot.getBoundingClientRect())),
+          sleep(timing.scatter, token)
+        ])
+      : Promise.resolve([true, true]);
+    const revealWork = sleep(timing.reveal, token);
+    const [scatterResult, revealed] = await Promise.all([scatterWork, revealWork]);
+    const scattered = outgoing ? scatterResult[1] : true;
+    if (!isCurrent(token) || scattered === false || revealed === false) return;
+    if (outgoing) {
+      outgoing.slot.classList.remove('is-outgoing', 'is-scattering');
+    }
     activeItem.slot.classList.remove('is-revealing');
     activeItem.slot.classList.add('is-stable');
     slit.classList.remove('is-lit');
@@ -238,6 +245,10 @@ export function createPosterTransition({
     abortController = new AbortController();
     settleParticleField();
     slit.classList.remove('is-lit');
+    root.style.removeProperty('--slit-duration');
+    for (const slot of slots()) {
+      slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
+    }
     stabilize(activeItem);
     try {
       onError(error);
@@ -296,7 +307,7 @@ export function createPosterTransition({
 
   const clearSlotState = () => {
     for (const slot of slots()) {
-      slot.classList.remove('is-active', 'is-revealing', 'is-scattering', 'is-stable');
+      slot.classList.remove('is-active', 'is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
       delete slot.dataset.transitionOrder;
       delete slot.dataset.slitDirection;
       slot.style.removeProperty('--poster-reveal-ms');
@@ -319,11 +330,17 @@ export function createPosterTransition({
     queue = [];
     slit.classList.remove('is-lit');
     delete slit.dataset.direction;
+    root.style.removeProperty('--slit-duration');
     root.classList.remove('is-final-exposure');
     delete root.dataset.transitionSettled;
     settleParticleField();
 
-    if (preserveActive) stabilize(activeItem);
+    if (preserveActive) {
+      for (const slot of slots()) {
+        slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
+      }
+      stabilize(activeItem);
+    }
     else clearSlotState();
 
     for (const resolve of idleWaiters) resolve();
@@ -344,10 +361,11 @@ export function createPosterTransition({
 
     slit.classList.remove('is-lit');
     delete slit.dataset.direction;
+    root.style.removeProperty('--slit-duration');
     root.classList.remove('is-final-exposure');
     delete root.dataset.transitionSettled;
     for (const slot of slots()) {
-      slot.classList.remove('is-revealing', 'is-scattering');
+      slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
       if (activeItem?.slot === slot) slot.classList.add('is-stable');
     }
     settleParticleField();

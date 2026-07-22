@@ -180,6 +180,7 @@
 
         .loading-screen {
             --loading-progress: 0;
+            --slit-duration: 180ms;
             box-sizing: border-box;
             position: fixed;
             inset: 0;
@@ -192,7 +193,7 @@
             overflow: hidden;
             background: #070a12;
             opacity: 1;
-            transition: opacity 480ms var(--hero-ease);
+            transition: opacity 480ms cubic-bezier(0.22, 1, 0.36, 1);
         }
 
         .loading-screen.is-exiting {
@@ -277,6 +278,7 @@
         }
 
         .loading-frame.is-active,
+        .loading-frame.is-outgoing,
         .loading-frame.is-failed {
             opacity: 1;
             visibility: visible;
@@ -311,8 +313,8 @@
             clip-path: polygon(49.8% 0, 50.2% 0, 50.2% 100%, 49.8% 100%);
             transition:
                 opacity var(--poster-reveal-ms, 180ms) cubic-bezier(0.22, 1, 0.36, 1),
-                transform var(--poster-reveal-ms, 180ms) var(--hero-ease),
-                clip-path var(--poster-reveal-ms, 180ms) var(--hero-ease);
+                transform var(--poster-reveal-ms, 180ms) cubic-bezier(0.22, 1, 0.36, 1),
+                clip-path var(--poster-reveal-ms, 180ms) cubic-bezier(0.22, 1, 0.36, 1);
         }
 
         .loading-frame.is-active .loading-image {
@@ -378,18 +380,15 @@
         }
 
         .loading-light-slit.is-lit[data-direction="ltr"] {
-            animation: loading-slit-ltr 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+            animation: loading-slit-ltr var(--slit-duration, 180ms) cubic-bezier(0.22, 1, 0.36, 1) both;
         }
 
         .loading-light-slit.is-lit[data-direction="rtl"] {
-            animation: loading-slit-rtl 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+            animation: loading-slit-rtl var(--slit-duration, 180ms) cubic-bezier(0.22, 1, 0.36, 1) both;
         }
 
         .loading-screen.is-final-exposure .loading-light-slit {
-            opacity: 0.94;
-            transform: translate(-50%, -50%) scaleX(1);
-            transition: opacity 80ms cubic-bezier(0.22, 1, 0.36, 1), transform 360ms var(--hero-ease);
-            animation: none;
+            animation: loading-final-exposure 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
         }
 
         .loading-progress-rail {
@@ -408,7 +407,7 @@
             width: calc(var(--loading-progress) * 20%);
             height: 100%;
             background: #edf7ff;
-            transition: width 180ms var(--hero-ease);
+            transition: width 180ms cubic-bezier(0.22, 1, 0.36, 1);
         }
 
         .loading-status {
@@ -424,7 +423,7 @@
             font-size: 12px;
             line-height: 1.5;
             letter-spacing: 0;
-            transition: opacity 0.24s ease;
+            transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1);
         }
 
         .loading-screen[data-state="error"] .loading-copy {
@@ -486,13 +485,13 @@
                 transform: translate(-150%, -50%) scaleX(0.004);
             }
             12% {
-                opacity: 0.16;
+                opacity: 0.12;
             }
             48% {
-                opacity: 0.92;
+                opacity: 0.78;
             }
             82% {
-                opacity: 0.24;
+                opacity: 0.18;
             }
             100% {
                 opacity: 0;
@@ -506,17 +505,36 @@
                 transform: translate(50%, -50%) scaleX(0.004);
             }
             12% {
-                opacity: 0.16;
+                opacity: 0.12;
             }
             48% {
-                opacity: 0.92;
+                opacity: 0.78;
             }
             82% {
-                opacity: 0.24;
+                opacity: 0.18;
             }
             100% {
                 opacity: 0;
                 transform: translate(-150%, -50%) scaleX(0.004);
+            }
+        }
+
+        @keyframes loading-final-exposure {
+            0% {
+                opacity: 0;
+                transform: translate(-50%, -50%) scaleX(0.004);
+            }
+            38% {
+                opacity: 0.72;
+                transform: translate(-50%, -50%) scaleX(1);
+            }
+            72% {
+                opacity: 0.36;
+                transform: translate(-50%, -50%) scaleX(1);
+            }
+            100% {
+                opacity: 0.08;
+                transform: translate(-50%, -50%) scaleX(1);
             }
         }
 

@@ -324,6 +324,47 @@ test('finish during a pre-classified normal hold waits its remainder before expo
   await finishing;
 });
 
+test('animated transitions overlap outgoing scatter with incoming reveal', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, particleCalls, root, slots } = makeFixture({ scheduler });
+  controller.enqueue(slots[0]);
+  controller.enqueue(slots[1]);
+  await flush();
+
+  scheduler.releaseNext();
+  await flush();
+  scheduler.releaseNext();
+  await flush();
+  scheduler.releaseNext();
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+
+  scheduler.releaseNext();
+  await flush();
+
+  const outgoing = slots[0];
+  const incoming = slots[1];
+  assert.equal(outgoing.classList.contains('is-outgoing'), true);
+  assert.equal(outgoing.classList.contains('is-active'), false);
+  assert.equal(outgoing.querySelector('img').getAttribute('aria-hidden'), 'true');
+  assert.equal(incoming.classList.contains('is-active'), true);
+  assert.equal(incoming.classList.contains('is-revealing'), true);
+  assert.equal(root.querySelectorAll('.is-active').length, 1);
+  assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 2);
+  assert.equal(root.style.getPropertyValue('--slit-duration'), `${POSTER_TIMING.normal.reveal}ms`);
+  assert.ok(particleCalls.some(([name]) => name === 'scatter'));
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.scatter, POSTER_TIMING.normal.reveal]);
+
+  while (controller.getState().processing) {
+    scheduler.releaseNext();
+    await flush();
+  }
+  await controller.waitForIdle();
+  assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
+  assert.equal(root.querySelectorAll('.is-active').length, 1);
+  assert.strictEqual(root.querySelector('.is-active'), incoming);
+});
+
 test('switching to reduce during the final hold remainder settles finish immediately', async () => {
   const scheduler = makeManualScheduler();
   const { controller, root, slots } = makeFixture({ scheduler });
@@ -468,6 +509,9 @@ test('reset aborts an old finish exposure without settling the new run', async (
   }
   assert.equal(root.classList.contains('is-final-exposure'), true);
 
+  slots[0].classList.add('is-outgoing');
+  root.style.setProperty('--slit-duration', '180ms');
+
   controller.reset();
   controller.enqueue(slots[1]);
   await oldFinish;
@@ -475,6 +519,8 @@ test('reset aborts an old finish exposure without settling the new run', async (
 
   assert.equal(root.classList.contains('is-final-exposure'), false);
   assert.equal(root.dataset.transitionSettled, undefined);
+  assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
+  assert.equal(root.style.getPropertyValue('--slit-duration'), '');
   assert.equal(controller.getState().activeId, null);
   while (scheduler.pending) {
     scheduler.releaseNext();
@@ -486,13 +532,16 @@ test('reset aborts an old finish exposure without settling the new run', async (
 
 test('freeze aborts queued work but keeps the current poster active and stable', async () => {
   const scheduler = makeManualScheduler();
-  const { controller, slit, slots } = makeFixture({ scheduler });
+  const { controller, root, slit, slots } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
   controller.enqueue(slots[1]);
   await flush();
   scheduler.releaseNext();
   await flush();
   assert.equal(slots[0].classList.contains('is-active'), true);
+
+  slots[1].classList.add('is-outgoing');
+  root.style.setProperty('--slit-duration', '180ms');
 
   controller.freeze();
 
@@ -507,8 +556,10 @@ test('freeze aborts queued work but keeps the current poster active and stable',
   assert.equal(slots[0].classList.contains('is-active'), true);
   assert.equal(slots[0].classList.contains('is-stable'), true);
   assert.equal(slots[0].classList.contains('is-scattering'), false);
+  assert.equal(slots[1].classList.contains('is-outgoing'), false);
   assert.equal(slots[1].classList.contains('is-active'), false);
   assert.equal(slit.classList.contains('is-lit'), false);
+  assert.equal(root.style.getPropertyValue('--slit-duration'), '');
   assert.equal(controller.enqueue(slots[2]), false);
 });
 
@@ -710,10 +761,14 @@ test('setProfile forwards valid changes and destroy is idempotent and terminal',
   const waitForIdle = controller.waitForIdle;
   await waitForIdle();
 
+  slots[1].classList.add('is-outgoing');
+  root.style.setProperty('--slit-duration', '180ms');
+
   controller.destroy();
   controller.destroy();
   assert.equal(controller.enqueue(slots[1]), false);
-  assert.equal(root.querySelectorAll('.is-active, .is-revealing, .is-scattering, .is-stable').length, 0);
+  assert.equal(root.querySelectorAll('.is-active, .is-outgoing, .is-revealing, .is-scattering, .is-stable').length, 0);
+  assert.equal(root.style.getPropertyValue('--slit-duration'), '');
   assert.equal(images.every((image) => image.getAttribute('aria-hidden') === 'true'), true);
   assert.deepEqual(controller.getState(), {
     profile: 'compact', queued: 0, activeId: null, processing: false, sealed: false, destroyed: true

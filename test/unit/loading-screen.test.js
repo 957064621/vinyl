@@ -573,7 +573,7 @@ test('application markup starts as one inert root outside the loading screen', (
   ]);
   assert.deepEqual(slots.map((slot) => slot.textContent.trim()), ['AR-01', 'AR-02', 'AR-03', 'AR-04', 'AR-05']);
   assert.ok(slots.every((slot) => slot.querySelector('figcaption').getAttribute('aria-hidden') === 'true'));
-  assert.equal(loadingScreen.textContent.includes('LIGHT ARCHIVE / PROJECTION'), false);
+  assert.doesNotMatch(loadingScreen.textContent, /LIGHT ARCHIVE|PROJECTION/);
   assert.equal(loadingScreen.querySelectorAll('canvas#loadingParticles').length, 1);
   assert.equal(loadingScreen.querySelectorAll('div#loadingLightSlit').length, 1);
   assert.equal(loadingScreen.querySelectorAll('button').length, 1);
@@ -602,14 +602,27 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-light-slit\s*\{[^}]*z-index:\s*4/s);
   assert.match(loadingBlock, /\.loading-controls\s*\{[^}]*z-index:\s*5/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*object-fit:\s*contain/s);
+  assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*transition:\s*opacity 480ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
   assert.match(loadingBlock, /\.loading-frame\s*\{[^}]*visibility:\s*hidden/s);
-  assert.match(loadingBlock, /\.loading-frame\.is-active,\s*\.loading-frame\.is-failed\s*\{[^}]*visibility:\s*visible/s);
+  assert.match(loadingBlock, /\.loading-frame\.is-active,\s*\.loading-frame\.is-outgoing,\s*\.loading-frame\.is-failed\s*\{[^}]*visibility:\s*visible/s);
   assert.doesNotMatch(loadingBlock, /\.loading-frame\.is-active figcaption/);
   assert.match(loadingBlock, /\.loading-frame\.is-failed figcaption\s*\{[^}]*opacity:\s*1/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-  assert.match(loadingBlock, /\.loading-light-slit\.is-lit\[data-direction="ltr"\]\s*\{[^}]*animation:\s*loading-slit-ltr 180ms cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
-  assert.match(loadingBlock, /@keyframes loading-slit-ltr\s*\{[\s\S]*?12%\s*\{[^}]*opacity:\s*0\.16[\s\S]*?48%\s*\{[^}]*opacity:\s*0\.92[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-reveal-ms, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*clip-path var\(--poster-reveal-ms, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.match(loadingBlock, /--slit-duration:\s*180ms/);
+  assert.match(loadingBlock, /\.loading-light-slit\.is-lit\[data-direction="ltr"\]\s*\{[^}]*animation:\s*loading-slit-ltr var\(--slit-duration, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
+  assert.match(loadingBlock, /@keyframes loading-slit-ltr\s*\{[\s\S]*?12%\s*\{[^}]*opacity:\s*0\.12[\s\S]*?48%\s*\{[^}]*opacity:\s*0\.78[\s\S]*?82%\s*\{[^}]*opacity:\s*0\.18[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
+  assert.match(loadingBlock, /\.loading-screen\.is-final-exposure \.loading-light-slit\s*\{[^}]*animation:\s*loading-final-exposure 520ms cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
+  assert.match(loadingBlock, /@keyframes loading-final-exposure\s*\{[\s\S]*?0%\s*\{[^}]*opacity:\s*0[\s\S]*?38%\s*\{[^}]*opacity:\s*0\.72[\s\S]*?72%\s*\{[^}]*opacity:\s*0\.36[\s\S]*?100%\s*\{[^}]*opacity:\s*0\.08/s);
+  assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.deepEqual(
+    loadingBlock.match(/transition:[^;]*linear;/g),
+    ['transition: opacity 120ms linear;']
+  );
   assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image)[^{]*\{[^}]*(?:filter|box-shadow)\s*:/s);
+  assert.doesNotMatch(loadingBlock, /letter-spacing:\s*-/);
   assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
   assert.match(loadingBlock, /data-motion-profile="compact"[^{]*\{[^}]*perspective:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-particles[\s\S]*display:\s*none/s);
