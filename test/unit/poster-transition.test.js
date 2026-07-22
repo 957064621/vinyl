@@ -344,6 +344,29 @@ test('switching to reduce during the final hold remainder settles finish immedia
   assert.equal(root.dataset.transitionSettled, 'true');
 });
 
+test('switching to reduce after finish preserves the settled presentation and promise', async () => {
+  const { controller, particleCalls, root, slots } = makeFixture();
+  controller.enqueue(slots[0]);
+  const finishing = controller.finish();
+  await finishing;
+  const activeSlot = root.querySelector('.is-active');
+  const callsBeforeProfileChange = particleCalls.length;
+
+  assert.equal(root.classList.contains('is-final-exposure'), true);
+  assert.equal(root.dataset.transitionSettled, 'true');
+  assert.strictEqual(activeSlot, slots[0]);
+
+  controller.setProfile('reduce');
+
+  assert.equal(controller.getState().profile, 'reduce');
+  assert.equal(root.dataset.motionProfile, 'reduce');
+  assert.deepEqual(particleCalls.slice(callsBeforeProfileChange), [['profile', 'reduce']]);
+  assert.equal(root.classList.contains('is-final-exposure'), true);
+  assert.equal(root.dataset.transitionSettled, 'true');
+  assert.strictEqual(root.querySelector('.is-active'), activeSlot);
+  assert.strictEqual(controller.finish(), finishing);
+});
+
 test('enqueue defers collaborators to one microtask and stale reservations cannot start work', async () => {
   const microtasks = [];
   const scheduleMicrotask = (callback) => microtasks.push(callback);

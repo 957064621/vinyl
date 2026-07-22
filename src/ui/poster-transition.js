@@ -447,10 +447,11 @@ export function createPosterTransition({
       assertProfile(nextProfile);
       if (destroyed) return;
       const switchingToReduce = nextProfile === 'reduce' && currentProfile !== 'reduce';
+      const alreadySettled = root.dataset.transitionSettled === 'true';
       currentProfile = nextProfile;
       root.dataset.motionProfile = nextProfile;
       particleField.setProfile(nextProfile);
-      if (switchingToReduce) switchRunningWorkToReduce();
+      if (switchingToReduce && !alreadySettled) switchRunningWorkToReduce();
     },
 
     destroy() {
