@@ -6,9 +6,20 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "audit": "node scripts/generate-audits.mjs",
+    "audit:check": "node scripts/generate-audits.mjs --check",
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:build": "node --test test/build/*.test.js",
+    "test:e2e": "playwright test",
+    "test": "npm run test:unit",
+    "verify": "npm run test:unit && npm run audit:check && npm run build && npm run test:build"
   },
   "devDependencies": {
-    "vite": "^8.0.16"
+    "@playwright/test": "^1.61.1",
+    "ali-oss": "^6.23.0",
+    "jsdom": "^26.1.0",
+    "vite": "^8.0.16",
+    "vite-plugin-singlefile": "^2.3.3"
   }
 }
