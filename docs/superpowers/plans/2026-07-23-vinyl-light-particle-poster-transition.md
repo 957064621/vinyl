@@ -2029,6 +2029,268 @@ Expected: `git diff --check` and `git diff --cached --check` print nothing. The 
 
 ---
 
+### Task 6: Refine Visual 6 timing, sliced light decay, and poster continuity
+
+**Files:**
+- Modify: `src/ui/poster-transition.js`
+- Modify: `test/unit/poster-transition.test.js`
+- Modify: `src/style.css`
+- Modify: `test/unit/loading-screen.test.js`
+- Modify: `test/e2e/loading-poster-transition.spec.js`
+
+**Interfaces:**
+- Preserves `createPosterTransition(...)`, its returned controller API, FIFO order, decoded-node ownership, `is-active` semantics, and Task 4's visual-only `is-outgoing` layer.
+- Changes `POSTER_TIMING` to normal `{ gather: 180, scatter: 260, reveal: 320, hold: 300 }`, fast `{ gather: 80, scatter: 150, reveal: 180, hold: 180 }`, `finalHold: 560`, `finalExposure: 640`, and unchanged `reduceFade: 120`.
+- Adds only the transient CSS custom property `--poster-scatter-ms` to an existing outgoing slot. It adds no DOM, image, request, visible copy, or production dependency.
+- Reuses the existing `.loading-light-core`, `.loading-light-edge.is-warm`, and `.loading-light-edge.is-cool` spans as the three light-curtain slices.
+
+- [ ] **Step 1: Write failing timing, decay, continuity, and scope tests**
+
+Replace the existing `timing tables are deeply frozen and preserve exact phase totals` test in `test/unit/poster-transition.test.js` with:
+
+```js
+test('timing tables are deeply frozen and preserve exact Visual 6 wall times', () => {
+  assert.deepEqual(POSTER_TIMING, {
+    normal: { gather: 180, scatter: 260, reveal: 320, hold: 300 },
+    fast: { gather: 80, scatter: 150, reveal: 180, hold: 180 },
+    finalHold: 560,
+    finalExposure: 640,
+    reduceFade: 120
+  });
+  const wallTime = ({ gather, scatter, reveal, hold }) => (
+    gather + Math.max(scatter, reveal) + hold
+  );
+  assert.equal(wallTime(POSTER_TIMING.normal), 800);
+  assert.equal(wallTime(POSTER_TIMING.fast), 440);
+  assert.equal(Object.isFrozen(POSTER_TIMING), true);
+  assert.equal(Object.isFrozen(POSTER_TIMING.normal), true);
+  assert.equal(Object.isFrozen(POSTER_TIMING.fast), true);
+});
+```
+
+In the existing `animated transitions overlap outgoing scatter with incoming reveal` test, destructure `slit`, then add these assertions immediately after its current `scheduler.durations` overlap assertion:
+
+```js
+assert.equal(
+  outgoing.style.getPropertyValue('--poster-scatter-ms'),
+  `${POSTER_TIMING.normal.scatter}ms`
+);
+assert.equal(slit.classList.contains('is-lit'), true);
+
+scheduler.releaseNext();
+await flush();
+assert.equal(slit.classList.contains('is-lit'), true, 'light remains until the longer reveal decays');
+assert.equal(outgoing.classList.contains('is-outgoing'), true);
+
+scheduler.releaseNext();
+await flush();
+assert.equal(slit.classList.contains('is-lit'), false);
+assert.equal(outgoing.classList.contains('is-outgoing'), false);
+assert.equal(outgoing.style.getPropertyValue('--poster-scatter-ms'), '');
+```
+
+Replace that test's final `while (controller.getState().processing)` loop with one `scheduler.releaseNext()`, `await flush()`, and `await controller.waitForIdle()` to settle the pending hold. Extend the existing reset, freeze, animation-error cleanup, and destroy assertions to require `--poster-scatter-ms === ''` on every affected slot.
+
+In `test/unit/loading-screen.test.js`, replace the current slit and final-exposure keyframe assertions with:
+
+```js
+assert.match(loadingBlock, /--slit-duration:\s*320ms/);
+assert.match(loadingBlock, /--poster-scatter-ms/);
+assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+assert.match(loadingBlock, /\.loading-image\s*\{[^}]*clip-path var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+assert.match(loadingBlock, /\.loading-light-slit\.is-lit\[data-direction="ltr"\]\s*\{[^}]*animation:\s*loading-slit-ltr var\(--slit-duration, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
+assert.match(loadingBlock, /@keyframes loading-slit-ltr\s*\{[\s\S]*?0%\s*\{[^}]*opacity:\s*0[\s\S]*?16%\s*\{[^}]*opacity:\s*0\.10[\s\S]*?42%\s*\{[^}]*opacity:\s*0\.68[\s\S]*?64%\s*\{[^}]*opacity:\s*0\.34[\s\S]*?82%\s*\{[^}]*opacity:\s*0\.12[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
+assert.match(loadingBlock, /loading-curtain-core/);
+assert.match(loadingBlock, /loading-curtain-warm/);
+assert.match(loadingBlock, /loading-curtain-cool/);
+assert.match(loadingBlock, /@keyframes loading-final-exposure\s*\{[\s\S]*?0%\s*\{[^}]*opacity:\s*0[\s\S]*?34%\s*\{[^}]*opacity:\s*0\.68[\s\S]*?62%\s*\{[^}]*opacity:\s*0\.30[\s\S]*?84%\s*\{[^}]*opacity:\s*0\.10[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
+assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image|\.loading-light-slit)[^{]*\{[^}]*(?:filter|box-shadow|backdrop-filter)\s*:/s);
+```
+
+Replace, rather than retain, the four existing `180ms` poster/slit fallback assertions. Keep the existing checks for exactly five slots, zero eager images, one Canvas, one slit container, hidden normal captions, no visible English heading, no loading `url(...)`, and only the reduced-motion `opacity 120ms linear` exception.
+
+- [ ] **Step 2: Run the focused tests to prove the red state**
+
+Run:
+
+```bash
+node --test test/unit/poster-transition.test.js test/unit/loading-screen.test.js
+```
+
+Expected: FAIL because the current timing table still reports `160/160/180/300`, the slit peaks at `0.78`, the final exposure ends at `0.08`, the curtain-slice keyframes do not exist, and `--poster-scatter-ms` is not published or cleaned. The pre-existing Task 4 overlap, stale-token, retry, reduce, and accessibility tests remain in the run.
+
+- [ ] **Step 3: Implement the exact queue timing and cleanup contract**
+
+In `src/ui/poster-transition.js`, replace only `POSTER_TIMING` with:
+
+```js
+export const POSTER_TIMING = Object.freeze({
+  normal: Object.freeze({ gather: 180, scatter: 260, reveal: 320, hold: 300 }),
+  fast: Object.freeze({ gather: 80, scatter: 150, reveal: 180, hold: 180 }),
+  finalHold: 560,
+  finalExposure: 640,
+  reduceFade: 120
+});
+```
+
+At the start of the existing animated overlap, publish both durations before adding transition classes:
+
+```js
+if (outgoing) {
+  setActive(outgoing, false);
+  outgoing.slot.style.setProperty('--poster-scatter-ms', `${timing.scatter}ms`);
+  outgoing.slot.classList.remove('is-stable');
+  outgoing.slot.classList.add('is-outgoing', 'is-scattering');
+}
+
+activeItem = item;
+completedReadableHold = 0;
+root.style.setProperty('--slit-duration', `${timing.reveal}ms`);
+slit.classList.add('is-lit');
+setActive(activeItem, true);
+activeItem.slot.classList.add('is-revealing');
+```
+
+Keep scatter and reveal in the existing `Promise.all`. Because reveal is longer than scatter in both timing profiles, remove `is-lit`, `is-outgoing`, and `is-scattering` only after that `Promise.all` resolves. At the same settlement point remove `--poster-scatter-ms` from the outgoing slot. Add `slot.style.removeProperty('--poster-scatter-ms')` to `clearSlotState()`, `cancelWork(...)`, `switchRunningWorkToReduce()`, and `fail(...)`. Do not change `setActive`, queue order, image mounting, the reduce branch, or cancellation-token checks.
+
+- [ ] **Step 4: Implement the sliced light curtain and gentler poster planes**
+
+In the loading block of `src/style.css`:
+
+1. Change the root fallback to `--slit-duration: 320ms` and all poster reveal fallbacks to `320ms`.
+2. Add `.loading-frame.is-scattering .loading-image { transition-duration: var(--poster-scatter-ms, 260ms); }`.
+3. Change full outgoing transforms to at most `translate3d(2.4%, -0.6%, 0) rotateX(1.2deg) scale(0.992)` and its mirrored equivalent. Change compact outgoing transforms to `translate(14px, -2px) scale(0.992)` and its mirror.
+4. Keep the existing three slit spans and add these animation assignments; do not edit `index.html`:
+
+```css
+.loading-light-slit.is-lit .loading-light-core {
+    animation: loading-curtain-core var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.loading-light-slit.is-lit .loading-light-edge.is-warm {
+    animation: loading-curtain-warm var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.loading-light-slit.is-lit .loading-light-edge.is-cool {
+    animation: loading-curtain-cool var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+```
+
+Use this exact opacity envelope in both directional parent keyframes: `0: 0`, `16: 0.10`, `42: 0.68`, `64: 0.34`, `82: 0.12`, `100: 0`. Retain the existing directional start/end translations. Add:
+
+```css
+@keyframes loading-curtain-core {
+    0% { opacity: 0; transform: scaleX(0.08); }
+    42% { opacity: 1; transform: scaleX(1); }
+    64% { opacity: 0.46; transform: scaleX(0.72); }
+    100% { opacity: 0; transform: scaleX(0.18); }
+}
+
+@keyframes loading-curtain-warm {
+    0% { opacity: 0; transform: translateX(8%) scaleX(0.04); }
+    42% { opacity: 0.82; transform: translateX(0) scaleX(1); }
+    64% { opacity: 0.34; transform: translateX(-10%) scaleX(0.80); }
+    100% { opacity: 0; transform: translateX(-18%) scaleX(0.56); }
+}
+
+@keyframes loading-curtain-cool {
+    0% { opacity: 0; transform: translateX(-8%) scaleX(0.04); }
+    42% { opacity: 0.78; transform: translateX(0) scaleX(1); }
+    64% { opacity: 0.32; transform: translateX(10%) scaleX(0.80); }
+    100% { opacity: 0; transform: translateX(18%) scaleX(0.56); }
+}
+```
+
+Set `loading-final-exposure` to `640ms` and use exactly `0: 0`, `34: 0.68`, `62: 0.30`, `84: 0.10`, `100: 0`, with `scaleX(1)` from 34% through 100%. Do not add blur, `filter`, shadow animation, `backdrop-filter`, `will-change`, a DOM node, image source, visible caption, heading, subtitle, hint, or identifier.
+
+- [ ] **Step 5: Add browser sampling for single-poster visual continuity**
+
+In `test/e2e/loading-poster-transition.spec.js`, extend `window.__vinylLoadingProbe` with:
+
+```js
+continuityArmed: false,
+continuitySamples: 0,
+maxVisualLayers: 0,
+maxDominantPosters: 0,
+minCompositeOpacity: 1
+```
+
+Inside the existing `DOMContentLoaded` callback, start this sampler after `inspectActivePosters()` and `inspectCanvas()`:
+
+```js
+const samplePosterContinuity = () => {
+  const loading = document.querySelector('#loadingScreen');
+  if (!loading) return;
+  const visualFrames = [...loading.querySelectorAll('.loading-frame.is-active, .loading-frame.is-outgoing')];
+  probe.continuityArmed ||= Boolean(loading.querySelector('.loading-frame.is-stable'));
+
+  if (probe.continuityArmed && !loading.classList.contains('is-final-exposure')) {
+    const opacities = visualFrames.map((frame) => (
+      Number.parseFloat(getComputedStyle(frame.querySelector('.loading-image')).opacity) || 0
+    ));
+    probe.continuitySamples += 1;
+    probe.maxVisualLayers = Math.max(probe.maxVisualLayers, visualFrames.length);
+    probe.maxDominantPosters = Math.max(
+      probe.maxDominantPosters,
+      opacities.filter((opacity) => opacity > 0.55).length
+    );
+    probe.minCompositeOpacity = Math.min(
+      probe.minCompositeOpacity,
+      opacities.reduce((sum, opacity) => sum + opacity, 0)
+    );
+  }
+  requestAnimationFrame(samplePosterContinuity);
+};
+requestAnimationFrame(samplePosterContinuity);
+```
+
+Add these fields to `finalProbe`. For `desktop-chromium` and `mobile-chromium`, assert:
+
+```js
+expect(finalProbe.continuitySamples).toBeGreaterThan(3);
+expect(finalProbe.maxVisualLayers).toBeLessThanOrEqual(2);
+expect(finalProbe.maxDominantPosters).toBeLessThanOrEqual(1);
+expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.70);
+```
+
+Do not apply the composite-opacity assertion to `mobile-reduce`; retain its zero-frame, hidden-slit, and direct-fade assertions. Keep the existing exact five-request, concurrency-at-most-two, stopped-frame-loop, uncropped-poster, and effect-attributable `50 ms` long-task assertions unchanged.
+
+- [ ] **Step 6: Run focused unit and browser verification**
+
+Run:
+
+```bash
+node --test test/unit/poster-transition.test.js test/unit/loading-screen.test.js
+npx playwright test test/e2e/loading-poster-transition.spec.js
+```
+
+Expected: the focused unit command exits 0 with all tests PASS. Playwright reports `3 passed`: desktop and compact mobile sample no blank visual stage and at most one dominant cover; reduced motion requests no frame and shows no slit. All profiles still request exactly five routed covers with concurrency at most 2, and compact reports no effect-attributable long task over `50 ms`.
+
+- [ ] **Step 7: Run the complete gate and inspect all three screenshots**
+
+Run:
+
+```bash
+npm run verify && npm run test:e2e
+find test-results -name 'loading-*.png' -print
+git diff --check
+```
+
+Expected: both npm commands exit 0; Playwright reports all configured tests passing; `git diff --check` prints nothing. Exactly the existing five cover requests are observed. The three loading screenshots show one complete uncropped dominant poster, no card frame or added visible copy, and a restrained reduce presentation; browser sampling confirms particle scatter plus the sliced light curtain in full/compact and no particles or slit in reduce. Pixel-class traces contain no effect-attributable task over `50 ms`.
+
+- [ ] **Step 8: Commit only the Visual 6 implementation and tests**
+
+```bash
+git add src/ui/poster-transition.js test/unit/poster-transition.test.js src/style.css test/unit/loading-screen.test.js test/e2e/loading-poster-transition.spec.js
+git diff --cached --check
+git commit -m "refine: polish loading light curtain"
+```
+
+Expected: exactly those five files are staged. `index.html`, all five cover assets, `scripts/media/**`, generated screenshots/traces, and unrelated work remain unstaged; the commit succeeds with the stated message.
+
+---
+
 ## Completion Gate
 
-Implementation is complete only when all four task commits exist locally, `npm run verify && npm run test:e2e` exits 0, and the three browser screenshots have been visually inspected for a full uncropped poster, readable progress, loading-layer z-order above app overlays, and no incoherent overlap. Keep Task 8 remote OSS apply marked as a separate release gate before release, then continue with Task 9; leave the remaining Task 12 typography, player surface, overlays, and stylesheet split for its existing later work.
+Implementation is complete only when all six task commits exist locally, `npm run verify && npm run test:e2e` exits 0, and the three browser screenshots have been visually inspected for a full uncropped poster, readable progress, loading-layer z-order above app overlays, one dominant poster, progressive post-peak light decay, and no incoherent overlap. Keep Task 8 remote OSS apply marked as a separate release gate before release, then continue with Task 9; leave the remaining Task 12 typography, player surface, overlays, and stylesheet split for its existing later work.

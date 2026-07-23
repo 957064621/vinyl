@@ -57,6 +57,35 @@ All full and compact poster movement uses the same non-linear `cubic-bezier(0.22
 
 The normal loading state displays only decoded progress and a short Chinese status. English archive headings and normal-state accession captions are not visible. `AR-01` through `AR-05` identifiers appear only when the corresponding failed slots must be named. Decorative text remains `aria-hidden`; progress remains the single polite live region.
 
+### Elegance Refinement Addendum (Visual 6)
+
+This addendum supersedes only the earlier numeric timing and light-envelope details. It does not replace the decoded-image gate, queue ownership, Task 4 continuity classes, Task 5 browser/performance coverage, or any error and retry contract.
+
+#### Exact Choreography
+
+Full and compact motion keep the existing `gather -> overlapped slice/scatter -> hold` state order and use `cubic-bezier(0.22, 1, 0.36, 1)` for poster opacity, transform, `clip-path`, light-curtain travel, progress, copy, and loading-screen exit. No full or compact loading transition uses a linear curve.
+
+| Queue mode | Gather | Slice and scatter | Hold | Scene wall time |
+| --- | ---: | ---: | ---: | ---: |
+| Normal | 180 ms | 320 ms reveal with 260 ms outgoing scatter | 300 ms | 800 ms |
+| Compressed | 80 ms | 180 ms reveal with 150 ms outgoing scatter | 180 ms | 440 ms |
+
+Scene wall time is `gather + max(reveal, scatter) + hold`; reveal and scatter start in the same turn. The final poster receives at least `560 ms` total readable hold. The final exposure lasts `640 ms` and reaches opacity `0` before loading-screen exit begins. `reduce` remains a `120 ms` direct opacity fade with no gather, slit, parallax, scatter, or Canvas frame.
+
+During gather, the current poster remains stable and readable. At slice start, the prior slot becomes visual-only `is-outgoing` and its image is immediately `aria-hidden`; the incoming slot becomes the only semantic `is-active` poster. There may be at most one outgoing continuity layer, and there must never be a sampled full/compact frame with neither an active nor outgoing visible image. At slice settlement, the outgoing layer and slit are already at opacity `0` before their transient classes are removed. Cancellation, retry, freeze, profile change, and destroy clear every transient class and duration property so a stale completion cannot change a later run.
+
+#### Light Curtain And Poster Planes
+
+The existing warm edge, white core, and cool edge strips form one sliced light curtain; no element is added. Their parent opacity envelope is exactly `0` at 0%, `0.10` at 16%, `0.68` at the 42% peak, `0.34` at 64%, `0.12` at 82%, and `0` at 100%. After the peak, every listed opacity is strictly lower than the previous value. The three existing strips fan apart with transform and opacity only, then reach opacity `0` before `is-lit` is removed. The final exposure uses `0 -> 0.68 -> 0.30 -> 0.10 -> 0` at 0%, 34%, 62%, 84%, and 100%.
+
+The outgoing cover moves no more than `2.4%` horizontally and `0.6%` vertically in full mode, with at most `1.2deg` rotation and a minimum scale of `0.992`. Compact mode uses at most `14px` horizontal movement, `2px` vertical movement, no perspective, and the same opacity envelope. The incoming cover remains complete and uncropped with `object-fit: contain`; the slit reveal may change only opacity, transform, and `clip-path`.
+
+#### Density, Assets, And Verification
+
+Normal loading exposes only the decoded count and the existing short Chinese status. It adds no heading, subtitle, phase label, keyboard hint, decorative character, or new visible identifier. `AR-01` through `AR-05` remain hidden unless a failed slot must be identified. The sequence continues to use only the five existing manifest covers and the exact mounted decoded image nodes; it adds no DOM node, duplicate image, CSS image, Canvas image, or request.
+
+Task 5's browser assertions remain mandatory. Its one-active-poster and "no overlap" requirements mean no second semantic or dominant readable poster; they do not prohibit Task 4's one short, `aria-hidden` outgoing continuity residue. Visual 6 additionally samples full and compact handoffs after the first stable poster: at most two visual poster layers may coexist, at most one image may have computed opacity greater than `0.55`, and the sum of active plus outgoing image opacity may not fall below `0.70`. Pixel 5 `compact` runs must still report no effect-attributable long task over `50 ms`, no more than 28 particles, and no frame after settlement. Static tests must reject loading-poster blur, `filter`, animated shadow, `backdrop-filter`, new loading markup, new image references, or visible normal-state captions.
+
 ## Particle Field
 
 Create a focused Canvas controller with no image sampling and no CORS dependency. It receives poster bounds and exposes gather, scatter, resize, profile-change, and destroy operations.
