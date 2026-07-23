@@ -86,6 +86,28 @@ Normal loading exposes only the decoded count and the existing short Chinese sta
 
 Task 5's browser assertions remain mandatory. Its one-active-poster and "no overlap" requirements mean no second semantic or dominant readable poster; they do not prohibit Task 4's one short, `aria-hidden` outgoing continuity residue. Visual 6 additionally samples full and compact handoffs after the first stable poster: at most two visual poster layers may coexist, at most one image may have computed opacity greater than `0.55`, and the sum of active plus outgoing image opacity may not fall below `0.70`. Pixel 5 `compact` runs must still report no effect-attributable long task over `50 ms`, no more than 28 particles, and no frame after settlement. Reduced-motion browser coverage proves zero Canvas frames and a hidden slit; the exact `120 ms` direct-fade declaration is a unit-level CSS contract. Static tests must reject loading-poster blur, `filter`, animated shadow, `backdrop-filter`, new loading markup, new image references, or visible normal-state captions.
 
+### iOS-Inspired Continuity Addendum (Visual 7)
+
+This addendum supersedes Visual 6's poster clipping, particle settlement, final-exposure sequencing, related numeric timings, and the earlier Full/Compact profile motion descriptions wherever they differ. It uses iOS-inspired motion principles, not iOS visual components: state changes preserve spatial continuity, the primary surface leads, decorative light follows, and interruption never exposes an empty intermediate state.
+
+#### Shared Poster Plane
+
+The poster itself no longer expands from a central `clip-path`. Incoming and outgoing covers remain on the same bounded plane and exchange dominance through opacity plus a shallow horizontal translation and scale. Full mode moves an incoming cover at most `1.6%` and an outgoing cover at most `1.2%`; compact mode uses `10px` and `8px`. Scale stays between `0.992` and `1`. All poster, progress, copy, light, and loading-screen exit motion uses `cubic-bezier(0.32, 0.72, 0, 1)`; no full or compact transition uses linear easing.
+
+The frame wrapper does not run its own opacity transition. Visibility changes only after the child image has reached opacity `0`, preventing a second independent fade from creating a flash. After the first poster becomes stable, sampled full and compact frames must retain at least `0.90` effective composite opacity, with effective opacity defined as frame opacity multiplied by image opacity and hidden frames counted as zero. At most one poster may exceed `0.55` effective opacity.
+
+#### Continuous Light Energy
+
+Particle gather and scatter are one continuous gesture. Gather completion preserves the rendered particles and their exact terminal positions without scheduling idle frames. Scatter starts from those preserved positions, retains radius, trail, and color, and assigns only new perimeter destinations. Scatter completion, reduce, clear, failure, profile replacement, and destroy still erase the canvas and settle all promises.
+
+The sliced light curtain follows the poster motion instead of masking it. Its parent envelope is `0 -> 0.06 -> 0.42 -> 0.22 -> 0.08 -> 0` at `0%`, `12%`, `30%`, `52%`, `76%`, and `100%`. Child slices use the same finite duration and reach opacity `0` before cleanup. No child exceeds its Visual 6 peak.
+
+#### Coordinated Exit
+
+Normal timing is `{ gather: 140, scatter: 360, reveal: 440, hold: 220 }`; compressed timing is `{ gather: 80, scatter: 240, reveal: 300, hold: 120 }`. The final poster has a `420 ms` readable hold. Final exposure lasts `560 ms`, but the transition controller resolves the exit gate after a `180 ms` lead so the existing `480 ms` loading-screen fade overlaps the exposure tail. The slit reaches zero before the loading root is removed. This replaces the sequential exposure-then-exit pause.
+
+`reduce` remains a direct `120 ms linear` image and loading-root opacity fade with no Canvas frames, light slit, translation, scale, or clipping. Visual 7 adds no DOM node, visible copy, image, request, dependency, blur, filter, animated shadow, or permanent `will-change`.
+
 ## Particle Field
 
 Create a focused Canvas controller with no image sampling and no CORS dependency. It receives poster bounds and exposes gather, scatter, resize, profile-change, and destroy operations.
@@ -103,8 +125,8 @@ The effect must use bounded geometry and deterministic lifecycle state. Tests us
 ### Full
 
 - Up to 64 Canvas particles.
-- Alternating slit direction, shallow two-plane poster separation, and small perspective offset.
-- Poster animation uses `transform`, `opacity`, and `clip-path` only.
+- Alternating slit direction on one shared poster plane with no perspective.
+- Poster animation uses only bounded `transform` and `opacity`; it does not clip the cover.
 
 ### Compact
 

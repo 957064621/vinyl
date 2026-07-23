@@ -18,7 +18,7 @@
 - Cap `full` at 64 particles and DPR 1.5, `compact` at 28 particles and DPR 1.25, and `reduce` at zero particles with no animation-frame request.
 - `compact` uses no live blur, animated shadow, animated filter, or perspective; `reduce` uses only a short direct opacity change and skips particles, slit travel, parallax, and scatter.
 - A gather or scatter command has a finite lifetime, pauses while the document is hidden, cancels its frame on settlement, and releases the Canvas backing store on destroy.
-- Queue callbacks are synchronous and non-blocking. The queue targets 800 ms normal scenes and 440 ms compressed scenes when more than two posters remain; the final poster always keeps its readable hold.
+- Queue callbacks are synchronous and non-blocking. Visual 7 targets 800 ms normal scenes and 500 ms compressed scenes when more than two posters remain; the final poster always keeps its readable hold.
 - Animation failures remain distinct from `CriticalAssetError`, preserve the retry surface, and cannot reopen `#appRoot`.
 - Keep all loading CSS in `src/style.css`; the broader Task 12 typography, player, overlay, and stylesheet split remain out of scope.
 - Insert this increment after Task 8 local preparation and before Task 9. Task 8's remote OSS apply remains a credential-gated release gate, but neither implementation nor verification here depends on OSS credentials or the Task 8 runtime cover migration.
@@ -2577,6 +2577,147 @@ Expected: exactly those five files are staged. `index.html`, all five cover asse
 
 ---
 
+### Task 7: Refine iOS-inspired poster continuity and coordinated exit
+
+**Files:**
+- Modify: src/ui/poster-transition.js
+- Modify: src/ui/light-particle-field.js
+- Modify: src/ui/loading-screen.js
+- Modify: src/style.css
+- Modify: test/unit/poster-transition.test.js
+- Modify: test/unit/light-particle-field.test.js
+- Modify: test/unit/loading-screen.test.js
+- Modify: test/e2e/loading-poster-transition.spec.js
+
+**Scope and invariants:**
+- The Visual 7 addendum is authoritative over earlier task values, the Global Constraints timing target, and earlier Full/Compact profile descriptions wherever behavior differs. Do not modify index.html, src/app/bootstrap.js, the asset manifest, media scripts, Playwright configuration, dependencies, or generated test-results artifacts.
+- Add no DOM node, visible copy, image, request, production dependency, blur, filter, animated shadow, backdrop-filter, or permanent will-change. Retain the existing stage, five slots, Canvas, and three slit spans.
+- Preserve FIFO ownership of the exact decoded image node, retry and root-only transition-end behavior, accessibility isolation, stale-token cancellation, and the full <-> compact non-cancelling profile-change contract. reduce remains a direct 120ms linear image and loading-root opacity fade with zero Canvas frames, no slit, translation, scale, or clipping.
+
+- [ ] **Step 1: Write the focused Visual 7 tests first (red)**
+
+In test/unit/light-particle-field.test.js, replace the old replacement-command expectation with a deterministic continuous-gesture test. Extend the fake 2D context to retain fillStyle and strokeStyle, and group each render between clearRect calls. Drive gather() to completion, then assert all of the following before calling scatter():
+
+~~~js
+assert.equal(canvas.dataset.phase, 'gathered');
+assert.equal(field.getState().animating, false);
+assert.equal(scheduler.pendingCount, 0, 'gathered particles must not keep an idle RAF');
+const gatheredFingerprint = lastRenderFingerprint(context.calls);
+
+const scattering = field.scatter(bounds);
+scheduler.step(GATHER_END_TIMESTAMP); // scatter progress is exactly zero
+assert.deepEqual(firstRenderFingerprintAfter(gatheredFingerprint, context.calls), gatheredFingerprint);
+assert.equal(canvas.dataset.phase, 'scatter');
+~~~
+
+lastRenderFingerprint() must compare every particle's terminal arc(x, y, radius), trail moveTo/lineTo, fill color, and stroke color, not merely particle count. It proves scatter begins at the exact gathered positions and reuses radius, trail, and color while only its perimeter destinations change. Add separate deterministic tests that gather settlement leaves the final Canvas pixels/render intact, that normal scatter settlement clears the Canvas and settles its promise, and that each of setProfile('reduce'), clear(), thrown render/failure cleanup, and destroy() clears the Canvas, leaves no scheduled frame, and settles every outstanding gather/scatter promise. Retain the existing hidden-document pause and stale-frame tests.
+
+In test/unit/poster-transition.test.js, replace the timing-table assertion with the exact Visual 7 table:
+
+~~~js
+assert.deepEqual(POSTER_TIMING, {
+  normal: { gather: 140, scatter: 360, reveal: 440, hold: 220 },
+  fast: { gather: 80, scatter: 240, reveal: 300, hold: 120 },
+  finalHold: 420,
+  finalExposure: 560,
+  exitLead: 180,
+  reduceFade: 120
+});
+assert.equal(POSTER_TIMING.exitLead, 180);
+assert.equal(POSTER_TIMING.finalExposure - POSTER_TIMING.exitLead, 380);
+assert.equal(POSTER_TIMING.normal.gather + Math.max(POSTER_TIMING.normal.scatter, POSTER_TIMING.normal.reveal) + POSTER_TIMING.normal.hold, 800);
+assert.equal(POSTER_TIMING.fast.gather + Math.max(POSTER_TIMING.fast.scatter, POSTER_TIMING.fast.reveal) + POSTER_TIMING.fast.hold, 500);
+assert.equal(Object.isFrozen(POSTER_TIMING), true);
+assert.equal(Object.isFrozen(POSTER_TIMING.normal), true);
+assert.equal(Object.isFrozen(POSTER_TIMING.fast), true);
+~~~
+
+Use the manual scheduler to make a sealed final queue reach its final hold, assert .is-final-exposure starts a 560ms exposure, release exactly 180ms, and assert transition.finish() resolves with root.dataset.transitionSettled === 'true' while the exposure class remains for its 380ms tail. The test must then verify that a stale completion cannot mutate a reset run. Keep a red test proving normal and compressed scenes issue exactly [gather, scatter, reveal, hold] as [140, 360, 440, 220] and [80, 240, 300, 120], with scatter/reveal beginning together.
+
+In test/unit/loading-screen.test.js, inject a transition whose finish() resolves at the exit gate and assert playReadySequence() returns then exit('full') starts the existing root opacity fade immediately, with its exact 480ms cubic-bezier(0.32, 0.72, 0, 1) transition. Dispatching the root transition end before the slit reports zero must not remove the root; after the slit-zero completion, root transition end removes it and destroys both controllers. Add a fake-timer case where no slit completion event arrives: the bounded fallback must not remove the root before the slit-zero point, must settle afterward, and must not destroy either controller early. Add the matching reduce case: no Canvas work, no slit, and only the existing 120ms linear root/image fade.
+
+Add bounded source/CSS assertions in that test. They must fail until all of these are true:
+
+~~~js
+assert.doesNotMatch(loadingBlock, /clip-path/);
+assert.match(loadingBlock, /cubic-bezier\(0\.32, 0\.72, 0, 1\)/);
+assert.doesNotMatch(extractCssBlock(loadingBlock, '.loading-frame'), /transition[^;]*opacity|opacity[^;]*transition/);
+assert.match(extractCssBlock(loadingBlock, '.loading-frame.is-active, .loading-frame.is-outgoing, .loading-frame.is-failed'), /visibility:\s*visible/);
+assert.equal(POSTER_TIMING.finalExposure, 560);
+assert.equal(POSTER_TIMING.exitLead, 180);
+~~~
+
+Assert the full-mode incoming and outgoing horizontal movement bounds are respectively 1.6% and 1.2%, compact bounds are 10px and 8px, and every normal/full/compact poster scale declaration is within [0.992, 1]. Assert the parent directional slit keyframes have exactly 0 -> 0.06 -> 0.42 -> 0.22 -> 0.08 -> 0 at 0%, 12%, 30%, 52%, 76%, 100%; every core/warm/cool child uses the same finite --slit-duration, reaches opacity 0 at 100%, and never exceeds its Visual 6 peak (1, 0.82, 0.78). Retain the strict loading-only checks for no filter/shadow/backdrop-filter, no eager image, exactly five slots, one Canvas, one slit, no loading url(...), and no permanent loading will-change.
+
+Run the red unit command:
+
+~~~bash
+node --test test/unit/light-particle-field.test.js test/unit/poster-transition.test.js test/unit/loading-screen.test.js
+~~~
+
+Expected: FAIL because gather currently clears to idle, scatter rebuilds particles, Visual 6 still uses the old timings/final exposure, poster CSS still clips images and uses the old easing, and loading exit does not coordinate the slit-zero condition.
+
+- [ ] **Step 2: Implement continuous particle state without idle work**
+
+In src/ui/light-particle-field.js, distinguish successful gather settlement from generic cancellation. A completed gather must render its exact terminal state one last time, retain the particle records, set data-phase="gathered", resolve its promise, and leave frameId === null with no idle RAF. scatter(bounds) when phase is gathered must reuse those same records: set each start to its exact gathered terminal position; preserve its radius, trail, and color; assign only a fresh perimeter end; then animate as the finite scatter command. A scatter invoked with no valid gathered state may build a fresh field only for normal recovery semantics.
+
+Keep generic settleCommand() for interruption paths, but make clear, finish, failure handling, profile replacement, and destroy cancel any pending frame, erase the Canvas, set data-phase="idle", and resolve all pending promises. Preserve hidden-tab pause/resume and stale frame-token guards. reduce creates no particles and schedules no frame. Do not make gathered state run a polling or idle frame loop.
+
+- [ ] **Step 3: Implement shared-plane timing, exit gate, and root settlement**
+
+In src/ui/poster-transition.js set POSTER_TIMING exactly to the Step 1 table, including frozen nested objects and exitLead: 180. Preserve the gather/scatter/reveal/hold ordering and use the new normal/compressed values. On final finish, retain the is-final-exposure class for the full 560ms CSS animation but resolve the transition gate 180ms after exposure begins; it must set data-transition-settled="true" then and leave the remaining 380ms exposure tail active. Reset/freeze/destroy must cancel both the gate and any remaining exposure lifecycle so stale timers never settle a later run.
+
+In src/ui/loading-screen.js, make playReadySequence() continue to await that gate. exit() starts the existing 480ms root fade immediately after the gate for full/compact, so it overlaps the remaining 380ms exposure tail. Track the slit's finite completion separately: removal is allowed only after the slit has reached computed opacity 0 and the root fade has settled; use root-only transition-end filtering and a bounded fallback that preserves the same ordering. Destroy transition and particle controllers only after removal. Keep retry/failure settlement immediate, and keep reduce as the exact direct 120ms linear path with no Canvas/slit work.
+
+- [ ] **Step 4: Replace clipping with a bounded shared poster plane and following light**
+
+In the loading-only block of src/style.css remove all poster clip-path declarations and clip-path transitions. The child .loading-image, not .loading-frame, owns the crossfade. The frame remains a bounded plane with no opacity transition; it becomes hidden only after its child image is at opacity 0, preventing a second fade/flash. Preserve one semantic active poster and at most one is-outgoing visual residue.
+
+Use cubic-bezier(0.32, 0.72, 0, 1) for every normal/full/compact loading poster, progress, copy, slit, final exposure, and root-exit motion. Incoming/outgoing offsets are shallow and horizontal only: incoming full at most 1.6%, outgoing full at most 1.2%; incoming compact at most 10px, outgoing compact at most 8px; all scales remain between 0.992 and 1. Direction must continue to alternate from the existing data-slit-direction state. Do not add perspective, rotation, clipping, linear normal/compact easing, or a frame-wrapper opacity transition.
+
+Set the parent slit's LTR and RTL keyframes to the exact shared opacity envelope 0%, 12%, 30%, 52%, 76%, 100% = 0, 0.06, 0.42, 0.22, 0.08, 0, retaining only directional translation differences. Bind all three existing child spans to the same finite --slit-duration; each child is zero by its final keyframe and remains at or below its Visual 6 peak. The slit animation and final 560ms exposure must use the Visual 7 easing. The root's full/compact exit transition is exactly opacity 480ms cubic-bezier(0.32, 0.72, 0, 1).
+
+- [ ] **Step 5: Add browser continuity, opacity, pixel, trace, and exit assertions**
+
+Modify only test/e2e/loading-poster-transition.spec.js. Extend installBrowserProbe(page)'s existing RAF sampler; do not add a separate idle loop in production code. Once the first stable poster exists and before final exposure, sample .is-active plus .is-outgoing frames. For each frame calculate effectiveOpacity as:
+
+~~~js
+const style = getComputedStyle(frame);
+const image = getComputedStyle(frame.querySelector('.loading-image'));
+const effectiveOpacity = style.visibility === 'visible'
+  ? (Number.parseFloat(style.opacity) || 0) * (Number.parseFloat(image.opacity) || 0)
+  : 0;
+~~~
+
+Record continuitySamples, the minimum sum of effective opacities, maximum visual layers, and maximum count above 0.55. For desktop and Pixel compact, assert more than three samples, max two visual layers, minCompositeOpacity >= 0.90, and at most one poster above 0.55. Retain the reduced-motion branch as zero Canvas frames, idle Canvas phase, and hidden slit only; it must not require continuity samples.
+
+Capture a Canvas image-data sample at gathered completion and the first scatter frame. Assert identical non-transparent-pixel bounds/count at the handoff, then assert no non-transparent pixels after scatter settlement, failure/retry, and exit. Preserve the exact five-cover request/concurrency assertions, one-active semantic poster assertion, uncropped-poster geometry, and the Pixel effect-attributable long-task limit of 50ms.
+
+In the first browser test, record the Canvas frame counter at particle settlement/root exit, wait at least two browser animation frames plus 120ms, and assert the counter is unchanged; this is the machine-readable no-post-settlement-frame gate. Collect a Playwright performance trace around the complete sequence and attach it as loading-poster-transition-trace.zip as diagnostic evidence rather than deriving the frame assertion from the archive. In the independent screenshot test, retain the three project screenshots and visually inspect them for one full uncropped dominant poster, readable progress, no clipping, no blank handoff, restrained slit energy, and root-overlay ordering. Do not stage generated traces or screenshots.
+
+- [ ] **Step 6: Run focused and complete verification**
+
+~~~bash
+node --test test/unit/light-particle-field.test.js test/unit/poster-transition.test.js test/unit/loading-screen.test.js
+npx playwright test test/e2e/loading-poster-transition.spec.js
+npm run verify && npm run test:e2e
+git diff --check
+~~~
+
+Expected: focused unit tests PASS; the focused Playwright file reports its two tests across desktop-chromium, mobile-chromium, and mobile-reduce with the new composed-opacity, Canvas-pixel, trace, and exit ordering evidence; the full gate exits 0; and git diff --check prints nothing. Do not delete or alter test-results/ to obtain a clean result.
+
+- [ ] **Step 7: Inspect the scoped diff and commit the Visual 7 refinement**
+
+~~~bash
+git add src/ui/poster-transition.js src/ui/light-particle-field.js src/ui/loading-screen.js src/style.css test/unit/poster-transition.test.js test/unit/light-particle-field.test.js test/unit/loading-screen.test.js test/e2e/loading-poster-transition.spec.js
+git diff --cached --check
+git commit -m "refine: coordinate loading poster continuity"
+~~~
+
+Expected: exactly the eight listed implementation/test files are staged. The Visual 7 spec addendum, test-results/, OSS/media paths, assets, configuration, and unrelated work remain unstaged. This is the seventh local task commit; Task 8's OSS credential gate and the later Task 9-15 work remain separate.
+
+---
+
 ## Completion Gate
 
-Implementation is complete only when all six task commits exist locally, `npm run verify && npm run test:e2e` exits 0, and the three browser screenshots have been visually inspected for a full uncropped poster, readable progress, loading-layer z-order above app overlays, one dominant poster, progressive post-peak light decay, and no incoherent overlap. Keep Task 8 remote OSS apply marked as a separate release gate before release, then continue with Task 9; leave the remaining Task 12 typography, player surface, overlays, and stylesheet split for its existing later work.
+Implementation is complete only when all seven task commits exist locally, npm run verify && npm run test:e2e exits 0, and the three browser screenshots plus Visual 7 trace/pixel evidence have been inspected. Evidence must show a full uncropped dominant poster, readable progress, loading-layer z-order above app overlays, no poster clip-path, shared-plane handoffs with at least 0.90 effective composed opacity and no more than one poster above 0.55, gathered-to-scatter particle continuity with no post-settlement frame, the exact light envelope, and root removal only after the slit reaches zero. Keep Task 8 remote OSS apply marked as a separate credential-gated release gate before release, then continue with Task 9; leave the remaining Task 12 typography, player surface, overlays, stylesheet split, and later Tasks 9-15 work for their existing plans.
