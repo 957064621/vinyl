@@ -36,6 +36,7 @@ const installBrowserProbe = async (page) => {
     window.__vinylLongTasks = [];
     window.__vinylLoadingProbe = {
       canvas: null,
+      effectStart: null,
       loadingSeen: false,
       phaseLeftIdle: false,
       firstRenderedFrameNontransparent: null,
@@ -54,6 +55,7 @@ const installBrowserProbe = async (page) => {
 
     document.addEventListener('DOMContentLoaded', () => {
       const probe = window.__vinylLoadingProbe;
+      probe.effectStart = performance.now();
       probe.canvas = document.querySelector('#loadingParticles');
       probe.loadingSeen = Boolean(document.querySelector('#loadingScreen'));
 
@@ -138,11 +140,13 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   expect(canvasHandle).not.toBeNull();
 
   const initialProbe = await page.evaluate(() => ({
+    effectStart: window.__vinylLoadingProbe.effectStart,
     loadingSeen: window.__vinylLoadingProbe.loadingSeen,
     maxActive: window.__vinylLoadingProbe.maxActive,
     posterGeometry: window.__vinylLoadingProbe.posterGeometry,
     slitHiddenAtFirstActive: window.__vinylLoadingProbe.slitHiddenAtFirstActive
   }));
+  expect(Number.isFinite(initialProbe.effectStart)).toBe(true);
   expect(initialProbe.loadingSeen).toBe(true);
   expect(initialProbe.maxActive).toBe(1);
   expect(initialProbe.posterGeometry).toEqual({
@@ -161,7 +165,6 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       && Number.parseFloat(getComputedStyle(image).opacity) > 0.5;
   }, null, { timeout: 5_000 });
 
-  const effectStart = await page.evaluate(() => performance.now());
   const screenshotStart = await page.evaluate(() => performance.now());
   await page.screenshot({
     path: testInfo.outputPath(`loading-${testInfo.project.name}.png`)
@@ -198,17 +201,26 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   } else {
     expect(finalProbe.phaseLeftIdle).toBe(true);
     expect(finalProbe.firstRenderedFrameNontransparent).toBe(true);
-    expect(finalProbe.activeIds).toContain('archive-05');
   }
+  expect(finalProbe.activeIds).toEqual([
+    'archive-01',
+    'archive-02',
+    'archive-03',
+    'archive-04',
+    'archive-05'
+  ]);
 
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
   await expect(page.locator('#appRoot')).not.toHaveAttribute('aria-hidden', 'true');
   expect(stats.total).toBe(5);
   expect(stats.maxActive).toBeLessThanOrEqual(2);
 
-  const effectLongTasks = await page.evaluate(({ start, end }) => (
-    window.__vinylLongTasks.filter((entry) => entry.startTime >= start && entry.startTime <= end)
-  ), { start: effectStart, end: effectEnd });
+  const effectLongTasks = await page.evaluate(({ end }) => (
+    window.__vinylLongTasks.filter((entry) => (
+      entry.startTime >= window.__vinylLoadingProbe.effectStart
+      && entry.startTime <= end
+    ))
+  ), { end: effectEnd });
   // Browser screenshot capture is test instrumentation; surrounding production intervals remain observed.
   const productionEffectLongTasks = effectLongTasks.filter((entry) => (
     !screenshotWindows.some((window) => (
