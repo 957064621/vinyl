@@ -21,6 +21,9 @@ const COVER_FIXTURES = new Map(EXPECTED_ARCHIVE_IDS.map((id, index) => {
   ];
 }));
 const EXPECTED_COVER_PATHNAMES = [...COVER_FIXTURES.keys()].sort();
+const FAILED_COVER_PATHNAME = new URL(
+  CRITICAL_IMAGE_MANIFEST.find(({ id }) => id === 'archive-01').source
+).pathname;
 
 const coverSvg = (index) => Buffer.from(`
   <svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800">
@@ -80,6 +83,84 @@ const expectExactCoverRequests = (stats) => {
   expect(stats.unknownPathnames).toEqual([]);
   expect(stats.maxActive).toBeLessThanOrEqual(2);
 };
+
+const createRequestStats = () => ({
+  active: 0,
+  maxActive: 0,
+  total: 0,
+  pathnames: [],
+  unknownPathnames: []
+});
+
+const installFailureThenRetryCovers = async (page) => {
+  const stats = {
+    failure: createRequestStats(),
+    retry: createRequestStats()
+  };
+  let phase = 'failure';
+  let releaseRetryRequests;
+  const retryGate = new Promise((resolve) => {
+    releaseRetryRequests = resolve;
+  });
+
+  await page.route('**/*', async (route) => {
+    const request = route.request();
+    if (request.resourceType() !== 'image') {
+      await route.continue();
+      return;
+    }
+
+    const requestPhase = phase;
+    const phaseStats = stats[requestPhase];
+    const pathname = new URL(request.url()).pathname;
+    const fixture = COVER_FIXTURES.get(pathname);
+    phaseStats.active += 1;
+    phaseStats.total += 1;
+    phaseStats.pathnames.push(pathname);
+    phaseStats.maxActive = Math.max(phaseStats.maxActive, phaseStats.active);
+    if (!fixture) phaseStats.unknownPathnames.push(pathname);
+
+    try {
+      if (requestPhase === 'retry') await retryGate;
+      if (!fixture) {
+        await route.abort('blockedbyclient');
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, fixture.delayMs));
+      if (requestPhase === 'failure' && pathname === FAILED_COVER_PATHNAME) {
+        await route.abort('failed');
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/svg+xml',
+        body: coverSvg(fixture.fixtureIndex)
+      });
+    } finally {
+      phaseStats.active -= 1;
+    }
+  });
+
+  return {
+    stats,
+    beginRetry() {
+      phase = 'retry';
+    },
+    releaseRetryRequests
+  };
+};
+
+const canvasState = (canvas) => canvas.evaluate((element) => {
+  if (element.width === 0 || element.height === 0) {
+    return { alphaCount: 0, phase: element.dataset.phase };
+  }
+  const pixels = element.getContext('2d').getImageData(0, 0, element.width, element.height).data;
+  let alphaCount = 0;
+  for (let index = 3; index < pixels.length; index += 4) {
+    if (pixels[index] !== 0) alphaCount += 1;
+  }
+  return { alphaCount, phase: element.dataset.phase };
+});
 
 const installBrowserProbe = async (page) => {
   await page.addInitScript(() => {
@@ -395,6 +476,40 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     path: metricsPath,
     contentType: 'application/json'
   });
+});
+
+test('failed cover loading clears particles and retry restarts from an empty Canvas', async ({ page }) => {
+  const routeControl = await installFailureThenRetryCovers(page);
+  await page.goto('./', { waitUntil: 'commit' });
+
+  const loading = page.locator('#loadingScreen');
+  const retry = page.locator('#loadingRetry');
+  const canvas = page.locator('#loadingParticles');
+  await expect(retry).toBeVisible({ timeout: 10_000 });
+  await expect(loading).toHaveAttribute('data-state', 'error');
+  await expect(loading).toHaveAttribute('data-error-kind', 'asset');
+  expect(routeControl.stats.failure).toMatchObject({
+    active: 0,
+    total: 9,
+    unknownPathnames: []
+  });
+  expect([...routeControl.stats.failure.pathnames].sort()).toEqual([
+    ...EXPECTED_COVER_PATHNAMES,
+    ...Array(4).fill(FAILED_COVER_PATHNAME)
+  ].sort());
+  expect(routeControl.stats.failure.maxActive).toBeLessThanOrEqual(2);
+  await expect(canvasState(canvas)).resolves.toEqual({ alphaCount: 0, phase: 'idle' });
+
+  routeControl.beginRetry();
+  await retry.click();
+  await expect(loading).toHaveAttribute('data-state', 'loading');
+  await expect(canvasState(canvas)).resolves.toEqual({ alphaCount: 0, phase: 'idle' });
+  routeControl.releaseRetryRequests();
+
+  await expect(loading).toHaveCount(0, { timeout: 10_000 });
+  expectExactCoverRequests(routeControl.stats.retry);
+  await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
+  await expect(page.locator('#appRoot')).not.toHaveAttribute('aria-hidden', 'true');
 });
 
 test('captures the loading poster visual', async ({ page }, testInfo) => {

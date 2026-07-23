@@ -143,6 +143,20 @@ export const createLightParticleField = ({
     };
   });
 
+  const drawParticle = (particle, position, trailEnd) => {
+    context.beginPath();
+    context.fillStyle = particle.color.point;
+    context.arc(position.x, position.y, particle.radius, 0, Math.PI * 2);
+    context.fill();
+
+    context.beginPath();
+    context.strokeStyle = particle.color.line;
+    context.lineWidth = 0.75;
+    context.moveTo(position.x, position.y);
+    context.lineTo(trailEnd.x, trailEnd.y);
+    context.stroke();
+  };
+
   const render = (progress) => {
     erase();
     const eased = progress * progress * (3 - (2 * progress));
@@ -162,22 +176,18 @@ export const createLightParticleField = ({
         ? particle.startTrail.y + ((naturalLineY - particle.startTrail.y) * eased)
         : naturalLineY;
 
-      context.beginPath();
-      context.fillStyle = particle.color.point;
-      context.arc(x, y, particle.radius, 0, Math.PI * 2);
-      context.fill();
+      const position = { x, y };
+      const trailEnd = { x: lineX, y: lineY };
+      drawParticle(particle, position, trailEnd);
+      particle.rendered = { position, trailEnd };
+    }
+  };
 
-      context.beginPath();
-      context.strokeStyle = particle.color.line;
-      context.lineWidth = 0.75;
-      context.moveTo(x, y);
-      context.lineTo(lineX, lineY);
-      context.stroke();
-
-      particle.rendered = {
-        position: { x, y },
-        trailEnd: { x: lineX, y: lineY }
-      };
+  const redrawRetained = () => {
+    erase();
+    for (const particle of particles) {
+      if (!particle.rendered) continue;
+      drawParticle(particle, particle.rendered.position, particle.rendered.trailEnd);
     }
   };
 
@@ -220,7 +230,7 @@ export const createLightParticleField = ({
     else schedule();
   }
 
-  const start = (phase, bounds) => {
+  const start = (phase, bounds, durationMs) => {
     if (destroyed) return Promise.resolve();
     const canReuseGather = phase === 'scatter'
       && command === null
@@ -231,7 +241,8 @@ export const createLightParticleField = ({
     if (!canReuseGather && (command || frameId !== null || particles.length > 0)) settleCommand();
     if (profileName !== 'reduce') resize();
 
-    const duration = phase === 'gather' ? settings.gatherMs : settings.scatterMs;
+    const defaultDuration = phase === 'gather' ? settings.gatherMs : settings.scatterMs;
+    const duration = Math.max(0, finite(durationMs, defaultDuration));
     if (settings.count === 0 || duration === 0) {
       particles = [];
       erase();
@@ -261,19 +272,44 @@ export const createLightParticleField = ({
   const resize = () => {
     if (destroyed) return;
     const bounds = canvas.getBoundingClientRect();
-    cssWidth = Math.max(0, finite(bounds.width, 0));
-    cssHeight = Math.max(0, finite(bounds.height, 0));
+    const previousWidth = cssWidth;
+    const previousHeight = cssHeight;
+    const nextWidth = Math.max(0, finite(bounds.width, 0));
+    const nextHeight = Math.max(0, finite(bounds.height, 0));
     const deviceDpr = Math.max(0.01, finite(windowRef?.devicePixelRatio, 1));
-    currentDpr = Math.min(deviceDpr, settings.dpr);
-    canvas.width = Math.round(cssWidth * currentDpr);
-    canvas.height = Math.round(cssHeight * currentDpr);
+    const nextDpr = Math.min(deviceDpr, settings.dpr);
+    const backingWidth = Math.round(nextWidth * nextDpr);
+    const backingHeight = Math.round(nextHeight * nextDpr);
+    const backingChanged = canvas.width !== backingWidth || canvas.height !== backingHeight;
+    const sizeChanged = previousWidth !== nextWidth || previousHeight !== nextHeight;
+    const scaleX = previousWidth > 0 ? nextWidth / previousWidth : 1;
+    const scaleY = previousHeight > 0 ? nextHeight / previousHeight : 1;
+
+    cssWidth = nextWidth;
+    cssHeight = nextHeight;
+    currentDpr = nextDpr;
+    if (canvas.width !== backingWidth) canvas.width = backingWidth;
+    if (canvas.height !== backingHeight) canvas.height = backingHeight;
     context.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
 
+    const transformPoint = (point) => {
+      if (!point) return;
+      point.x = clamp(point.x * scaleX, 0, cssWidth);
+      point.y = clamp(point.y * scaleY, 0, cssHeight);
+    };
     for (const particle of particles) {
-      for (const point of [particle.start, particle.end]) {
-        point.x = clamp(point.x, 0, cssWidth);
-        point.y = clamp(point.y, 0, cssHeight);
-      }
+      transformPoint(particle.start);
+      transformPoint(particle.end);
+      transformPoint(particle.startTrail);
+      transformPoint(particle.rendered?.position);
+      transformPoint(particle.rendered?.trailEnd);
+    }
+    if (
+      (sizeChanged || backingChanged)
+      && getCanvasData('phase') === 'gathered'
+      && particles.some(({ rendered }) => rendered)
+    ) {
+      redrawRetained();
     }
   };
 
@@ -328,8 +364,8 @@ export const createLightParticleField = ({
   resize();
 
   return {
-    gather: (bounds) => start('gather', bounds),
-    scatter: (bounds) => start('scatter', bounds),
+    gather: (bounds, durationMs) => start('gather', bounds, durationMs),
+    scatter: (bounds, durationMs) => start('scatter', bounds, durationMs),
     resize,
     setProfile,
     clear,

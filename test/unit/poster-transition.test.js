@@ -51,6 +51,9 @@ const makeManualScheduler = () => {
     releaseNext() {
       pending[0]?.release(true);
     },
+    releaseDuration(ms) {
+      pending.find((entry) => entry.ms === ms)?.release(true);
+    },
     get pending() {
       return pending.length;
     },
@@ -62,6 +65,9 @@ const makeManualScheduler = () => {
     },
     get sleepCalls() {
       return [...sleepCalls];
+    },
+    get entries() {
+      return [...pending];
     }
   };
 };
@@ -69,16 +75,16 @@ const makeManualScheduler = () => {
 const makeDeferredParticleField = () => {
   const pending = [];
   const calls = [];
-  const start = (phase, bounds) => new Promise((resolve, reject) => {
-    calls.push([phase, bounds]);
-    pending.push({ phase, resolve, reject });
+  const start = (phase, bounds, duration) => new Promise((resolve, reject) => {
+    calls.push([phase, bounds, duration]);
+    pending.push({ phase, duration, resolve, reject });
   });
 
   return {
     calls,
     pending,
-    gather: (bounds) => start('gather', bounds),
-    scatter: (bounds) => start('scatter', bounds),
+    gather: (bounds, duration) => start('gather', bounds, duration),
+    scatter: (bounds, duration) => start('scatter', bounds, duration),
     finish() {
       calls.push(['finish']);
     },
@@ -108,11 +114,11 @@ const makeFixture = ({
   const document = dom.window.document;
   const particleCalls = [];
   const defaultParticleField = {
-    gather(bounds) {
-      particleCalls.push(['gather', bounds]);
+    gather(bounds, duration) {
+      particleCalls.push(['gather', bounds, duration]);
     },
-    scatter(bounds) {
-      particleCalls.push(['scatter', bounds]);
+    scatter(bounds, duration) {
+      particleCalls.push(['scatter', bounds, duration]);
     },
     finish() {
       particleCalls.push(['finish']);
@@ -460,6 +466,50 @@ test('animated transitions overlap outgoing scatter with incoming reveal', async
   assert.strictEqual(root.querySelector('.is-active'), incoming);
 });
 
+test('normal and compressed scene durations override deliberately slow particle defaults', async () => {
+  const makeSlowField = () => {
+    const calls = [];
+    return {
+      calls,
+      gather(bounds, duration = 2_000) {
+        calls.push(['gather', duration, bounds]);
+      },
+      scatter(bounds, duration = 2_000) {
+        calls.push(['scatter', duration, bounds]);
+      },
+      finish() {},
+      setProfile() {}
+    };
+  };
+
+  const normalField = makeSlowField();
+  const normal = makeFixture({ particleField: normalField });
+  normal.controller.enqueue(normal.slots[0]);
+  normal.controller.enqueue(normal.slots[1]);
+  await normal.controller.waitForIdle();
+  assert.deepEqual(
+    normalField.calls.filter(([phase]) => phase === 'gather').map(([, duration]) => duration),
+    [POSTER_TIMING.normal.gather, POSTER_TIMING.normal.gather]
+  );
+  assert.deepEqual(
+    normalField.calls.filter(([phase]) => phase === 'scatter').map(([, duration]) => duration),
+    [POSTER_TIMING.normal.scatter]
+  );
+
+  const fastField = makeSlowField();
+  const fast = makeFixture({ particleField: fastField });
+  fast.slots.forEach((slot) => fast.controller.enqueue(slot));
+  await fast.controller.waitForIdle();
+  assert.deepEqual(
+    fastField.calls.filter(([phase]) => phase === 'gather').map(([, duration]) => duration),
+    Array(5).fill(POSTER_TIMING.fast.gather)
+  );
+  assert.deepEqual(
+    fastField.calls.filter(([phase]) => phase === 'scatter').map(([, duration]) => duration),
+    Array(4).fill(POSTER_TIMING.fast.scatter)
+  );
+});
+
 test('full to compact settles particles without cancelling the poster handoff', async () => {
   const scheduler = makeManualScheduler();
   const particleCalls = [];
@@ -735,16 +785,27 @@ test('finish resolves at the 180ms exit gate and stale exposure completion canno
   await flush();
   assert.equal(finished, true);
   assert.equal(root.dataset.transitionSettled, 'true');
+  assert.equal(root.dataset.exposureSettled, undefined);
   assert.equal(root.classList.contains('is-final-exposure'), true);
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+  const staleExposure = scheduler.entries.find(({ ms }) => ms === POSTER_TIMING.finalExposure);
+  assert.ok(staleExposure);
 
   controller.reset();
   controller.enqueue(slots[1]);
-  scheduler.releaseNext();
+  await flush();
+  assert.equal(root.dataset.exposureSettled, undefined);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
+  await flush();
+  assert.equal(controller.getState().activeId, 'archive-02');
+
+  staleExposure.release(true);
   await flush();
   assert.equal(root.classList.contains('is-final-exposure'), false);
   assert.equal(root.dataset.transitionSettled, undefined);
-  assert.equal(controller.getState().activeId, null);
+  assert.equal(root.dataset.exposureSettled, undefined);
+  assert.equal(controller.getState().activeId, 'archive-02');
 });
 
 test('reset starts a new run immediately and stale particle completion cannot reactivate the old poster', async () => {

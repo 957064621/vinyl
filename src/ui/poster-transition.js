@@ -173,7 +173,7 @@ export function createPosterTransition({
     slit.dataset.direction = item.direction;
 
     const [, gathered] = await Promise.all([
-      Promise.resolve(particleField.gather(bounds)),
+      Promise.resolve(particleField.gather(bounds, timing.gather)),
       sleep(timing.gather, token)
     ]);
     if (!isCurrent(token) || gathered === false) return;
@@ -194,7 +194,7 @@ export function createPosterTransition({
     activeItem.slot.classList.add('is-revealing');
     const scatterWork = outgoing
       ? Promise.all([
-          Promise.resolve(particleField.scatter(outgoing.slot.getBoundingClientRect())),
+          Promise.resolve(particleField.scatter(outgoing.slot.getBoundingClientRect(), timing.scatter)),
           sleep(timing.scatter, token)
         ])
       : Promise.resolve([true, true]);

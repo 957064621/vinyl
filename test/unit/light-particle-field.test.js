@@ -11,16 +11,30 @@ const createContext = () => {
   const calls = [];
   let fillStyle = '';
   let strokeStyle = '';
+  let hasPixels = false;
   const context = {
     calls,
     setTransform: (...args) => calls.push(['setTransform', ...args]),
-    clearRect: (...args) => calls.push(['clearRect', ...args]),
+    clearRect: (...args) => {
+      hasPixels = false;
+      calls.push(['clearRect', ...args]);
+    },
     beginPath: () => calls.push(['beginPath']),
     arc: (...args) => calls.push(['arc', ...args]),
-    fill: () => calls.push(['fill']),
+    fill: () => {
+      hasPixels = true;
+      calls.push(['fill']);
+    },
     moveTo: (...args) => calls.push(['moveTo', ...args]),
     lineTo: (...args) => calls.push(['lineTo', ...args]),
-    stroke: () => calls.push(['stroke'])
+    stroke: () => {
+      hasPixels = true;
+      calls.push(['stroke']);
+    },
+    resetBackingStore(property, value) {
+      hasPixels = false;
+      calls.push(['backingStoreReset', property, value]);
+    }
   };
   Object.defineProperties(context, {
     fillStyle: {
@@ -36,6 +50,9 @@ const createContext = () => {
         strokeStyle = value;
         calls.push(['strokeStyle', value]);
       }
+    },
+    hasPixels: {
+      get: () => hasPixels
     }
   });
   return context;
@@ -65,6 +82,17 @@ const renderFingerprint = (frame) => frame.filter(([name]) => (
 ));
 
 const lastRenderFingerprint = (calls) => renderFingerprint(renderedFrames(calls).at(-1));
+
+const assertTerminalClear = (calls, label) => {
+  const lastClearIndex = calls.findLastIndex(([name]) => name === 'clearRect');
+  assert.notEqual(lastClearIndex, -1, `${label} must clear the Canvas`);
+  const drawCalls = new Set(['arc', 'fill', 'moveTo', 'lineTo', 'stroke']);
+  assert.equal(
+    calls.slice(lastClearIndex + 1).some(([name]) => drawCalls.has(name)),
+    false,
+    `${label} must not draw after its final clear`
+  );
+};
 
 const createScheduler = () => {
   let nextId = 1;
@@ -103,6 +131,11 @@ const createFixture = ({ width = 320, height = 180, dpr = 3 } = {}) => {
   const context = createContext();
   const scheduler = createScheduler();
   let hidden = false;
+  let cssWidth = width;
+  let cssHeight = height;
+  let backingWidth = canvas.width;
+  let backingHeight = canvas.height;
+  const backingWrites = [];
 
   Object.defineProperty(document, 'hidden', {
     configurable: true,
@@ -113,23 +146,48 @@ const createFixture = ({ width = 320, height = 180, dpr = 3 } = {}) => {
     value: dpr
   });
   canvas.getContext = () => context;
+  Object.defineProperties(canvas, {
+    width: {
+      configurable: true,
+      get: () => backingWidth,
+      set(value) {
+        backingWidth = Number(value);
+        backingWrites.push(['width', backingWidth]);
+        context.resetBackingStore('width', backingWidth);
+      }
+    },
+    height: {
+      configurable: true,
+      get: () => backingHeight,
+      set(value) {
+        backingHeight = Number(value);
+        backingWrites.push(['height', backingHeight]);
+        context.resetBackingStore('height', backingHeight);
+      }
+    }
+  });
   canvas.getBoundingClientRect = () => ({
     x: 10,
     y: 20,
     left: 10,
     top: 20,
-    right: 10 + width,
-    bottom: 20 + height,
-    width,
-    height
+    right: 10 + cssWidth,
+    bottom: 20 + cssHeight,
+    width: cssWidth,
+    height: cssHeight
   });
 
   return {
     dom,
     document,
     canvas,
+    backingWrites,
     context,
     scheduler,
+    setSize(nextWidth, nextHeight) {
+      cssWidth = nextWidth;
+      cssHeight = nextHeight;
+    },
     setHidden(value) {
       hidden = value;
       document.dispatchEvent(new dom.window.Event('visibilitychange'));
@@ -239,8 +297,11 @@ test('scatter starts from the exact gathered render and only then clears on sett
   assert.equal(fixture.scheduler.pendingCount, 0, 'gathered particles must not keep an idle RAF');
   const gatheredFingerprint = lastRenderFingerprint(fixture.context.calls);
   const gatheredFrameCount = renderedFrames(fixture.context.calls).length;
+  const backingWrites = fixture.backingWrites.length;
 
   const scattering = field.scatter({ left: 60, top: 50, width: 100, height: 80 });
+  assert.equal(fixture.backingWrites.length, backingWrites, 'unchanged scatter sizing must not reset the backing store');
+  assert.equal(fixture.context.hasPixels, true, 'gathered pixels must remain before the first scatter RAF');
   fixture.scheduler.step(PARTICLE_PROFILES.compact.gatherMs);
   const scatterFrames = renderedFrames(fixture.context.calls);
   assert.deepEqual(renderFingerprint(scatterFrames[gatheredFrameCount]), gatheredFingerprint);
@@ -260,6 +321,53 @@ test('scatter starts from the exact gathered render and only then clears on sett
   field.destroy();
 });
 
+test('explicit scene durations override slower particle profile defaults', async () => {
+  const fixture = createFixture();
+  const field = createField(fixture, 'full');
+  const bounds = { left: 60, top: 50, width: 100, height: 80 };
+
+  const gathering = field.gather(bounds, 80);
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(79);
+  assert.equal(field.getState().animating, true);
+  fixture.scheduler.step(80);
+  await gathering;
+  assert.equal(fixture.canvas.dataset.phase, 'gathered');
+
+  const scattering = field.scatter(bounds, 240);
+  fixture.scheduler.step(80);
+  fixture.scheduler.step(319);
+  assert.equal(field.getState().animating, true);
+  fixture.scheduler.step(320);
+  await scattering;
+  assert.equal(fixture.canvas.dataset.phase, 'idle');
+  field.destroy();
+});
+
+test('a genuine gathered resize transforms and redraws retained pixels before scatter RAF', async () => {
+  const fixture = createFixture({ width: 320, height: 180, dpr: 1 });
+  const field = createField(fixture, 'compact');
+  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 });
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(PARTICLE_PROFILES.compact.gatherMs);
+  await gathering;
+  assert.equal(fixture.context.hasPixels, true);
+
+  fixture.setSize(160, 90);
+  const writesBefore = fixture.backingWrites.length;
+  const scattering = field.scatter({ left: 30, top: 25, width: 50, height: 40 });
+  assert.equal(fixture.backingWrites.length, writesBefore + 2);
+  assert.equal(fixture.context.hasPixels, true, 'resized gathered pixels must be restored synchronously');
+  assert.equal(fixture.scheduler.pendingCount, 1);
+  const coordinates = lastRenderFingerprint(fixture.context.calls)
+    .filter(([name]) => name === 'arc' || name === 'moveTo' || name === 'lineTo')
+    .flatMap(([, x, y]) => [x, y]);
+  assert.ok(coordinates.every((coordinate, index) => coordinate >= 0 && coordinate <= (index % 2 === 0 ? 160 : 90)));
+
+  field.destroy();
+  await scattering;
+});
+
 test('reduce, clear, render failure, profile replacement, and destroy erase and settle work', async () => {
   const cases = [
     ['clear', (field) => field.clear()],
@@ -268,33 +376,39 @@ test('reduce, clear, render failure, profile replacement, and destroy erase and 
     ['destroy', (field) => field.destroy()]
   ];
 
-  for (const [, cancel] of cases) {
-    const fixture = createFixture();
-    const field = createField(fixture, 'compact');
-    const pending = field.gather({ left: 60, top: 50, width: 100, height: 80 });
-    fixture.scheduler.step(0);
-    cancel(field);
-    await pending;
-    assert.equal(fixture.scheduler.pendingCount, 0);
-    assert.equal(fixture.canvas.dataset.phase, 'idle');
-    assert.equal(field.getState().animating, false);
-    if (!field.getState().destroyed) field.destroy();
+  for (const [label, cancel] of cases) {
+    for (const phase of ['gather', 'scatter']) {
+      const fixture = createFixture();
+      const field = createField(fixture, 'compact');
+      const pending = field[phase]({ left: 60, top: 50, width: 100, height: 80 });
+      fixture.scheduler.step(0);
+      cancel(field);
+      await pending;
+      assert.equal(fixture.scheduler.pendingCount, 0);
+      assert.equal(fixture.canvas.dataset.phase, 'idle');
+      assert.equal(field.getState().animating, false);
+      assertTerminalClear(fixture.context.calls, `${label} pending ${phase}`);
+      if (!field.getState().destroyed) field.destroy();
+    }
   }
 
-  const failureFixture = createFixture();
-  const originalArc = failureFixture.context.arc;
-  failureFixture.context.arc = (...args) => {
-    originalArc(...args);
-    throw new Error('render failed');
-  };
-  const failureField = createField(failureFixture, 'compact');
-  const failed = failureField.gather({ left: 60, top: 50, width: 100, height: 80 });
-  assert.doesNotThrow(() => failureFixture.scheduler.step(0));
-  await failed;
-  assert.equal(failureFixture.scheduler.pendingCount, 0);
-  assert.equal(failureFixture.canvas.dataset.phase, 'idle');
-  assert.equal(failureField.getState().animating, false);
-  failureField.destroy();
+  for (const phase of ['gather', 'scatter']) {
+    const failureFixture = createFixture();
+    const originalArc = failureFixture.context.arc;
+    failureFixture.context.arc = (...args) => {
+      originalArc(...args);
+      throw new Error('render failed');
+    };
+    const failureField = createField(failureFixture, 'compact');
+    const failed = failureField[phase]({ left: 60, top: 50, width: 100, height: 80 });
+    assert.doesNotThrow(() => failureFixture.scheduler.step(0));
+    await failed;
+    assert.equal(failureFixture.scheduler.pendingCount, 0);
+    assert.equal(failureFixture.canvas.dataset.phase, 'idle');
+    assert.equal(failureField.getState().animating, false);
+    assertTerminalClear(failureFixture.context.calls, `render failure pending ${phase}`);
+    failureField.destroy();
+  }
 });
 
 test('a copied stale frame cannot mutate or duplicate a replacement command frame', async () => {
