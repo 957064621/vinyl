@@ -87,6 +87,14 @@ export const createLightParticleField = ({
     settling?.resolve();
   };
 
+  const settleGather = () => {
+    cancelPendingFrame();
+    const settling = command;
+    command = null;
+    setCanvasData('phase', 'gathered');
+    settling?.resolve();
+  };
+
   const randomUnit = () => clamp(finite(random(), 0.5), 0, 0.999999999);
 
   const normalizeBounds = (bounds) => {
@@ -129,7 +137,9 @@ export const createLightParticleField = ({
       end,
       radius: 0.8 + (randomUnit() * 0.7),
       trail: 3 + (randomUnit() * 4),
-      color: PARTICLE_COLORS[index % PARTICLE_COLORS.length]
+      color: PARTICLE_COLORS[index % PARTICLE_COLORS.length],
+      startTrail: null,
+      rendered: null
     };
   });
 
@@ -143,8 +153,14 @@ export const createLightParticleField = ({
       const x = clamp(particle.start.x + (dx * eased), 0, cssWidth);
       const y = clamp(particle.start.y + (dy * eased), 0, cssHeight);
       const distance = Math.hypot(dx, dy) || 1;
-      const lineX = clamp(x - ((dx / distance) * particle.trail), 0, cssWidth);
-      const lineY = clamp(y - ((dy / distance) * particle.trail), 0, cssHeight);
+      const naturalLineX = clamp(x - ((dx / distance) * particle.trail), 0, cssWidth);
+      const naturalLineY = clamp(y - ((dy / distance) * particle.trail), 0, cssHeight);
+      const lineX = particle.startTrail
+        ? particle.startTrail.x + ((naturalLineX - particle.startTrail.x) * eased)
+        : naturalLineX;
+      const lineY = particle.startTrail
+        ? particle.startTrail.y + ((naturalLineY - particle.startTrail.y) * eased)
+        : naturalLineY;
 
       context.beginPath();
       context.fillStyle = particle.color.point;
@@ -157,6 +173,11 @@ export const createLightParticleField = ({
       context.moveTo(x, y);
       context.lineTo(lineX, lineY);
       context.stroke();
+
+      particle.rendered = {
+        position: { x, y },
+        trailEnd: { x: lineX, y: lineY }
+      };
     }
   };
 
@@ -183,17 +204,31 @@ export const createLightParticleField = ({
     }
 
     const progress = clamp(command.elapsed / command.duration, 0, 1);
-    render(progress);
+    try {
+      render(progress);
+    } catch {
+      settleCommand();
+      return;
+    }
     const frameCount = Math.max(0, finite(getCanvasData('frameCount'), 0)) + 1;
     setCanvasData('frameCount', frameCount);
 
-    if (progress >= 1) settleCommand();
+    if (progress >= 1) {
+      if (getCanvasData('phase') === 'gather') settleGather();
+      else settleCommand();
+    }
     else schedule();
   }
 
   const start = (phase, bounds) => {
     if (destroyed) return Promise.resolve();
-    if (command || frameId !== null || particles.length > 0) settleCommand();
+    const canReuseGather = phase === 'scatter'
+      && command === null
+      && frameId === null
+      && getCanvasData('phase') === 'gathered'
+      && particles.length === settings.count
+      && particles.every(({ rendered }) => rendered);
+    if (!canReuseGather && (command || frameId !== null || particles.length > 0)) settleCommand();
     if (profileName !== 'reduce') resize();
 
     const duration = phase === 'gather' ? settings.gatherMs : settings.scatterMs;
@@ -204,7 +239,17 @@ export const createLightParticleField = ({
       return Promise.resolve();
     }
 
-    particles = buildParticles(phase, normalizeBounds(bounds));
+    if (canReuseGather) {
+      particles = particles.map((particle) => ({
+        ...particle,
+        start: { ...particle.rendered.position },
+        end: pointOnPerimeter(),
+        startTrail: { ...particle.rendered.trailEnd },
+        rendered: null
+      }));
+    } else {
+      particles = buildParticles(phase, normalizeBounds(bounds));
+    }
     setCanvasData('phase', phase);
     const promise = new Promise((resolve) => {
       command = { duration, elapsed: 0, lastTimestamp: null, resolve };

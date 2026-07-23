@@ -1,8 +1,9 @@
 export const POSTER_TIMING = Object.freeze({
-  normal: Object.freeze({ gather: 180, scatter: 260, reveal: 320, hold: 300 }),
-  fast: Object.freeze({ gather: 80, scatter: 150, reveal: 180, hold: 180 }),
-  finalHold: 560,
-  finalExposure: 640,
+  normal: Object.freeze({ gather: 140, scatter: 360, reveal: 440, hold: 220 }),
+  fast: Object.freeze({ gather: 80, scatter: 240, reveal: 300, hold: 120 }),
+  finalHold: 420,
+  finalExposure: 560,
+  exitLead: 180,
   reduceFade: 120
 });
 
@@ -342,6 +343,7 @@ export function createPosterTransition({
     root.style.removeProperty('--slit-duration');
     root.classList.remove('is-final-exposure');
     delete root.dataset.transitionSettled;
+    delete root.dataset.exposureSettled;
     settleParticleField();
 
     if (preserveActive) {
@@ -375,6 +377,7 @@ export function createPosterTransition({
     root.style.removeProperty('--slit-duration');
     root.classList.remove('is-final-exposure');
     delete root.dataset.transitionSettled;
+    delete root.dataset.exposureSettled;
     for (const slot of slots()) {
       slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
       slot.style.removeProperty('--poster-scatter-ms');
@@ -445,10 +448,20 @@ export function createPosterTransition({
           }
 
           root.classList.add('is-final-exposure');
-          const duration = currentProfile === 'reduce' ? 0 : POSTER_TIMING.finalExposure;
-          if (duration > 0 && !await sleep(duration, token)) {
-            if (generation !== token) continue;
-            return;
+          if (currentProfile !== 'reduce') {
+            const gateWork = sleep(POSTER_TIMING.exitLead, token);
+            const exposureWork = sleep(POSTER_TIMING.finalExposure, token);
+            void exposureWork.then((completed) => {
+              if (
+                completed
+                && isCurrent(token)
+                && runToken === finishingRun
+              ) root.dataset.exposureSettled = 'true';
+            }).catch(() => {});
+            if (!await gateWork) {
+              if (generation !== token) continue;
+              return;
+            }
           }
           root.dataset.transitionSettled = 'true';
           return;

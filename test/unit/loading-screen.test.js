@@ -82,11 +82,13 @@ const createControllerHarness = ({
 };
 
 const createInjectedView = (documentRef, options = {}) => {
-  const harness = createControllerHarness(options);
+  const { viewOptions = {}, ...harnessOptions } = options;
+  const harness = createControllerHarness(harnessOptions);
   return {
     harness,
     view: createLoadingScreen(documentRef, {
       motionProfile: 'reduce',
+      ...viewOptions,
       ...harness.factories
     })
   };
@@ -96,6 +98,40 @@ const transitionEnd = (window, propertyName, { bubbles = false } = {}) => {
   const event = new window.Event('transitionend', { bubbles });
   Object.defineProperty(event, 'propertyName', { value: propertyName });
   return event;
+};
+
+const animationEnd = (window, animationName) => {
+  const event = new window.Event('animationend');
+  Object.defineProperty(event, 'animationName', { value: animationName });
+  return event;
+};
+
+const createTimerHarness = () => {
+  let now = 0;
+  let nextId = 1;
+  const timers = new Map();
+  const setTimer = (callback, delay = 0) => {
+    const id = nextId++;
+    timers.set(id, { at: now + delay, callback });
+    return id;
+  };
+  const clearTimer = (id) => timers.delete(id);
+  const advance = async (ms) => {
+    const end = now + ms;
+    while (true) {
+      const due = [...timers.entries()]
+        .filter(([, timer]) => timer.at <= end)
+        .sort((a, b) => a[1].at - b[1].at)[0];
+      if (!due) break;
+      now = due[1].at;
+      timers.delete(due[0]);
+      due[1].callback();
+      await Promise.resolve();
+    }
+    now = end;
+    await Promise.resolve();
+  };
+  return { setTimer, clearTimer, advance, get pending() { return timers.size; } };
 };
 
 const createGateFixture = () => new JSDOM(`
@@ -343,12 +379,28 @@ test('reset clears the queue, canvas, progress, images, and every visual slot cl
   assert.equal(slot.querySelector('figcaption').getAttribute('aria-hidden'), 'true');
 });
 
-test('compact exit ignores bubbled child transitions and removes on the root opacity transition', async () => {
+test('full exit waits for both root opacity settlement and proven slit opacity zero', async () => {
   const dom = createFixture();
-  const { view, harness } = createInjectedView(dom.window.document);
+  let releaseGate;
+  const gate = new Promise((resolve) => { releaseGate = resolve; });
+  const { view, harness } = createInjectedView(dom.window.document, {
+    finish: () => gate
+  });
   const root = dom.window.document.getElementById('loadingScreen');
+  const slit = dom.window.document.getElementById('loadingLightSlit');
   const child = root.querySelector('.loading-intake');
-  const exiting = view.exit('compact');
+  slit.style.opacity = '1';
+
+  let ready = false;
+  const readySequence = view.playReadySequence('full').then(() => { ready = true; });
+  await Promise.resolve();
+  assert.equal(ready, false);
+  releaseGate();
+  await readySequence;
+
+  const exiting = view.exit('full');
+  assert.equal(root.classList.contains('is-exiting'), true);
+  assert.match(root.className, /is-exiting/);
 
   child.dispatchEvent(transitionEnd(dom.window, 'opacity', { bubbles: true }));
   await Promise.resolve();
@@ -359,16 +411,62 @@ test('compact exit ignores bubbled child transitions and removes on the root opa
   assert.equal(root.isConnected, true);
 
   root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
+  await Promise.resolve();
+  assert.equal(root.isConnected, true, 'root fade alone must not remove a visible slit');
+  assert.equal(harness.calls.includes('transition.destroy'), false);
+
+  slit.style.opacity = '0';
+  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-exposure'));
   await exiting;
   assert.equal(root.isConnected, false);
   assert.deepEqual(harness.calls.slice(-2), ['transition.destroy', 'particles.destroy']);
 });
 
-test('reduced exit destroys transition then particles without waiting', async () => {
+test('exit fallback preserves the slit tail and destroys controllers only after both bounds', async () => {
+  const dom = createFixture();
+  const timers = createTimerHarness();
+  const { view, harness } = createInjectedView(dom.window.document, {
+    viewOptions: {
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const root = dom.window.document.getElementById('loadingScreen');
+  const slit = dom.window.document.getElementById('loadingLightSlit');
+  slit.style.opacity = '1';
+  let settled = false;
+  const exiting = view.exit('compact').then(() => { settled = true; });
+
+  await timers.advance(POSTER_TIMING.finalExposure - POSTER_TIMING.exitLead - 1);
+  assert.equal(root.isConnected, true);
+  assert.equal(settled, false);
+  assert.equal(harness.calls.includes('transition.destroy'), false);
+
+  slit.style.opacity = '0';
+  await timers.advance(101);
+  assert.equal(root.isConnected, true, 'root fallback must still observe the 480ms fade');
+  assert.equal(harness.calls.includes('particles.destroy'), false);
+
+  await timers.advance(100);
+  await exiting;
+  assert.equal(root.isConnected, false);
+  assert.equal(settled, true);
+  assert.deepEqual(harness.calls.slice(-2), ['transition.destroy', 'particles.destroy']);
+});
+
+test('reduced exit uses only the 120ms linear root fade before cleanup', async () => {
   const dom = createFixture();
   const { view, harness } = createInjectedView(dom.window.document);
-  await view.exit('reduce');
+  const root = dom.window.document.getElementById('loadingScreen');
+  const exiting = view.exit('reduce');
 
+  assert.equal(root.classList.contains('is-exiting'), true);
+  assert.equal(root.isConnected, true);
+  assert.equal(harness.calls.includes('transition.destroy'), false);
+  root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
+  await exiting;
+
+  assert.equal(dom.window.document.querySelector('#loadingLightSlit')?.classList.contains('is-lit') ?? false, false);
   assert.deepEqual(harness.calls.slice(-2), ['transition.destroy', 'particles.destroy']);
   assert.equal(dom.window.document.getElementById('loadingScreen'), null);
 });
@@ -647,39 +745,52 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-light-slit\s*\{[^}]*z-index:\s*4/s);
   assert.match(loadingBlock, /\.loading-controls\s*\{[^}]*z-index:\s*5/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*object-fit:\s*contain/s);
-  assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*transition:\s*opacity 480ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*transition:\s*opacity 480ms cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
   assert.match(loadingBlock, /\.loading-frame\s*\{[^}]*visibility:\s*hidden/s);
   assert.match(loadingBlock, /\.loading-frame\.is-active,\s*\.loading-frame\.is-outgoing,\s*\.loading-frame\.is-failed\s*\{[^}]*visibility:\s*visible/s);
+  assert.doesNotMatch(extractCssBlock(loadingBlock, '.loading-frame'), /transition[^;]*opacity|opacity[^;]*transition/);
+  assert.doesNotMatch(loadingBlock, /clip-path/);
   assert.doesNotMatch(loadingBlock, /\.loading-frame\.is-active figcaption/);
   assert.match(loadingBlock, /\.loading-frame\.is-failed figcaption\s*\{[^}]*opacity:\s*1/s);
-  assert.equal(POSTER_TIMING.finalExposure, 640);
-  assert.match(loadingBlock, /--slit-duration:\s*320ms/);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*clip-path var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.equal(POSTER_TIMING.finalExposure, 560);
+  assert.equal(POSTER_TIMING.exitLead, 180);
+  assert.match(loadingBlock, /--slit-duration:\s*440ms/);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 440ms\) cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-reveal-ms, 440ms\) cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),
-    { 'transition-duration': 'var(--poster-scatter-ms, 260ms)' },
+    {
+      transition: 'opacity var(--poster-reveal-ms, 440ms) cubic-bezier(0.32, 0.72, 0, 1),\n                transform var(--poster-scatter-ms, 360ms) cubic-bezier(0.32, 0.72, 0, 1)'
+    },
     'outgoing scatter duration'
   );
 
   for (const [selector, transform] of [
+    ['.loading-frame[data-slit-direction="ltr"] .loading-image', 'translateX(-1.6%) scale(0.996)'],
+    ['.loading-frame[data-slit-direction="rtl"] .loading-image', 'translateX(1.6%) scale(0.996)'],
+    ['.loading-screen[data-motion-profile="compact"] .loading-frame[data-slit-direction="ltr"] .loading-image', 'translateX(-10px) scale(0.996)'],
+    ['.loading-screen[data-motion-profile="compact"] .loading-frame[data-slit-direction="rtl"] .loading-image', 'translateX(10px) scale(0.996)']
+  ]) {
+    expectDeclarations(extractCssBlock(loadingBlock, selector), { transform }, selector);
+  }
+
+  for (const [selector, transform] of [
     [
       '.loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
-      'translate3d(2.4%, -0.6%, 0) rotateX(1.2deg) scale(0.992)'
+      'translateX(1.2%) scale(0.992)'
     ],
     [
       '.loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
-      'translate3d(-2.4%, -0.6%, 0) rotateX(-1.2deg) scale(0.992)'
+      'translateX(-1.2%) scale(0.992)'
     ],
     [
       '.loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
-      'translate(14px, -2px) scale(0.992)'
+      'translateX(8px) scale(0.992)'
     ],
     [
       '.loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
-      'translate(-14px, -2px) scale(0.992)'
+      'translateX(-8px) scale(0.992)'
     ]
   ]) {
     expectDeclarations(extractCssBlock(loadingBlock, selector), { transform }, selector);
@@ -688,23 +799,23 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   for (const [selector, animation] of [
     [
       '.loading-light-slit.is-lit[data-direction="ltr"]',
-      'loading-slit-ltr var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+      'loading-slit-ltr var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
     ],
     [
       '.loading-light-slit.is-lit[data-direction="rtl"]',
-      'loading-slit-rtl var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+      'loading-slit-rtl var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-core',
-      'loading-curtain-core var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+      'loading-curtain-core var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-edge.is-warm',
-      'loading-curtain-warm var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+      'loading-curtain-warm var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-edge.is-cool',
-      'loading-curtain-cool var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+      'loading-curtain-cool var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
     ]
   ]) {
     expectDeclarations(extractCssBlock(loadingBlock, selector), { animation }, selector);
@@ -712,47 +823,47 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
 
   expectKeyframeStops(loadingBlock, 'loading-slit-ltr', {
     '0%': { opacity: '0', transform: 'translate(-150%, -50%) scaleX(0.004)' },
-    '16%': { opacity: '0.10' },
-    '42%': { opacity: '0.68' },
-    '64%': { opacity: '0.34' },
-    '82%': { opacity: '0.12' },
+    '12%': { opacity: '0.06' },
+    '30%': { opacity: '0.42' },
+    '52%': { opacity: '0.22' },
+    '76%': { opacity: '0.08' },
     '100%': { opacity: '0', transform: 'translate(50%, -50%) scaleX(0.004)' }
   });
 
   expectKeyframeStops(loadingBlock, 'loading-slit-rtl', {
     '0%': { opacity: '0', transform: 'translate(50%, -50%) scaleX(0.004)' },
-    '16%': { opacity: '0.10' },
-    '42%': { opacity: '0.68' },
-    '64%': { opacity: '0.34' },
-    '82%': { opacity: '0.12' },
+    '12%': { opacity: '0.06' },
+    '30%': { opacity: '0.42' },
+    '52%': { opacity: '0.22' },
+    '76%': { opacity: '0.08' },
     '100%': { opacity: '0', transform: 'translate(-150%, -50%) scaleX(0.004)' }
   });
 
   expectKeyframeStops(loadingBlock, 'loading-curtain-core', {
     '0%': { opacity: '0', transform: 'scaleX(0.08)' },
-    '42%': { opacity: '1', transform: 'scaleX(1)' },
-    '64%': { opacity: '0.46', transform: 'scaleX(0.72)' },
+    '30%': { opacity: '1', transform: 'scaleX(1)' },
+    '52%': { opacity: '0.46', transform: 'scaleX(0.72)' },
     '100%': { opacity: '0', transform: 'scaleX(0.18)' }
   });
 
   expectKeyframeStops(loadingBlock, 'loading-curtain-warm', {
     '0%': { opacity: '0', transform: 'translateX(8%) scaleX(0.04)' },
-    '42%': { opacity: '0.82', transform: 'translateX(0) scaleX(1)' },
-    '64%': { opacity: '0.34', transform: 'translateX(-10%) scaleX(0.80)' },
+    '30%': { opacity: '0.82', transform: 'translateX(0) scaleX(1)' },
+    '52%': { opacity: '0.34', transform: 'translateX(-10%) scaleX(0.80)' },
     '100%': { opacity: '0', transform: 'translateX(-18%) scaleX(0.56)' }
   });
 
   expectKeyframeStops(loadingBlock, 'loading-curtain-cool', {
     '0%': { opacity: '0', transform: 'translateX(-8%) scaleX(0.04)' },
-    '42%': { opacity: '0.78', transform: 'translateX(0) scaleX(1)' },
-    '64%': { opacity: '0.32', transform: 'translateX(10%) scaleX(0.80)' },
+    '30%': { opacity: '0.78', transform: 'translateX(0) scaleX(1)' },
+    '52%': { opacity: '0.32', transform: 'translateX(10%) scaleX(0.80)' },
     '100%': { opacity: '0', transform: 'translateX(18%) scaleX(0.56)' }
   });
 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-screen.is-final-exposure .loading-light-slit'),
     {
-      animation: `loading-final-exposure ${POSTER_TIMING.finalExposure}ms cubic-bezier(0.22, 1, 0.36, 1) both`
+      animation: `loading-final-exposure ${POSTER_TIMING.finalExposure}ms cubic-bezier(0.32, 0.72, 0, 1) both`
     },
     'final exposure duration sync'
   );
@@ -764,16 +875,21 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     '84%': { opacity: '0.10', transform: 'translate(-50%, -50%) scaleX(1)' },
     '100%': { opacity: '0', transform: 'translate(-50%, -50%) scaleX(1)' }
   });
-  assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-  assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-  assert.deepEqual(
-    loadingBlock.match(/transition:[^;]*linear;/g),
-    ['transition: opacity 120ms linear;']
-  );
+  assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
+  assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
+  assert.deepEqual(loadingBlock.match(/transition:[^;]*linear;/g), [
+    'transition: opacity 120ms linear;',
+    'transition: opacity 120ms linear;'
+  ]);
   assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image|\.loading-light-slit)[^{]*\{[^}]*(?:filter|box-shadow|backdrop-filter)\s*:/s);
   assert.doesNotMatch(loadingBlock, /letter-spacing:\s*-/);
   assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
-  assert.match(loadingBlock, /data-motion-profile="compact"[^{]*\{[^}]*perspective:\s*none/s);
+  assert.doesNotMatch(loadingBlock, /(?:perspective|rotate|translateY)\s*[:(]/);
+  const posterScales = [...loadingBlock.matchAll(/(?<!X)scale\(([0-9.]+)\)/g)]
+    .map(([, scale]) => Number(scale));
+  assert.ok(posterScales.length > 0);
+  assert.ok(posterScales.every((scale) => scale >= 0.992 && scale <= 1));
+  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\]\s*\{[^}]*transition:\s*opacity 120ms linear/s);
   assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\] \.loading-frame\s*\{[^}]*transition:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-particles[\s\S]*display:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-image[\s\S]*120ms/s);

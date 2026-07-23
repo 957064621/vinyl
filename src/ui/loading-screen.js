@@ -1,6 +1,6 @@
 import { CriticalAssetError } from '../media/asset-loader.js';
 import { createLightParticleField } from './light-particle-field.js';
-import { createPosterTransition } from './poster-transition.js';
+import { POSTER_TIMING, createPosterTransition } from './poster-transition.js';
 
 const twoDigits = (value) => String(value).padStart(2, '0');
 
@@ -45,13 +45,15 @@ const createNoopParticleField = (initialProfile) => {
 
 const waitForTransition = (element, {
   propertyName = 'opacity',
-  timeoutMs = 900
+  timeoutMs = 560,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout
 } = {}) => new Promise((resolve) => {
   let settled = false;
   let timer;
 
   const cleanup = () => {
-    clearTimeout(timer);
+    clearTimer(timer);
     element.removeEventListener('transitionend', handleTransitionEnd);
   };
   const finish = () => {
@@ -65,14 +67,56 @@ const waitForTransition = (element, {
     finish();
   };
 
-  timer = setTimeout(finish, timeoutMs);
+  timer = setTimer(finish, timeoutMs);
   element.addEventListener('transitionend', handleTransitionEnd);
+});
+
+const waitForSlitOpacityZero = (root, slit, {
+  windowRef,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout
+} = {}) => new Promise((resolve) => {
+  let settled = false;
+  let timer;
+  const opacityIsZero = () => {
+    const style = windowRef?.getComputedStyle?.(slit);
+    return (Number.parseFloat(style?.opacity ?? slit.style?.opacity) || 0) <= 0.001;
+  };
+  const cleanup = () => {
+    clearTimer(timer);
+    slit.removeEventListener('animationend', handleAnimationEnd);
+  };
+  const finish = () => {
+    if (settled || !opacityIsZero()) return;
+    settled = true;
+    cleanup();
+    resolve();
+  };
+  const handleAnimationEnd = (event) => {
+    if (event.target !== slit || event.animationName !== 'loading-final-exposure') return;
+    finish();
+  };
+
+  slit.addEventListener('animationend', handleAnimationEnd);
+  if (opacityIsZero() && !root.classList.contains('is-final-exposure')) {
+    finish();
+    return;
+  }
+
+  const exposureTail = POSTER_TIMING.finalExposure - POSTER_TIMING.exitLead;
+  timer = setTimer(() => {
+    slit.style.animation = 'none';
+    slit.style.opacity = '0';
+    finish();
+  }, exposureTail + 80);
 });
 
 export function createLoadingScreen(documentRef = document, {
   motionProfile = 'compact',
   particleFactory = createLightParticleField,
-  transitionFactory = createPosterTransition
+  transitionFactory = createPosterTransition,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout
 } = {}) {
   const root = documentRef.querySelector('#loadingScreen');
   const progress = documentRef.querySelector('#loadingProgress');
@@ -230,8 +274,21 @@ export function createLoadingScreen(documentRef = document, {
     },
     async exit(profile) {
       root.classList.add('is-exiting');
-      if (profile !== 'reduce') {
-        await waitForTransition(root, { timeoutMs: 900 });
+      if (profile === 'reduce') {
+        await waitForTransition(root, {
+          timeoutMs: 180,
+          setTimer,
+          clearTimer
+        });
+      } else {
+        await Promise.all([
+          waitForTransition(root, { setTimer, clearTimer }),
+          waitForSlitOpacityZero(root, slit, {
+            windowRef: documentRef.defaultView,
+            setTimer,
+            clearTimer
+          })
+        ]);
       }
       root.remove();
       try {

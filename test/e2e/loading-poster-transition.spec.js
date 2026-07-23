@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
 
 const FIXTURE_DELAY_STEP_MS = 160;
@@ -98,7 +99,12 @@ const installBrowserProbe = async (page) => {
       continuitySamples: 0,
       maxVisualLayers: 0,
       maxDominantPosters: 0,
-      minCompositeOpacity: 1
+      minCompositeOpacity: 1,
+      gatheredPixels: [],
+      scatterHandoffs: [],
+      clearedPixelCounts: [],
+      scatterStartFrameCount: null,
+      settledFrameCount: null
     };
 
     new PerformanceObserver((list) => {
@@ -117,10 +123,62 @@ const installBrowserProbe = async (page) => {
         const canvas = probe.canvas;
         if (!canvas) return;
         const phase = canvas.dataset.phase;
+        const frameCount = Number(canvas.dataset.frameCount) || 0;
         probe.phaseLeftIdle ||= Boolean(phase && phase !== 'idle');
+
+        const pixelMetrics = () => {
+          const { width, height } = canvas;
+          const pixels = canvas.getContext('2d').getImageData(0, 0, width, height).data;
+          let count = 0;
+          let left = width;
+          let top = height;
+          let right = -1;
+          let bottom = -1;
+          for (let index = 3; index < pixels.length; index += 4) {
+            if (pixels[index] === 0) continue;
+            const pixel = (index - 3) / 4;
+            const x = pixel % width;
+            const y = Math.floor(pixel / width);
+            count += 1;
+            left = Math.min(left, x);
+            top = Math.min(top, y);
+            right = Math.max(right, x);
+            bottom = Math.max(bottom, y);
+          }
+          return { count, bounds: count > 0 ? { left, top, right, bottom } : null };
+        };
+
+        if (phase === 'gathered') {
+          const last = probe.gatheredPixels.at(-1);
+          if (!last || last.frameCount !== frameCount) {
+            probe.gatheredPixels.push({ frameCount, ...pixelMetrics() });
+          }
+        }
+        if (phase === 'scatter' && probe.scatterStartFrameCount === null) {
+          probe.scatterStartFrameCount = frameCount;
+        }
+        if (phase === 'scatter' && frameCount > probe.scatterStartFrameCount) {
+          const gathered = probe.gatheredPixels.at(-1);
+          if (gathered && !probe.scatterHandoffs.some(({ gatheredFrameCount }) => (
+            gatheredFrameCount === gathered.frameCount
+          ))) {
+            probe.scatterHandoffs.push({
+              gatheredFrameCount: gathered.frameCount,
+              gathered: { count: gathered.count, bounds: gathered.bounds },
+              scattered: pixelMetrics()
+            });
+          }
+        }
+        if (phase === 'idle') {
+          probe.scatterStartFrameCount = null;
+          if (frameCount > 0 && probe.settledFrameCount !== frameCount) {
+            probe.settledFrameCount = frameCount;
+            probe.clearedPixelCounts.push(pixelMetrics().count);
+          }
+        }
         if (
           probe.firstRenderedFrameNontransparent !== null
-          || Number(canvas.dataset.frameCount) === 0
+          || frameCount === 0
         ) return;
 
         const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
@@ -205,6 +263,7 @@ const installBrowserProbe = async (page) => {
 
 test('single-poster loading sequence is bounded and settles', async ({ page }, testInfo) => {
   const reduce = testInfo.project.name === 'mobile-reduce';
+  const tracePath = testInfo.outputPath('loading-poster-transition-trace.zip');
   const stats = await installDeterministicCovers(page);
   await installBrowserProbe(page);
   await page.goto('./', { waitUntil: 'commit' });
@@ -248,7 +307,9 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   const effectEnd = await page.evaluate(() => performance.now());
 
   const framesAtExit = Number(await canvasHandle.evaluate((element) => element.dataset.frameCount));
-  await page.waitForTimeout(300);
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 120)));
+  }));
   const framesAfterWait = Number(await canvasHandle.evaluate((element) => element.dataset.frameCount));
   expect(framesAfterWait).toBe(framesAtExit);
 
@@ -260,7 +321,10 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     continuitySamples: window.__vinylLoadingProbe.continuitySamples,
     maxVisualLayers: window.__vinylLoadingProbe.maxVisualLayers,
     maxDominantPosters: window.__vinylLoadingProbe.maxDominantPosters,
-    minCompositeOpacity: window.__vinylLoadingProbe.minCompositeOpacity
+    minCompositeOpacity: window.__vinylLoadingProbe.minCompositeOpacity,
+    gatheredPixels: window.__vinylLoadingProbe.gatheredPixels,
+    scatterHandoffs: window.__vinylLoadingProbe.scatterHandoffs,
+    clearedPixelCounts: window.__vinylLoadingProbe.clearedPixelCounts
   }));
   expect(finalProbe.maxActive).toBe(1);
   if (reduce) {
@@ -270,12 +334,19 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   } else {
     expect(finalProbe.phaseLeftIdle).toBe(true);
     expect(finalProbe.firstRenderedFrameNontransparent).toBe(true);
+    expect(finalProbe.gatheredPixels.length).toBeGreaterThan(0);
+    expect(finalProbe.scatterHandoffs.length).toBeGreaterThan(0);
+    for (const handoff of finalProbe.scatterHandoffs) {
+      expect(handoff.scattered).toEqual(handoff.gathered);
+    }
+    expect(finalProbe.clearedPixelCounts.length).toBeGreaterThan(0);
+    expect(finalProbe.clearedPixelCounts.every((count) => count === 0)).toBe(true);
   }
   if (!reduce) {
     expect(finalProbe.continuitySamples).toBeGreaterThan(3);
     expect(finalProbe.maxVisualLayers).toBeLessThanOrEqual(2);
     expect(finalProbe.maxDominantPosters).toBeLessThanOrEqual(1);
-    expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.70);
+    expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.90);
   }
   expect(finalProbe.activeIds).toEqual([
     'archive-01',
@@ -296,6 +367,34 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     ))
   ), { end: effectEnd });
   expect(effectLongTasks.filter(({ duration }) => duration > 50)).toEqual([]);
+  expect(await canvasHandle.evaluate((canvas) => {
+    if (canvas.width === 0 || canvas.height === 0) return true;
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] !== 0) return false;
+    }
+    return true;
+  })).toBe(true);
+
+  await page.context().tracing.stop({ path: tracePath });
+  await testInfo.attach('loading-poster-transition-trace.zip', {
+    path: tracePath,
+    contentType: 'application/zip'
+  });
+  const metricsPath = testInfo.outputPath('loading-poster-transition-metrics.json');
+  await writeFile(metricsPath, JSON.stringify({
+    project: testInfo.project.name,
+    framesAtExit,
+    framesAfterWait,
+    requestCount: stats.total,
+    maxRequestConcurrency: stats.maxActive,
+    effectLongTasks,
+    ...finalProbe
+  }, null, 2));
+  await testInfo.attach('loading-poster-transition-metrics.json', {
+    path: metricsPath,
+    contentType: 'application/json'
+  });
 });
 
 test('captures the loading poster visual', async ({ page }, testInfo) => {

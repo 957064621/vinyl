@@ -178,7 +178,7 @@
 
         .loading-screen {
             --loading-progress: 0;
-            --slit-duration: 320ms;
+            --slit-duration: 440ms;
             box-sizing: border-box;
             position: fixed;
             inset: 0;
@@ -191,7 +191,7 @@
             overflow: hidden;
             background: #070a12;
             opacity: 1;
-            transition: opacity 480ms cubic-bezier(0.22, 1, 0.36, 1);
+            transition: opacity 480ms cubic-bezier(0.32, 0.72, 0, 1);
         }
 
         .loading-screen.is-exiting {
@@ -230,7 +230,6 @@
             position: absolute;
             inset: 48px 0 72px;
             min-height: 0;
-            perspective: 900px;
         }
 
         .loading-poster-stack,
@@ -241,7 +240,6 @@
 
         .loading-poster-stack {
             z-index: 2;
-            transform-style: preserve-3d;
         }
 
         .loading-frame {
@@ -252,11 +250,10 @@
             height: 100%;
             margin: auto;
             overflow: hidden;
-            opacity: 0;
+            opacity: 1;
             visibility: hidden;
             pointer-events: none;
             transform-origin: center;
-            transition: opacity 80ms cubic-bezier(0.22, 1, 0.36, 1);
         }
 
         .loading-frame:nth-child(2) {
@@ -307,34 +304,39 @@
             height: 100%;
             object-fit: contain;
             opacity: 0;
-            transform: scale(0.985);
-            clip-path: polygon(49.8% 0, 50.2% 0, 50.2% 100%, 49.8% 100%);
+            transform: scale(0.996);
             transition:
-                opacity var(--poster-reveal-ms, 320ms) cubic-bezier(0.22, 1, 0.36, 1),
-                transform var(--poster-reveal-ms, 320ms) cubic-bezier(0.22, 1, 0.36, 1),
-                clip-path var(--poster-reveal-ms, 320ms) cubic-bezier(0.22, 1, 0.36, 1);
+                opacity var(--poster-reveal-ms, 440ms) cubic-bezier(0.32, 0.72, 0, 1),
+                transform var(--poster-reveal-ms, 440ms) cubic-bezier(0.32, 0.72, 0, 1);
+        }
+
+        .loading-frame[data-slit-direction="ltr"] .loading-image {
+            transform: translateX(-1.6%) scale(0.996);
+        }
+
+        .loading-frame[data-slit-direction="rtl"] .loading-image {
+            transform: translateX(1.6%) scale(0.996);
         }
 
         .loading-frame.is-active .loading-image {
             opacity: 1;
-            transform: translate3d(0, 0, 0) rotateX(0deg) scale(1);
-            clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+            transform: translateX(0) scale(1);
         }
 
         .loading-frame.is-scattering .loading-image {
-            transition-duration: var(--poster-scatter-ms, 260ms);
+            transition:
+                opacity var(--poster-reveal-ms, 440ms) cubic-bezier(0.32, 0.72, 0, 1),
+                transform var(--poster-scatter-ms, 360ms) cubic-bezier(0.32, 0.72, 0, 1);
         }
 
         .loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image {
             opacity: 0;
-            transform: translate3d(2.4%, -0.6%, 0) rotateX(1.2deg) scale(0.992);
-            clip-path: polygon(7% 3%, 100% 0, 94% 96%, 0 100%);
+            transform: translateX(1.2%) scale(0.992);
         }
 
         .loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image {
             opacity: 0;
-            transform: translate3d(-2.4%, -0.6%, 0) rotateX(-1.2deg) scale(0.992);
-            clip-path: polygon(0 0, 93% 3%, 100% 100%, 6% 96%);
+            transform: translateX(-1.2%) scale(0.992);
         }
 
         .loading-particles {
@@ -382,27 +384,27 @@
         }
 
         .loading-light-slit.is-lit[data-direction="ltr"] {
-            animation: loading-slit-ltr var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+            animation: loading-slit-ltr var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both;
         }
 
         .loading-light-slit.is-lit[data-direction="rtl"] {
-            animation: loading-slit-rtl var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+            animation: loading-slit-rtl var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both;
         }
 
         .loading-light-slit.is-lit .loading-light-core {
-            animation: loading-curtain-core var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+            animation: loading-curtain-core var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both;
         }
 
         .loading-light-slit.is-lit .loading-light-edge.is-warm {
-            animation: loading-curtain-warm var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+            animation: loading-curtain-warm var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both;
         }
 
         .loading-light-slit.is-lit .loading-light-edge.is-cool {
-            animation: loading-curtain-cool var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+            animation: loading-curtain-cool var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both;
         }
 
         .loading-screen.is-final-exposure .loading-light-slit {
-            animation: loading-final-exposure 640ms cubic-bezier(0.22, 1, 0.36, 1) both;
+            animation: loading-final-exposure 560ms cubic-bezier(0.32, 0.72, 0, 1) both;
         }
 
         .loading-progress-rail {
@@ -421,7 +423,7 @@
             width: calc(var(--loading-progress) * 20%);
             height: 100%;
             background: #edf7ff;
-            transition: width 180ms cubic-bezier(0.22, 1, 0.36, 1);
+            transition: width 180ms cubic-bezier(0.32, 0.72, 0, 1);
         }
 
         .loading-status {
@@ -437,7 +439,7 @@
             font-size: 12px;
             line-height: 1.5;
             letter-spacing: 0;
-            transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+            transition: opacity 0.24s cubic-bezier(0.32, 0.72, 0, 1);
         }
 
         .loading-screen[data-state="error"] .loading-copy {
@@ -461,25 +463,29 @@
             display: none;
         }
 
-        .loading-screen[data-motion-profile="compact"] .loading-stage {
-            perspective: none;
+        .loading-screen[data-motion-profile="compact"] .loading-frame[data-slit-direction="ltr"] .loading-image {
+            transform: translateX(-10px) scale(0.996);
         }
 
-        .loading-screen[data-motion-profile="compact"] .loading-poster-stack {
-            transform-style: flat;
+        .loading-screen[data-motion-profile="compact"] .loading-frame[data-slit-direction="rtl"] .loading-image {
+            transform: translateX(10px) scale(0.996);
         }
 
         .loading-screen[data-motion-profile="compact"] .loading-frame.is-active .loading-image {
             z-index: 0;
-            transform: translate(0, 0) scale(1);
+            transform: translateX(0) scale(1);
         }
 
         .loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image {
-            transform: translate(14px, -2px) scale(0.992);
+            transform: translateX(8px) scale(0.992);
         }
 
         .loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image {
-            transform: translate(-14px, -2px) scale(0.992);
+            transform: translateX(-8px) scale(0.992);
+        }
+
+        .loading-screen[data-motion-profile="reduce"] {
+            transition: opacity 120ms linear;
         }
 
         .loading-screen[data-motion-profile="reduce"] .loading-particles,
@@ -493,7 +499,6 @@
 
         .loading-screen[data-motion-profile="reduce"] .loading-image {
             transform: none;
-            clip-path: none;
             transition: opacity 120ms linear;
         }
 
@@ -502,17 +507,17 @@
                 opacity: 0;
                 transform: translate(-150%, -50%) scaleX(0.004);
             }
-            16% {
-                opacity: 0.10;
+            12% {
+                opacity: 0.06;
             }
-            42% {
-                opacity: 0.68;
+            30% {
+                opacity: 0.42;
             }
-            64% {
-                opacity: 0.34;
+            52% {
+                opacity: 0.22;
             }
-            82% {
-                opacity: 0.12;
+            76% {
+                opacity: 0.08;
             }
             100% {
                 opacity: 0;
@@ -525,17 +530,17 @@
                 opacity: 0;
                 transform: translate(50%, -50%) scaleX(0.004);
             }
-            16% {
-                opacity: 0.10;
+            12% {
+                opacity: 0.06;
             }
-            42% {
-                opacity: 0.68;
+            30% {
+                opacity: 0.42;
             }
-            64% {
-                opacity: 0.34;
+            52% {
+                opacity: 0.22;
             }
-            82% {
-                opacity: 0.12;
+            76% {
+                opacity: 0.08;
             }
             100% {
                 opacity: 0;
@@ -548,11 +553,11 @@
                 opacity: 0;
                 transform: scaleX(0.08);
             }
-            42% {
+            30% {
                 opacity: 1;
                 transform: scaleX(1);
             }
-            64% {
+            52% {
                 opacity: 0.46;
                 transform: scaleX(0.72);
             }
@@ -567,11 +572,11 @@
                 opacity: 0;
                 transform: translateX(8%) scaleX(0.04);
             }
-            42% {
+            30% {
                 opacity: 0.82;
                 transform: translateX(0) scaleX(1);
             }
-            64% {
+            52% {
                 opacity: 0.34;
                 transform: translateX(-10%) scaleX(0.80);
             }
@@ -586,11 +591,11 @@
                 opacity: 0;
                 transform: translateX(-8%) scaleX(0.04);
             }
-            42% {
+            30% {
                 opacity: 0.78;
                 transform: translateX(0) scaleX(1);
             }
-            64% {
+            52% {
                 opacity: 0.32;
                 transform: translateX(10%) scaleX(0.80);
             }
@@ -3146,14 +3151,6 @@
                 transition: opacity 120ms linear !important;
             }
 
-            .loading-stage {
-                perspective: none !important;
-            }
-
-            .loading-poster-stack {
-                transform-style: flat !important;
-            }
-
             .loading-particles,
             .loading-light-slit {
                 display: none !important;
@@ -3162,7 +3159,6 @@
             .loading-frame,
             .loading-image {
                 transform: none !important;
-                clip-path: none !important;
             }
 
             .loading-image {

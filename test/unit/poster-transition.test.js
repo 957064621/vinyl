@@ -161,19 +161,22 @@ const makeFixture = ({
   };
 };
 
-test('timing tables are deeply frozen and preserve exact Visual 6 wall times', () => {
+test('timing tables are deeply frozen and preserve exact Visual 7 wall times', () => {
   assert.deepEqual(POSTER_TIMING, {
-    normal: { gather: 180, scatter: 260, reveal: 320, hold: 300 },
-    fast: { gather: 80, scatter: 150, reveal: 180, hold: 180 },
-    finalHold: 560,
-    finalExposure: 640,
+    normal: { gather: 140, scatter: 360, reveal: 440, hold: 220 },
+    fast: { gather: 80, scatter: 240, reveal: 300, hold: 120 },
+    finalHold: 420,
+    finalExposure: 560,
+    exitLead: 180,
     reduceFade: 120
   });
   const wallTime = ({ gather, scatter, reveal, hold }) => (
     gather + Math.max(scatter, reveal) + hold
   );
   assert.equal(wallTime(POSTER_TIMING.normal), 800);
-  assert.equal(wallTime(POSTER_TIMING.fast), 440);
+  assert.equal(wallTime(POSTER_TIMING.fast), 500);
+  assert.equal(POSTER_TIMING.exitLead, 180);
+  assert.equal(POSTER_TIMING.finalExposure - POSTER_TIMING.exitLead, 380);
   assert.equal(Object.isFrozen(POSTER_TIMING), true);
   assert.equal(Object.isFrozen(POSTER_TIMING.normal), true);
   assert.equal(Object.isFrozen(POSTER_TIMING.fast), true);
@@ -328,7 +331,7 @@ test('rapid backlog stays compressed through one drain and a later isolated run 
     (slot) => slot.style.getPropertyValue('--poster-reveal-ms')
       === String(POSTER_TIMING.fast.reveal) + 'ms'
   ));
-  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.exitLead, POSTER_TIMING.finalExposure]);
   scheduler.releaseNext();
   await finishing;
 
@@ -375,7 +378,7 @@ test('finish after an idle normal scene adds only the unread final hold remainde
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalHold - POSTER_TIMING.normal.hold]);
   scheduler.releaseNext();
   await flush();
-  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.exitLead, POSTER_TIMING.finalExposure]);
   scheduler.releaseNext();
   await finishing;
 });
@@ -397,7 +400,7 @@ test('finish during a pre-classified normal hold waits its remainder before expo
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalHold - POSTER_TIMING.normal.hold]);
   scheduler.releaseNext();
   await flush();
-  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.exitLead, POSTER_TIMING.finalExposure]);
   scheduler.releaseNext();
   await finishing;
 });
@@ -709,9 +712,9 @@ test('enqueue defers collaborators to one microtask and stale reservations canno
   assert.equal(destroyed.particleCalls.length, callsAfterDestroy);
 });
 
-test('waitForIdle settles before finish completes its final exposure', async () => {
+test('finish resolves at the 180ms exit gate and stale exposure completion cannot mutate reset', async () => {
   const scheduler = makeManualScheduler();
-  const { controller, slots } = makeFixture({ scheduler });
+  const { controller, root, slots } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
   let idle = false;
   let finished = false;
@@ -726,10 +729,22 @@ test('waitForIdle settles before finish completes its final exposure', async () 
   }
 
   assert.equal(finished, false);
-  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+  assert.equal(root.classList.contains('is-final-exposure'), true);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.exitLead, POSTER_TIMING.finalExposure]);
   scheduler.releaseNext();
   await flush();
   assert.equal(finished, true);
+  assert.equal(root.dataset.transitionSettled, 'true');
+  assert.equal(root.classList.contains('is-final-exposure'), true);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
+
+  controller.reset();
+  controller.enqueue(slots[1]);
+  scheduler.releaseNext();
+  await flush();
+  assert.equal(root.classList.contains('is-final-exposure'), false);
+  assert.equal(root.dataset.transitionSettled, undefined);
+  assert.equal(controller.getState().activeId, null);
 });
 
 test('reset starts a new run immediately and stale particle completion cannot reactivate the old poster', async () => {

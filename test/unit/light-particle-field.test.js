@@ -9,6 +9,8 @@ import {
 
 const createContext = () => {
   const calls = [];
+  let fillStyle = '';
+  let strokeStyle = '';
   const context = {
     calls,
     setTransform: (...args) => calls.push(['setTransform', ...args]),
@@ -20,8 +22,49 @@ const createContext = () => {
     lineTo: (...args) => calls.push(['lineTo', ...args]),
     stroke: () => calls.push(['stroke'])
   };
+  Object.defineProperties(context, {
+    fillStyle: {
+      get: () => fillStyle,
+      set(value) {
+        fillStyle = value;
+        calls.push(['fillStyle', value]);
+      }
+    },
+    strokeStyle: {
+      get: () => strokeStyle,
+      set(value) {
+        strokeStyle = value;
+        calls.push(['strokeStyle', value]);
+      }
+    }
+  });
   return context;
 };
+
+const renderedFrames = (calls) => {
+  const frames = [];
+  let frame = null;
+  for (const call of calls) {
+    if (call[0] === 'clearRect') {
+      if (frame?.some(([name]) => name === 'arc')) frames.push(frame);
+      frame = [];
+      continue;
+    }
+    frame?.push(call);
+  }
+  if (frame?.some(([name]) => name === 'arc')) frames.push(frame);
+  return frames;
+};
+
+const renderFingerprint = (frame) => frame.filter(([name]) => (
+  name === 'arc'
+  || name === 'moveTo'
+  || name === 'lineTo'
+  || name === 'fillStyle'
+  || name === 'strokeStyle'
+));
+
+const lastRenderFingerprint = (calls) => renderFingerprint(renderedFrames(calls).at(-1));
 
 const createScheduler = () => {
   let nextId = 1;
@@ -156,7 +199,7 @@ test('exports exact frozen profiles and caps backing-store DPR', () => {
   compact.destroy();
 });
 
-test('gather renders 64 bounded particles and settles without a frame leak', async () => {
+test('gather renders 64 bounded particles and retains its final pixels without an idle frame', async () => {
   const fixture = createFixture();
   const field = createField(fixture, 'full');
   const gathering = field.gather({ left: -50, top: 40, right: 500, bottom: 150 });
@@ -176,28 +219,82 @@ test('gather renders 64 bounded particles and settles without a frame leak', asy
     .flatMap(([, x, y]) => [x, y]);
   assert.ok(coordinates.every(Number.isFinite));
   assert.equal(fixture.scheduler.pendingCount, 0);
-  assert.equal(fixture.canvas.dataset.phase, 'idle');
+  assert.equal(fixture.canvas.dataset.phase, 'gathered');
   assert.ok(Number(fixture.canvas.dataset.frameCount) > 0);
   assert.equal(field.getState().animating, false);
+  assert.equal(field.getState().particleCount, 64);
+  assert.equal(renderedFrames(fixture.context.calls).at(-1).filter(([name]) => name === 'arc').length, 64);
   field.destroy();
 });
 
-test('scatter renders 28 particles and a replacement command settles the prior promise', async () => {
+test('scatter starts from the exact gathered render and only then clears on settlement', async () => {
   const fixture = createFixture();
   const field = createField(fixture, 'compact');
   const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 });
-  const scattering = field.scatter({ left: 60, top: 50, width: 100, height: 80 });
-
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(PARTICLE_PROFILES.compact.gatherMs);
   await gathering;
+  assert.equal(fixture.canvas.dataset.phase, 'gathered');
+  assert.equal(field.getState().animating, false);
+  assert.equal(fixture.scheduler.pendingCount, 0, 'gathered particles must not keep an idle RAF');
+  const gatheredFingerprint = lastRenderFingerprint(fixture.context.calls);
+  const gatheredFrameCount = renderedFrames(fixture.context.calls).length;
+
+  const scattering = field.scatter({ left: 60, top: 50, width: 100, height: 80 });
+  fixture.scheduler.step(PARTICLE_PROFILES.compact.gatherMs);
+  const scatterFrames = renderedFrames(fixture.context.calls);
+  assert.deepEqual(renderFingerprint(scatterFrames[gatheredFrameCount]), gatheredFingerprint);
   assert.equal(field.getState().particleCount, 28);
   assert.equal(fixture.scheduler.pendingCount, 1);
   assert.equal(fixture.canvas.dataset.phase, 'scatter');
 
-  await runToIdle(fixture, scattering, { step: 30 });
+  await runToIdle(fixture, scattering, {
+    start: PARTICLE_PROFILES.compact.gatherMs + 30,
+    step: 30
+  });
   assert.ok(fixture.context.calls.filter(([name]) => name === 'stroke').length >= 28);
   assert.equal(fixture.scheduler.pendingCount, 0);
   assert.equal(fixture.canvas.dataset.phase, 'idle');
+  const lastClearIndex = fixture.context.calls.findLastIndex(([name]) => name === 'clearRect');
+  assert.equal(fixture.context.calls.slice(lastClearIndex + 1).some(([name]) => name === 'arc'), false);
   field.destroy();
+});
+
+test('reduce, clear, render failure, profile replacement, and destroy erase and settle work', async () => {
+  const cases = [
+    ['clear', (field) => field.clear()],
+    ['reduce', (field) => field.setProfile('reduce')],
+    ['replacement', (field) => field.setProfile('full')],
+    ['destroy', (field) => field.destroy()]
+  ];
+
+  for (const [, cancel] of cases) {
+    const fixture = createFixture();
+    const field = createField(fixture, 'compact');
+    const pending = field.gather({ left: 60, top: 50, width: 100, height: 80 });
+    fixture.scheduler.step(0);
+    cancel(field);
+    await pending;
+    assert.equal(fixture.scheduler.pendingCount, 0);
+    assert.equal(fixture.canvas.dataset.phase, 'idle');
+    assert.equal(field.getState().animating, false);
+    if (!field.getState().destroyed) field.destroy();
+  }
+
+  const failureFixture = createFixture();
+  const originalArc = failureFixture.context.arc;
+  failureFixture.context.arc = (...args) => {
+    originalArc(...args);
+    throw new Error('render failed');
+  };
+  const failureField = createField(failureFixture, 'compact');
+  const failed = failureField.gather({ left: 60, top: 50, width: 100, height: 80 });
+  assert.doesNotThrow(() => failureFixture.scheduler.step(0));
+  await failed;
+  assert.equal(failureFixture.scheduler.pendingCount, 0);
+  assert.equal(failureFixture.canvas.dataset.phase, 'idle');
+  assert.equal(failureField.getState().animating, false);
+  failureField.destroy();
 });
 
 test('a copied stale frame cannot mutate or duplicate a replacement command frame', async () => {
@@ -274,7 +371,7 @@ test('visibility pause cancels its frame and excludes hidden wall time on one-fr
 
   await gathering;
   assert.equal(fixture.scheduler.pendingCount, 0);
-  assert.equal(fixture.canvas.dataset.phase, 'idle');
+  assert.equal(fixture.canvas.dataset.phase, 'gathered');
   field.destroy();
 });
 
