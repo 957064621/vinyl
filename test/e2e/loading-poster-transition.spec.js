@@ -2,14 +2,24 @@ import { test, expect } from '@playwright/test';
 import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
 
 const FIXTURE_DELAY_STEP_MS = 160;
+const EXPECTED_ARCHIVE_IDS = Object.freeze([
+  'archive-01',
+  'archive-02',
+  'archive-03',
+  'archive-04',
+  'archive-05'
+]);
 
-const COVER_FIXTURES = new Map(CRITICAL_IMAGE_MANIFEST.map((asset, index) => {
+const COVER_FIXTURES = new Map(EXPECTED_ARCHIVE_IDS.map((id, index) => {
+  const asset = CRITICAL_IMAGE_MANIFEST.find((entry) => entry.id === id);
+  if (!asset) throw new Error(`Missing deterministic cover fixture: ${id}`);
   const fixtureIndex = index + 1;
   return [
     new URL(asset.source).pathname,
     { fixtureIndex, delayMs: fixtureIndex * FIXTURE_DELAY_STEP_MS }
   ];
 }));
+const EXPECTED_COVER_PATHNAMES = [...COVER_FIXTURES.keys()].sort();
 
 const coverSvg = (index) => Buffer.from(`
   <svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800">
@@ -21,17 +31,34 @@ const coverSvg = (index) => Buffer.from(`
 `);
 
 const installDeterministicCovers = async (page) => {
-  const stats = { active: 0, maxActive: 0, total: 0 };
+  expect(CRITICAL_IMAGE_MANIFEST.map(({ id }) => id)).toEqual(EXPECTED_ARCHIVE_IDS);
+  const stats = {
+    active: 0,
+    maxActive: 0,
+    total: 0,
+    pathnames: [],
+    unknownPathnames: []
+  };
   await page.route('**/*', async (route) => {
-    const fixture = COVER_FIXTURES.get(new URL(route.request().url()).pathname);
-    if (route.request().resourceType() !== 'image' || !fixture) {
+    const request = route.request();
+    if (request.resourceType() !== 'image') {
       await route.continue();
       return;
     }
+
+    const pathname = new URL(request.url()).pathname;
     stats.active += 1;
     stats.total += 1;
+    stats.pathnames.push(pathname);
     stats.maxActive = Math.max(stats.maxActive, stats.active);
+    const fixture = COVER_FIXTURES.get(pathname);
+    if (!fixture) stats.unknownPathnames.push(pathname);
+
     try {
+      if (!fixture) {
+        await route.abort('blockedbyclient');
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, fixture.delayMs));
       await route.fulfill({
         status: 200,
@@ -43,6 +70,14 @@ const installDeterministicCovers = async (page) => {
     }
   });
   return stats;
+};
+
+const expectExactCoverRequests = (stats) => {
+  expect(stats.active).toBe(0);
+  expect(stats.total).toBe(EXPECTED_ARCHIVE_IDS.length);
+  expect([...stats.pathnames].sort()).toEqual(EXPECTED_COVER_PATHNAMES);
+  expect(stats.unknownPathnames).toEqual([]);
+  expect(stats.maxActive).toBeLessThanOrEqual(2);
 };
 
 const installBrowserProbe = async (page) => {
@@ -208,8 +243,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
 
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
   await expect(page.locator('#appRoot')).not.toHaveAttribute('aria-hidden', 'true');
-  expect(stats.total).toBe(5);
-  expect(stats.maxActive).toBeLessThanOrEqual(2);
+  expectExactCoverRequests(stats);
 
   const effectLongTasks = await page.evaluate(({ end }) => (
     window.__vinylLongTasks.filter((entry) => (
@@ -221,8 +255,9 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
 });
 
 test('captures the loading poster visual', async ({ page }, testInfo) => {
-  await installDeterministicCovers(page);
+  const stats = await installDeterministicCovers(page);
   await page.goto('./', { waitUntil: 'commit' });
+  const loading = page.locator('#loadingScreen');
 
   await page.waitForFunction(() => {
     const loadingScreen = document.querySelector('#loadingScreen');
@@ -235,4 +270,7 @@ test('captures the loading poster visual', async ({ page }, testInfo) => {
   await page.screenshot({
     path: testInfo.outputPath(`loading-${testInfo.project.name}.png`)
   });
+
+  await expect(loading).toHaveCount(0, { timeout: 10_000 });
+  expectExactCoverRequests(stats);
 });
