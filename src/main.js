@@ -357,6 +357,8 @@ startCriticalAssetGate({
         };
 
         const resetRejectedPlaybackVisual = () => {
+            tonearmTween.cancel();
+            rateTween.cancel();
             turntable.classList.remove('is-playing');
             spinAnimation.pause();
             sheenAnimation.pause();

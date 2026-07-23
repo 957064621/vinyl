@@ -10,6 +10,7 @@ export function createAudioController({
 }) {
     let track = null;
     let requestId = 0;
+    let playGeneration = 0;
     let status = 'idle';
     let error = null;
 
@@ -47,6 +48,7 @@ export function createAudioController({
         publish();
     };
     const onError = () => {
+        playGeneration += 1;
         audio.pause();
         setStatus('error', new Error(`Audio failed: ${track?.title || 'unknown'}`));
     };
@@ -56,7 +58,11 @@ export function createAudioController({
     const onPause = () => {
         if (status !== 'error') setStatus('paused');
     };
-    const handleEnded = () => onEnded(track);
+    const handleEnded = () => {
+        playGeneration += 1;
+        setStatus('paused');
+        onEnded(track);
+    };
     const handleTimeUpdate = () => {
         updatePositionState();
         onTimeUpdate({
@@ -76,6 +82,7 @@ export function createAudioController({
 
     const load = async (nextTrack) => {
         const id = ++requestId;
+        playGeneration += 1;
         track = nextTrack;
         if (!nextTrack?.musicOssUrl) {
             audio.pause();
@@ -115,6 +122,8 @@ export function createAudioController({
         if (!track?.musicOssUrl) throw new Error('No audio track is loaded');
         if (signal?.aborted) return false;
         const id = requestId;
+        const generation = ++playGeneration;
+        const isCurrentAttempt = () => id === requestId && generation === playGeneration;
         setStatus('loading');
         let abort;
         const aborted = new Promise((resolve) => {
@@ -134,9 +143,10 @@ export function createAudioController({
 
         try {
             const result = signal ? await Promise.race([attempt, aborted]) : await attempt;
-            if (result.aborted || id !== requestId) {
+            if (!isCurrentAttempt()) return false;
+            if (result.aborted) {
                 audio.pause();
-                if (id === requestId) setStatus('paused');
+                setStatus('paused');
                 return false;
             }
             if (result.playError) throw result.playError;
@@ -144,6 +154,7 @@ export function createAudioController({
             updatePositionState();
             return true;
         } catch (nextError) {
+            if (!isCurrentAttempt()) return false;
             audio.pause();
             setStatus('error', nextError);
             throw nextError;
@@ -209,7 +220,10 @@ export function createAudioController({
     return {
         load,
         play,
-        pause() { audio.pause(); },
+        pause() {
+            playGeneration += 1;
+            audio.pause();
+        },
         async retry() {
             if (!track?.musicOssUrl) throw new Error('No audio track is loaded');
             audio.load();
@@ -225,6 +239,7 @@ export function createAudioController({
         getState() { return { status, error, track }; },
         destroy() {
             requestId += 1;
+            playGeneration += 1;
             audio.removeEventListener('error', onError);
             audio.removeEventListener('play', onPlay);
             audio.removeEventListener('pause', onPause);
