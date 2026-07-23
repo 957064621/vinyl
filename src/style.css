@@ -71,6 +71,11 @@
             inherits: true;
             initial-value: #121a28;
         }
+        @property --btn-flow-angle {
+            syntax: "<angle>";
+            inherits: false;
+            initial-value: 0deg;
+        }
 
         * {
             box-sizing: border-box;
@@ -1374,6 +1379,74 @@
             overflow: hidden;
             z-index: 2;
             pointer-events: none;
+        }
+
+        .btn-sheen::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            padding: 1px;
+            border-radius: inherit;
+            background: conic-gradient(from var(--btn-flow-angle),
+                transparent 0deg 328deg,
+                color-mix(in srgb, var(--cover-b) 22%, transparent) 333deg,
+                color-mix(in srgb, var(--cover-a) 42%, transparent) 342deg,
+                rgba(238, 248, 255, 0.96) 350deg,
+                color-mix(in srgb, var(--cover-a) 24%, transparent) 356deg,
+                transparent 360deg);
+            -webkit-mask:
+                linear-gradient(#000 0 0) content-box,
+                linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask:
+                linear-gradient(#000 0 0) content-box,
+                linear-gradient(#000 0 0);
+            mask-composite: exclude;
+            opacity: 0;
+        }
+
+        @supports (background: conic-gradient(from 0deg, transparent, white)) {
+            .btn-sheen::before {
+                animation:
+                    btn-perimeter-orbit-full 7200ms cubic-bezier(0.4, 0, 0.2, 1) infinite,
+                    btn-perimeter-fade-full 7200ms linear infinite;
+            }
+        }
+
+        @keyframes btn-perimeter-orbit-full {
+            0% { --btn-flow-angle: 0deg; }
+            16.667%, 100% { --btn-flow-angle: 1turn; }
+        }
+
+        @keyframes btn-perimeter-fade-full {
+            0%, 16.667%, 100% { opacity: 0; }
+            8.333% { opacity: 0.72; }
+        }
+
+        @keyframes btn-perimeter-orbit-compact {
+            0% { --btn-flow-angle: 0deg; }
+            12.5%, 100% { --btn-flow-angle: 1turn; }
+        }
+
+        @keyframes btn-perimeter-fade-compact {
+            0%, 12.5%, 100% { opacity: 0; }
+            6.25% { opacity: 0.58; }
+        }
+
+        @media (hover: none) and (pointer: coarse) {
+            .btn-sheen::before {
+                animation:
+                    btn-perimeter-orbit-compact 9600ms cubic-bezier(0.4, 0, 0.2, 1) infinite,
+                    btn-perimeter-fade-compact 9600ms linear infinite;
+            }
+        }
+
+        .play-btn[data-busy] .btn-sheen::before,
+        body.has-lyric-overlay .btn-sheen::before,
+        body.has-playlist-overlay .btn-sheen::before,
+        #loadingScreen ~ #appRoot .btn-sheen::before {
+            animation: none;
+            opacity: 0;
         }
 
         .btn-sheen::after {
@@ -3305,10 +3378,15 @@
             .vinyl-highlight,
             .play-btn::before,
             .play-btn::after,
+            .btn-sheen::before,
             .btn-sheen::after,
             .lyric-toggle-btn::before,
             .playlist-toggle-btn::before {
                 animation: none !important;
                 transition: none !important;
+            }
+
+            .btn-sheen::before {
+                opacity: 0 !important;
             }
         }
