@@ -323,7 +323,7 @@ test('reset clears the queue, canvas, progress, images, and every visual slot cl
   const image = dom.window.document.createElement('img');
   slot.append(image);
   slot.dataset.status = 'failed';
-  slot.classList.add('is-ready', 'is-failed', 'is-active', 'is-revealing', 'is-scattering', 'is-stable');
+  slot.classList.add('is-ready', 'is-failed', 'is-active', 'is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
   root.dataset.errorKind = 'visual';
   root.classList.add('is-final-exposure', 'is-exiting');
   root.style.setProperty('--loading-progress', '4');
@@ -337,6 +337,7 @@ test('reset clears the queue, canvas, progress, images, and every visual slot cl
   assert.equal(root.classList.contains('is-exiting'), false);
   assert.equal(root.style.getPropertyValue('--loading-progress'), '0');
   assert.equal(slot.dataset.status, undefined);
+  assert.equal(slot.classList.contains('is-outgoing'), false);
   assert.equal(slot.className, 'loading-frame');
   assert.equal(slot.querySelector('img'), null);
   assert.equal(slot.querySelector('figcaption').getAttribute('aria-hidden'), 'true');

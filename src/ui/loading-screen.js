@@ -8,6 +8,7 @@ const VISUAL_SLOT_CLASSES = Object.freeze([
   'is-ready',
   'is-failed',
   'is-active',
+  'is-outgoing',
   'is-revealing',
   'is-scattering',
   'is-stable'

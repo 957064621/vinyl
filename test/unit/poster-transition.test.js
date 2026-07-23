@@ -266,11 +266,19 @@ test('rapid backlog stays compressed through one drain and a later isolated run 
   const { controller, slots } = makeFixture({ scheduler });
   const releaseProcessingRounds = async () => {
     const rounds = [];
+    let iterations = 0;
     while (controller.getState().processing) {
+      assert.ok(iterations < 32, 'scheduler processing drain exceeded its bound');
       assert.ok(scheduler.pending > 0);
       rounds.push(scheduler.durations);
-      while (scheduler.pending > 0) scheduler.releaseNext();
+      let pendingIterations = 0;
+      while (scheduler.pending > 0) {
+        assert.ok(pendingIterations < 32, 'scheduler pending drain exceeded its bound');
+        scheduler.releaseNext();
+        pendingIterations += 1;
+      }
       await flush();
+      iterations += 1;
     }
     return rounds;
   };
@@ -340,10 +348,13 @@ test('finish after an idle normal scene adds only the unread final hold remainde
   controller.enqueue(slots[0]);
   await flush();
 
+  let iterations = 0;
   while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'scheduler processing drain exceeded its bound');
     assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
     await flush();
+    iterations += 1;
   }
   await controller.waitForIdle();
   assert.deepEqual(scheduler.sleepCalls, [
@@ -415,9 +426,13 @@ test('animated transitions overlap outgoing scatter with incoming reveal', async
   assert.ok(particleCalls.some(([name]) => name === 'scatter'));
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.scatter, POSTER_TIMING.normal.reveal]);
 
+  let iterations = 0;
   while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'scheduler processing drain exceeded its bound');
+    assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
     await flush();
+    iterations += 1;
   }
   await controller.waitForIdle();
   assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
@@ -425,14 +440,69 @@ test('animated transitions overlap outgoing scatter with incoming reveal', async
   assert.strictEqual(root.querySelector('.is-active'), incoming);
 });
 
+test('scatter rejection during overlap stabilizes the incoming poster and cleans transient state', async () => {
+  const scheduler = makeManualScheduler();
+  const expected = new Error('overlapped scatter failed');
+  let scatterCalls = 0;
+  const particleField = {
+    gather() {},
+    scatter() {
+      scatterCalls += 1;
+      return Promise.reject(expected);
+    },
+    finish() {},
+    setProfile() {}
+  };
+  const { controller, errors, root, slots } = makeFixture({ particleField, scheduler });
+  const unhandled = [];
+  const handleUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', handleUnhandled);
+
+  try {
+    controller.enqueue(slots[0]);
+    controller.enqueue(slots[1]);
+    const finishing = assert.rejects(controller.finish(), expected);
+    await flush();
+    scheduler.releaseNext();
+    await flush();
+    scheduler.releaseNext();
+    await flush();
+    scheduler.releaseNext();
+    await flush();
+    scheduler.releaseNext();
+    await flush();
+
+    await finishing;
+    await flush();
+
+    assert.equal(errors.length, 1);
+    assert.strictEqual(errors[0], expected);
+    assert.equal(scatterCalls, 1);
+    assert.equal(root.querySelectorAll('.is-outgoing, .is-scattering, .is-revealing').length, 0);
+    assert.equal(root.querySelectorAll('.is-active').length, 1);
+    assert.strictEqual(root.querySelector('.is-active'), slots[1]);
+    assert.equal(slots[1].classList.contains('is-stable'), true);
+    assert.equal(slots[1].querySelector('img').hasAttribute('aria-hidden'), false);
+    assert.equal(slots[0].classList.contains('is-active'), false);
+    assert.equal(slots[0].querySelector('img').getAttribute('aria-hidden'), 'true');
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.removeListener('unhandledRejection', handleUnhandled);
+  }
+});
+
 test('switching to reduce during the final hold remainder settles finish immediately', async () => {
   const scheduler = makeManualScheduler();
   const { controller, root, slots } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
   await flush();
+  let iterations = 0;
   while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'scheduler processing drain exceeded its bound');
+    assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
     await flush();
+    iterations += 1;
   }
 
   const finishing = controller.finish();
@@ -563,9 +633,13 @@ test('reset aborts an old finish exposure without settling the new run', async (
   controller.enqueue(slots[0]);
   const oldFinish = controller.finish();
   await flush();
+  let iterations = 0;
   while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'scheduler processing drain exceeded its bound');
+    assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
     await flush();
+    iterations += 1;
   }
   assert.equal(root.classList.contains('is-final-exposure'), true);
 
@@ -582,9 +656,13 @@ test('reset aborts an old finish exposure without settling the new run', async (
   assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
   assert.equal(root.style.getPropertyValue('--slit-duration'), '');
   assert.equal(controller.getState().activeId, null);
+  iterations = 0;
   while (scheduler.pending) {
+    assert.ok(iterations < 32, 'scheduler pending drain exceeded its bound');
+    assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
     await flush();
+    iterations += 1;
   }
   await controller.waitForIdle();
   assert.equal(controller.getState().activeId, 'archive-02');
@@ -646,10 +724,13 @@ test('switching to reduce mid-gather cancels animation and resumes every item as
 
   controller.setProfile('reduce');
   await flush();
+  let iterations = 0;
   while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'scheduler processing drain exceeded its bound');
     assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
     await flush();
+    iterations += 1;
   }
   await controller.waitForIdle();
 
