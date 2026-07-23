@@ -11,6 +11,7 @@ export function createAudioController({
     let track = null;
     let requestId = 0;
     let playGeneration = 0;
+    let activePlayGeneration = null;
     let status = 'idle';
     let error = null;
 
@@ -47,19 +48,31 @@ export function createAudioController({
         updatePlaybackState();
         publish();
     };
-    const onError = () => {
+    const invalidatePlayAttempt = () => {
         playGeneration += 1;
+        activePlayGeneration = null;
+    };
+    const onError = () => {
+        invalidatePlayAttempt();
         audio.pause();
         setStatus('error', new Error(`Audio failed: ${track?.title || 'unknown'}`));
     };
     const onPlay = () => {
-        if (status === 'playing') updatePositionState();
+        const isAuthorizedAttempt = status === 'loading' && activePlayGeneration === playGeneration;
+        if (isAuthorizedAttempt) return;
+        if (status === 'playing') {
+            updatePositionState();
+            return;
+        }
+        audio.pause();
     };
     const onPause = () => {
-        if (status !== 'error') setStatus('paused');
+        const pausedActiveAttempt = activePlayGeneration !== null;
+        if (pausedActiveAttempt) invalidatePlayAttempt();
+        if (status === 'playing' || pausedActiveAttempt) setStatus('paused');
     };
     const handleEnded = () => {
-        playGeneration += 1;
+        invalidatePlayAttempt();
         setStatus('paused');
         onEnded(track);
     };
@@ -82,7 +95,7 @@ export function createAudioController({
 
     const load = async (nextTrack) => {
         const id = ++requestId;
-        playGeneration += 1;
+        invalidatePlayAttempt();
         track = nextTrack;
         if (!nextTrack?.musicOssUrl) {
             audio.pause();
@@ -123,7 +136,12 @@ export function createAudioController({
         if (signal?.aborted) return false;
         const id = requestId;
         const generation = ++playGeneration;
-        const isCurrentAttempt = () => id === requestId && generation === playGeneration;
+        activePlayGeneration = generation;
+        const isCurrentAttempt = () => (
+            id === requestId &&
+            generation === playGeneration &&
+            activePlayGeneration === generation
+        );
         setStatus('loading');
         let abort;
         const aborted = new Promise((resolve) => {
@@ -146,7 +164,7 @@ export function createAudioController({
             if (!isCurrentAttempt()) return false;
             if (result.aborted) {
                 audio.pause();
-                setStatus('paused');
+                if (status !== 'paused') setStatus('paused');
                 return false;
             }
             if (result.playError) throw result.playError;
@@ -159,6 +177,7 @@ export function createAudioController({
             setStatus('error', nextError);
             throw nextError;
         } finally {
+            if (activePlayGeneration === generation) activePlayGeneration = null;
             signal?.removeEventListener('abort', abort);
         }
     };
@@ -221,7 +240,7 @@ export function createAudioController({
         load,
         play,
         pause() {
-            playGeneration += 1;
+            invalidatePlayAttempt();
             audio.pause();
             if (status !== 'error' && status !== 'paused') setStatus('paused');
         },
@@ -240,7 +259,7 @@ export function createAudioController({
         getState() { return { status, error, track }; },
         destroy() {
             requestId += 1;
-            playGeneration += 1;
+            invalidatePlayAttempt();
             audio.removeEventListener('error', onError);
             audio.removeEventListener('play', onPlay);
             audio.removeEventListener('pause', onPause);

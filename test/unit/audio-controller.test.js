@@ -121,7 +121,12 @@ test('late play event after explicit pause cannot leave a pending attempt loadin
   const audio = new FakeAudio();
   const pendingAttempt = createDeferred();
   audio.play = () => pendingAttempt.promise;
-  audio.pause = () => { audio.pauseCalls += 1; };
+  audio.pause = () => {
+    audio.pauseCalls += 1;
+    if (audio.paused) return;
+    audio.paused = true;
+    audio.emit('pause');
+  };
   const states = [];
   const controller = createAudioController({ audio, onStateChange: (state) => states.push(state.status) });
   await controller.load({ title: '媚人', musicOssUrl: 'https://example.test/meiren.mp3' });
@@ -130,7 +135,13 @@ test('late play event after explicit pause cannot leave a pending attempt loadin
   controller.pause();
   assert.equal(states.at(-1), 'paused');
 
+  const statesBeforeLatePlay = states.length;
+  const pauseCallsBeforeLatePlay = audio.pauseCalls;
+  audio.paused = false;
   audio.emit('play');
+  assert.equal(audio.paused, true);
+  assert.equal(audio.pauseCalls, pauseCallsBeforeLatePlay + 1);
+  assert.equal(states.length, statesBeforeLatePlay);
   assert.equal(states.at(-1), 'paused');
   pendingAttempt.resolve();
   assert.equal(await pendingPlay, false);
@@ -146,9 +157,23 @@ test('late play event after source replacement cannot publish playing', async ()
   await controller.load({ title: '旧歌', musicOssUrl: 'https://example.test/old.mp3' });
 
   const pendingOldPlay = controller.play();
-  await controller.load({ title: '新歌', musicOssUrl: 'https://example.test/new.mp3' });
+  const loadingNewSource = controller.load({ title: '新歌', musicOssUrl: 'https://example.test/new.mp3' });
+  const pauseCallsBeforeLoadingEvent = audio.pauseCalls;
+  audio.paused = false;
+  audio.emit('play');
+  assert.equal(audio.paused, true);
+  assert.equal(audio.pauseCalls, pauseCallsBeforeLoadingEvent + 1);
+  assert.equal(states.at(-1).status, 'loading');
+
+  await loadingNewSource;
+  const statesBeforeReadyEvent = states.length;
+  const pauseCallsBeforeReadyEvent = audio.pauseCalls;
+  audio.paused = false;
   audio.emit('play');
 
+  assert.equal(audio.paused, true);
+  assert.equal(audio.pauseCalls, pauseCallsBeforeReadyEvent + 1);
+  assert.equal(states.length, statesBeforeReadyEvent);
   assert.equal(states.at(-1).status, 'ready');
   assert.equal(states.at(-1).track.title, '新歌');
   oldAttempt.resolve();
@@ -168,9 +193,16 @@ test('late play event and explicit pause cannot hide a recoverable media error',
   audio.emit('error');
   assert.equal(states.at(-1).status, 'error');
 
+  const errorState = controller.getState();
+  const statesBeforeLatePlay = states.length;
+  const pauseCallsBeforeLatePlay = audio.pauseCalls;
+  audio.paused = false;
   audio.emit('play');
-  controller.pause();
+  assert.equal(audio.paused, true);
+  assert.equal(audio.pauseCalls, pauseCallsBeforeLatePlay + 1);
+  assert.equal(states.length, statesBeforeLatePlay);
   assert.equal(states.at(-1).status, 'error');
+  assert.equal(controller.getState().error, errorState.error);
   pendingAttempt.resolve();
   assert.equal(await pendingPlay, false);
   assert.equal(states.at(-1).status, 'error');
