@@ -178,18 +178,22 @@ const installBrowserProbe = async (page) => {
         probe.continuityArmed ||= Boolean(loading.querySelector('.loading-frame.is-stable'));
 
         if (probe.continuityArmed && !loading.classList.contains('is-final-exposure')) {
-          const opacities = visualFrames.map((frame) => (
-            Number.parseFloat(getComputedStyle(frame.querySelector('.loading-image')).opacity) || 0
-          ));
+          const effectiveOpacities = visualFrames.map((frame) => {
+            const frameStyle = getComputedStyle(frame);
+            const imageStyle = getComputedStyle(frame.querySelector('.loading-image'));
+            const frameOpacity = Number.parseFloat(frameStyle.opacity) || 0;
+            const imageOpacity = Number.parseFloat(imageStyle.opacity) || 0;
+            return frameStyle.visibility === 'visible' ? frameOpacity * imageOpacity : 0;
+          });
           probe.continuitySamples += 1;
           probe.maxVisualLayers = Math.max(probe.maxVisualLayers, visualFrames.length);
           probe.maxDominantPosters = Math.max(
             probe.maxDominantPosters,
-            opacities.filter((opacity) => opacity > 0.55).length
+            effectiveOpacities.filter((opacity) => opacity > 0.55).length
           );
           probe.minCompositeOpacity = Math.min(
             probe.minCompositeOpacity,
-            opacities.reduce((sum, opacity) => sum + opacity, 0)
+            effectiveOpacities.reduce((sum, opacity) => sum + opacity, 0)
           );
         }
         requestAnimationFrame(samplePosterContinuity);
