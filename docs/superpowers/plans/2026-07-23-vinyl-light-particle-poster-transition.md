@@ -2043,7 +2043,7 @@ Expected: `git diff --check` and `git diff --cached --check` print nothing. The 
 - Changes `POSTER_TIMING` to normal `{ gather: 180, scatter: 260, reveal: 320, hold: 300 }`, fast `{ gather: 80, scatter: 150, reveal: 180, hold: 180 }`, `finalHold: 560`, `finalExposure: 640`, and unchanged `reduceFade: 120`.
 - Adds only the transient CSS custom property `--poster-scatter-ms` to an existing outgoing slot. It adds no DOM, image, request, visible copy, or production dependency.
 - Reuses the existing `.loading-light-core`, `.loading-light-edge.is-warm`, and `.loading-light-edge.is-cool` spans as the three light-curtain slices.
-- Preserves the current profile-change contract: switching an in-flight scene to `reduce` cancels and cleans transient work; `full <-> compact` keeps that scene running and applies the new profile to subsequent scene setup.
+- Preserves the current profile-change contract: switching an in-flight scene to `reduce` cancels and cleans transient work. `full <-> compact` immediately updates the controller profile, root dataset/CSS, and particle profile, and the particle field settles its active command; poster generation, current scheduler sleeps, handoff classes, and queue order remain intact, while the next scene selects timing under the new profile.
 
 - [ ] **Step 1: Write failing timing, decay, continuity, and scope tests**
 
@@ -2100,32 +2100,92 @@ Make every lifecycle cleanup assertion non-vacuous with these exact additions:
 - In `switching to reduce mid-gather cancels animation and resumes every item as a fade`, seed and pre-assert `--poster-scatter-ms: 260ms` on `slots[0]` before `controller.setProfile('reduce')`, then assert it is empty immediately after the switch cleanup.
 - In `setProfile forwards valid changes and destroy is idempotent and terminal`, seed and pre-assert `--poster-scatter-ms: 260ms` on `slots[1]` beside its existing `is-outgoing` state, then assert it is empty after the first `destroy()`.
 
-Add this manual-scheduler test to prove `full <-> compact` does not take the reduce cleanup path:
+Expose the current pending signals from `makeManualScheduler()` by changing the entry prefix from `{ ms, release... }` to `{ ms, signal, release... }`, then add:
 
 ```js
-test('full and compact changes preserve the in-flight scene', async () => {
+get signals() {
+  return pending.map(({ signal }) => signal);
+}
+```
+
+Then add this in-flight test. Its particle collaborator resolves the active particle command inside `setProfile`, matching the real `createLightParticleField().setProfile(...)` settlement behavior:
+
+```js
+test('full to compact settles particles without cancelling the poster handoff', async () => {
   const scheduler = makeManualScheduler();
-  const { controller, particleCalls, root, slots } = makeFixture({ scheduler });
+  const particleCalls = [];
+  let particleProfile = 'full';
+  let activeParticle = null;
+  const startParticle = (phase, bounds) => new Promise((resolve) => {
+    particleCalls.push([phase, particleProfile, bounds]);
+    activeParticle = { phase, resolve };
+  });
+  const settleParticle = () => {
+    if (!activeParticle) return;
+    const { phase, resolve } = activeParticle;
+    activeParticle = null;
+    particleCalls.push(['settle', phase]);
+    resolve();
+  };
+  const particleField = {
+    gather: (bounds) => startParticle('gather', bounds),
+    scatter: (bounds) => startParticle('scatter', bounds),
+    finish: settleParticle,
+    setProfile(profile) {
+      particleProfile = profile;
+      particleCalls.push(['profile', profile]);
+      settleParticle();
+    }
+  };
+  const { controller, root, slots } = makeFixture({ scheduler, particleField });
   controller.enqueue(slots[0]);
   controller.enqueue(slots[1]);
   await flush();
 
+  settleParticle();
+  scheduler.releaseNext();
+  await flush();
+  scheduler.releaseNext();
+  await flush();
+  scheduler.releaseNext();
+  await flush();
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
-  assert.equal(controller.getState().processing, true);
-  const pendingBeforeChange = scheduler.pending;
+
+  settleParticle();
+  scheduler.releaseNext();
+  await flush();
+  assert.equal(slots[0].classList.contains('is-outgoing'), true);
+  assert.equal(slots[1].classList.contains('is-revealing'), true);
+  assert.deepEqual(scheduler.durations, [
+    POSTER_TIMING.normal.scatter,
+    POSTER_TIMING.normal.reveal
+  ]);
+  const signalsBeforeChange = scheduler.signals;
+  assert.equal(signalsBeforeChange.every((signal) => !signal.aborted), true);
 
   controller.setProfile('compact');
+  await flush();
 
   assert.equal(controller.getState().profile, 'compact');
   assert.equal(controller.getState().processing, true);
-  assert.equal(scheduler.pending, pendingBeforeChange);
-  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
   assert.equal(root.dataset.motionProfile, 'compact');
-  assert.deepEqual(particleCalls.at(-1), ['profile', 'compact']);
+  assert.deepEqual(particleCalls.slice(-2), [
+    ['profile', 'compact'],
+    ['settle', 'scatter']
+  ]);
+  assert.deepEqual(scheduler.signals, signalsBeforeChange);
+  assert.equal(scheduler.signals.every((signal) => !signal.aborted), true);
+  assert.deepEqual(scheduler.durations, [
+    POSTER_TIMING.normal.scatter,
+    POSTER_TIMING.normal.reveal
+  ]);
+  assert.equal(slots[0].classList.contains('is-outgoing'), true);
+  assert.equal(slots[1].classList.contains('is-revealing'), true);
 
   let iterations = 0;
   while (controller.getState().processing) {
     assert.ok(iterations < 32, 'profile-change drain exceeded its bound');
+    settleParticle();
     assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
     await flush();
@@ -2135,10 +2195,37 @@ test('full and compact changes preserve the in-flight scene', async () => {
 
   assert.equal(controller.getState().activeId, 'archive-02');
   assert.equal(root.dataset.motionProfile, 'compact');
+
+  controller.enqueue(slots[2]);
+  await flush();
+  assert.equal(
+    particleCalls.some(([phase, profile]) => phase === 'gather' && profile === 'compact'),
+    true
+  );
+
+  settleParticle();
+  scheduler.releaseNext();
+  await flush();
+  assert.equal(
+    slots[2].style.getPropertyValue('--poster-reveal-ms'),
+    `${POSTER_TIMING.normal.reveal}ms`
+  );
+
+  iterations = 0;
+  while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'next-profile scene drain exceeded its bound');
+    settleParticle();
+    assert.ok(scheduler.pending > 0);
+    scheduler.releaseNext();
+    await flush();
+    iterations += 1;
+  }
+  await controller.waitForIdle();
+  assert.equal(controller.getState().activeId, 'archive-03');
 });
 ```
 
-This test must not expect `switchRunningWorkToReduce()` behavior for `full <-> compact`.
+This test observes immediate particle settlement and CSS-profile change while proving the same two `AbortSignal` objects, sleep durations, outgoing/revealing classes, and queue drain survive the switch. It must not expect `switchRunningWorkToReduce()` behavior for `full <-> compact`.
 
 In `test/unit/loading-screen.test.js`, add these bounded CSS helpers above `loading CSS defines the projection layers and motion-specific fallbacks`:
 
@@ -2198,6 +2285,27 @@ expectDeclarations(
   { 'transition-duration': 'var(--poster-scatter-ms, 260ms)' },
   'outgoing scatter duration'
 );
+
+for (const [selector, transform] of [
+  [
+    '.loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
+    'translate3d(2.4%, -0.6%, 0) rotateX(1.2deg) scale(0.992)'
+  ],
+  [
+    '.loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
+    'translate3d(-2.4%, -0.6%, 0) rotateX(-1.2deg) scale(0.992)'
+  ],
+  [
+    '.loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
+    'translate(14px, -2px) scale(0.992)'
+  ],
+  [
+    '.loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
+    'translate(-14px, -2px) scale(0.992)'
+  ]
+]) {
+  expectDeclarations(extractCssBlock(loadingBlock, selector), { transform }, selector);
+}
 
 for (const [selector, animation] of [
   [
@@ -2292,7 +2400,7 @@ Run:
 node --test test/unit/poster-transition.test.js test/unit/loading-screen.test.js
 ```
 
-Expected: FAIL because the current timing table still reports `160/160/180/300`, the slit peaks at `0.78`, the final exposure ends at `0.08`, the curtain-slice keyframes do not exist, and `--poster-scatter-ms` is not published or cleaned. The pre-existing Task 4 overlap, stale-token, retry, reduce, and accessibility tests remain in the run.
+Expected: FAIL because the current timing table still reports `160/160/180/300`, full outgoing transforms still use `4%`, `3deg`, and `0.985`, compact still uses `24px`, the slit peaks at `0.78`, the final exposure ends at `0.08`, the curtain-slice keyframes do not exist, and `--poster-scatter-ms` is not published or cleaned. The pre-existing Task 4 overlap, stale-token, retry, reduce, and accessibility tests remain in the run.
 
 - [ ] **Step 3: Implement the exact queue timing and cleanup contract**
 
@@ -2326,7 +2434,7 @@ setActive(activeItem, true);
 activeItem.slot.classList.add('is-revealing');
 ```
 
-Keep scatter and reveal in the existing `Promise.all`. Because reveal is longer than scatter in both timing profiles, remove `is-lit`, `is-outgoing`, and `is-scattering` only after that `Promise.all` resolves. At the same settlement point remove `--poster-scatter-ms` from the outgoing slot. Add `slot.style.removeProperty('--poster-scatter-ms')` to `clearSlotState()`, the `preserveActive` loop in `cancelWork(...)`, `switchRunningWorkToReduce()`, and `fail(...)`; the non-preserving `cancelWork(...)` path already delegates to `clearSlotState()`. Preserve `setProfile(...)`'s existing `switchingToReduce && !alreadySettled` guard exactly: a running `full <-> compact` change must not invoke cleanup, increment the generation, abort controller sleeps, or requeue the current item. Do not change `setActive`, queue order, image mounting, the reduce branch, or cancellation-token checks.
+Keep scatter and reveal in the existing `Promise.all`. Because reveal is longer than scatter in both timing profiles, remove `is-lit`, `is-outgoing`, and `is-scattering` only after that `Promise.all` resolves. At the same settlement point remove `--poster-scatter-ms` from the outgoing slot. Add `slot.style.removeProperty('--poster-scatter-ms')` to `clearSlotState()`, the `preserveActive` loop in `cancelWork(...)`, `switchRunningWorkToReduce()`, and `fail(...)`; the non-preserving `cancelWork(...)` path already delegates to `clearSlotState()`. Preserve `setProfile(...)`'s immediate assignment to `currentProfile` and `root.dataset.motionProfile`, followed by the immediate `particleField.setProfile(nextProfile)` call that settles an active particle command. Preserve its existing `switchingToReduce && !alreadySettled` guard exactly: a running `full <-> compact` change must not invoke poster cleanup, increment the generation, abort or reorder controller sleeps, clear handoff classes, or requeue the current item. The next `runItem(...)` calls `timingFor()` after the new profile is active and publishes that timing to its slot. Do not change `setActive`, queue order, image mounting, the reduce branch, or cancellation-token checks.
 
 - [ ] **Step 4: Implement the sliced light curtain and gentler poster planes**
 
@@ -2334,7 +2442,7 @@ In the loading block of `src/style.css`:
 
 1. Change the root fallback to `--slit-duration: 320ms` and all poster reveal fallbacks to `320ms`.
 2. Add `.loading-frame.is-scattering .loading-image { transition-duration: var(--poster-scatter-ms, 260ms); }`.
-3. Change full outgoing transforms to at most `translate3d(2.4%, -0.6%, 0) rotateX(1.2deg) scale(0.992)` and its mirrored equivalent. Change compact outgoing transforms to `translate(14px, -2px) scale(0.992)` and its mirror.
+3. Set full LTR to `translate3d(2.4%, -0.6%, 0) rotateX(1.2deg) scale(0.992)` and full RTL to `translate3d(-2.4%, -0.6%, 0) rotateX(-1.2deg) scale(0.992)`. Set compact LTR to `translate(14px, -2px) scale(0.992)` and compact RTL to `translate(-14px, -2px) scale(0.992)`.
 4. Keep the existing three slit spans and add these animation assignments; do not edit `index.html`:
 
 ```css
