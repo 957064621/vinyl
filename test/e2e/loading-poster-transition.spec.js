@@ -4,6 +4,11 @@ import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
 
 const FIXTURE_DELAY_STEP_MS = 80;
 const LIGHT_PEAK_OFFSETS = Object.freeze({ ordinary: 0.60, final: 0.52 });
+// One 60Hz presentation interval plus 3.4ms for timestamp and rAF sampling quantization.
+const PRESENTED_FRAME_TOLERANCE_MS = 20;
+const PARENT_PEAK_LOWER_BOUNDS = Object.freeze({ ordinary: 0.27, final: 0.20 });
+const PARENT_PEAK_UPPER_BOUNDS = Object.freeze({ ordinary: 0.28, final: 0.22 });
+const CENTER_PEAK_LOWER_BOUNDS = Object.freeze({ ordinary: 2.5, final: 10 });
 const CENTER_PEAK_UPPER_BOUNDS = Object.freeze({
   ordinary: (255 * 0.28 * 0.62 * 0.78) + 1,
   final: (255 * 0.22 * 0.52 * 0.78) + 1
@@ -168,25 +173,55 @@ const canvasState = (canvas) => canvas.evaluate((element) => {
   return { alphaCount, phase: element.dataset.phase };
 });
 
-const measureHorizontalLightDelta = (page, before, after) => page.evaluate(async ({ before, after }) => {
-  const decode = (base64) => new Promise((resolve, reject) => {
+const measureHorizontalLightDelta = (page, before, after, clip) => page.evaluate(async ({
+  before,
+  after,
+  clip
+}) => {
+  const decode = (base64, mimeType) => new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
     image.onerror = reject;
-    image.src = `data:image/png;base64,${base64}`;
+    image.src = `data:${mimeType};base64,${base64}`;
   });
-  const [beforeImage, afterImage] = await Promise.all([decode(before), decode(after)]);
+  const [beforeImage, afterImage] = await Promise.all([
+    decode(before, 'image/png'),
+    decode(after.data, after.mimeType)
+  ]);
   const canvas = document.createElement('canvas');
-  canvas.width = beforeImage.naturalWidth;
-  canvas.height = beforeImage.naturalHeight;
+  canvas.width = clip.width;
+  canvas.height = clip.height;
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  const pixelsFor = (image) => {
+  const pixelsFor = (image, source = null) => {
     context.clearRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(image, 0, 0);
+    if (source) {
+      context.drawImage(
+        image,
+        source.x,
+        source.y,
+        source.width,
+        source.height,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+    } else {
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    }
     return context.getImageData(0, 0, canvas.width, canvas.height).data;
   };
   const beforePixels = pixelsFor(beforeImage);
-  const afterPixels = pixelsFor(afterImage);
+  const scaleX = afterImage.naturalWidth / after.metadata.deviceWidth;
+  const scaleY = afterImage.naturalHeight / after.metadata.deviceHeight;
+  const source = {
+    x: (clip.x - after.viewportState.visualOffsetLeft) * scaleX,
+    y: (clip.y - after.viewportState.visualOffsetTop) * scaleY,
+    width: clip.width * scaleX,
+    height: clip.height * scaleY
+  };
+  const afterPixels = pixelsFor(afterImage, source);
+  const croppedPng = canvas.toDataURL('image/png').split(',')[1];
   const columns = Array(canvas.width).fill(0);
   for (let x = 0; x < canvas.width; x += 1) {
     let total = 0;
@@ -225,11 +260,27 @@ const measureHorizontalLightDelta = (page, before, after) => page.evaluate(async
     longestNearUniformRun,
     longestNearUniformRatio: longestNearUniformRun / columns.length,
     brightFloor,
-    uniformStep
+    uniformStep,
+    croppedPng,
+    frameMapping: {
+      imageWidth: afterImage.naturalWidth,
+      imageHeight: afterImage.naturalHeight,
+      croppedWidth: canvas.width,
+      croppedHeight: canvas.height,
+      scaleX,
+      scaleY,
+      source
+    }
   };
 }, {
   before: before.toString('base64'),
-  after: after.toString('base64')
+  after: {
+    data: after.buffer.toString('base64'),
+    mimeType: after.mimeType,
+    metadata: after.metadata,
+    viewportState: after.viewportState
+  },
+  clip
 });
 
 const getLightOracleClip = (page) => page.evaluate(() => {
@@ -273,14 +324,16 @@ const readLightAnimation = (phase) => {
   const timing = animation.effect.getComputedTiming();
   const duration = Number(timing.duration);
   const peakOffset = phase === 'final' ? 0.52 : 0.60;
-  const naturalPeakAt = animation.startTime + (duration * peakOffset);
+  const at = performance.now();
+  const currentTime = Number(animation.currentTime);
+  const naturalPeakAt = at + (((duration * peakOffset) - currentTime) / animation.playbackRate);
   const animations = root.getAnimations({ subtree: true }).filter(({ animationName }) => (
     animationName?.startsWith(phase === 'final' ? 'loading-final-' : 'loading-')
   ));
   const opacity = (selector) => Number.parseFloat(getComputedStyle(root.querySelector(selector)).opacity) || 0;
   return {
-    at: performance.now(),
-    currentTime: animation.currentTime,
+    at,
+    currentTime,
     duration,
     naturalPeakAt,
     animationName: animation.animationName,
@@ -293,17 +346,6 @@ const readLightAnimation = (phase) => {
     coolOpacity: opacity('.loading-light-edge.is-cool'),
     pausedAnimations: animations.filter(({ playState }) => playState === 'paused').length
   };
-};
-
-const captureInstrumented = async (page, clip, phase) => {
-  const before = await page.evaluate(readLightAnimation, phase);
-  const buffer = await page.screenshot({ clip });
-  const after = await page.evaluate(readLightAnimation, phase);
-  const acquisition = { start: before.at, end: after?.at ?? await page.evaluate(() => performance.now()) };
-  await page.evaluate(({ start, end }) => {
-    window.__vinylProbeOverhead.push({ start, end });
-  }, acquisition);
-  return { acquisition, before, after, buffer };
 };
 
 const captureBaseline = async (page, clip) => {
@@ -326,22 +368,68 @@ const captureNaturalPeak = async (page, { clip, phase }) => {
     ));
     if (!animation) return false;
     const peakTime = Number(animation.effect.getComputedTiming().duration) * peakOffset;
-    return animation.currentTime >= peakTime - 35 && animation.currentTime < peakTime;
+    return animation.currentTime < peakTime - 100;
   }, { phase, peakOffset });
 
-  const candidates = [];
-  for (let index = 0; index < 4; index += 1) {
-    const capture = await captureInstrumented(page, clip, phase);
-    candidates.push(capture);
-    if (
-      capture.acquisition.start <= capture.before.naturalPeakAt
-      && capture.acquisition.end >= capture.before.naturalPeakAt
-    ) return { ...capture, candidateCount: candidates.length };
-    if (capture.acquisition.start > capture.before.naturalPeakAt) break;
+  const before = await page.evaluate(readLightAnimation, phase);
+  const clock = await page.evaluate(() => ({
+    timeOrigin: performance.timeOrigin,
+    viewportState: {
+      innerWidth,
+      innerHeight,
+      scrollX,
+      scrollY,
+      visualOffsetLeft: visualViewport.offsetLeft,
+      visualOffsetTop: visualViewport.offsetTop,
+      visualScale: visualViewport.scale
+    }
+  }));
+  const viewport = page.viewportSize();
+  const frames = [];
+  const screencast = await page.screencast.start({
+    quality: 100,
+    size: viewport,
+    onFrame: ({ data, timestamp, viewportWidth, viewportHeight }) => {
+      if (!Number.isFinite(timestamp)) return;
+      // Chromium exposes this as CDP Page.screencastFrame metadata.timestamp.
+      const metadata = {
+        deviceWidth: viewportWidth,
+        deviceHeight: viewportHeight,
+        timestamp: timestamp / 1000
+      };
+      frames.push({
+        buffer: data,
+        mimeType: 'image/jpeg',
+        metadata,
+        viewportState: clock.viewportState,
+        presentedAt: timestamp - clock.timeOrigin
+      });
+    }
+  });
+  try {
+    await page.waitForFunction((naturalPeakAt) => (
+      performance.now() >= naturalPeakAt + 60
+    ), before.naturalPeakAt);
+  } finally {
+    await screencast[Symbol.asyncDispose]();
   }
-  throw new Error(`No ${phase} screenshot covered its natural peak: ${JSON.stringify(
-    candidates.map(({ acquisition, before }) => ({ acquisition, naturalPeakAt: before.naturalPeakAt }))
-  )}`);
+  const after = await page.evaluate(readLightAnimation, phase);
+  if (frames.length === 0) throw new Error(`No ${phase} presented frames were received`);
+  const selected = frames.reduce((nearest, frame) => (
+    Math.abs(frame.presentedAt - before.naturalPeakAt)
+      < Math.abs(nearest.presentedAt - before.naturalPeakAt) ? frame : nearest
+  ));
+  return {
+    ...selected,
+    before,
+    after,
+    candidateCount: frames.length,
+    peakErrorMs: selected.presentedAt - before.naturalPeakAt,
+    presentedRange: {
+      start: frames[0].presentedAt,
+      end: frames.at(-1).presentedAt
+    }
+  };
 };
 
 const installBrowserProbe = async (page) => {
@@ -678,12 +766,12 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       clip: lightOracle.clip,
       phase: 'ordinary'
     });
-    await writeFile(
-      testInfo.outputPath(`ordinary-natural-peak-${testInfo.project.name}.png`),
-      ordinaryPeak.buffer
-    );
     ordinaryCapture = {
-      acquisition: ordinaryPeak.acquisition,
+      presentedAt: ordinaryPeak.presentedAt,
+      presentedRange: ordinaryPeak.presentedRange,
+      peakErrorMs: ordinaryPeak.peakErrorMs,
+      metadata: ordinaryPeak.metadata,
+      viewportState: ordinaryPeak.viewportState,
       before: ordinaryPeak.before,
       after: ordinaryPeak.after,
       candidateCount: ordinaryPeak.candidateCount,
@@ -692,8 +780,14 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     ordinaryLightMetrics = await measureHorizontalLightDelta(
       page,
       ordinaryBaseline,
-      ordinaryPeak.buffer
+      ordinaryPeak,
+      lightOracle.clip
     );
+    await writeFile(
+      testInfo.outputPath(`ordinary-natural-peak-${testInfo.project.name}.png`),
+      Buffer.from(ordinaryLightMetrics.croppedPng, 'base64')
+    );
+    delete ordinaryLightMetrics.croppedPng;
 
     await page.waitForFunction(() => (
       window.__vinylLoadingProbe.activeIds.includes('archive-05')
@@ -711,18 +805,28 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       clip: lightOracle.clip,
       phase: 'final'
     });
-    await writeFile(
-      testInfo.outputPath(`final-natural-peak-${testInfo.project.name}.png`),
-      finalPeak.buffer
-    );
     finalCapture = {
-      acquisition: finalPeak.acquisition,
+      presentedAt: finalPeak.presentedAt,
+      presentedRange: finalPeak.presentedRange,
+      peakErrorMs: finalPeak.peakErrorMs,
+      metadata: finalPeak.metadata,
+      viewportState: finalPeak.viewportState,
       before: finalPeak.before,
       after: finalPeak.after,
       candidateCount: finalPeak.candidateCount,
       oracleClip: lightOracle.clip
     };
-    finalLightMetrics = await measureHorizontalLightDelta(page, finalBaseline, finalPeak.buffer);
+    finalLightMetrics = await measureHorizontalLightDelta(
+      page,
+      finalBaseline,
+      finalPeak,
+      lightOracle.clip
+    );
+    await writeFile(
+      testInfo.outputPath(`final-natural-peak-${testInfo.project.name}.png`),
+      Buffer.from(finalLightMetrics.croppedPng, 'base64')
+    );
+    delete finalLightMetrics.croppedPng;
 
     for (const capture of [ordinaryCapture, finalCapture]) {
       expect(['ltr', 'rtl']).toContain(capture.before.direction);
@@ -732,8 +836,16 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       expect(capture.after.playState).toBe('running');
       expect(capture.after.playbackRate).toBe(1);
       expect(capture.after.pausedAnimations).toBe(0);
-      expect(capture.acquisition.start).toBeLessThanOrEqual(capture.before.naturalPeakAt);
-      expect(capture.acquisition.end).toBeGreaterThanOrEqual(capture.before.naturalPeakAt);
+      expect(Math.abs(capture.peakErrorMs)).toBeLessThanOrEqual(PRESENTED_FRAME_TOLERANCE_MS);
+      expect(capture.presentedRange.start).toBeLessThan(capture.before.naturalPeakAt);
+      expect(capture.presentedRange.end).toBeGreaterThan(capture.before.naturalPeakAt);
+      expect(capture.metadata.deviceWidth).toBe(capture.viewportState.innerWidth);
+      expect(capture.metadata.deviceHeight).toBe(capture.viewportState.innerHeight);
+      expect(capture.viewportState.scrollX).toBe(0);
+      expect(capture.viewportState.scrollY).toBe(0);
+      expect(capture.viewportState.visualOffsetLeft).toBe(0);
+      expect(capture.viewportState.visualOffsetTop).toBe(0);
+      expect(capture.viewportState.visualScale).toBe(1);
     }
     expect(ordinaryCapture.before.animationName).toBe(
       `loading-slit-${ordinaryCapture.before.direction}`
@@ -749,12 +861,14 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   await expect(loading).toHaveCount(0, { timeout: 10_000 });
   const effectEnd = await page.evaluate(() => performance.now());
   if (!reduce) {
-    for (const [phase, metrics] of Object.entries({
-      ordinary: ordinaryLightMetrics,
-      final: finalLightMetrics
+    for (const [phase, { capture, metrics }] of Object.entries({
+      ordinary: { capture: ordinaryCapture, metrics: ordinaryLightMetrics },
+      final: { capture: finalCapture, metrics: finalLightMetrics }
     })) {
-      expect(metrics.centerPeak).toBeGreaterThan(0.5);
+      expect(metrics.centerPeak).toBeGreaterThanOrEqual(CENTER_PEAK_LOWER_BOUNDS[phase]);
       expect(metrics.centerPeak).toBeLessThanOrEqual(CENTER_PEAK_UPPER_BOUNDS[phase]);
+      expect(metrics.frameMapping.croppedWidth).toBe(capture.oracleClip.width);
+      expect(metrics.frameMapping.croppedHeight).toBe(capture.oracleClip.height);
       const edgeNoiseBound = Math.max(EDGE_BACKGROUND_DELTA, metrics.centerPeak * 0.25);
       expect(metrics.leftEdgeMean).toBeLessThan(edgeNoiseBound);
       expect(metrics.rightEdgeMean).toBeLessThan(edgeNoiseBound);
@@ -834,6 +948,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(finalPass.samples.length).toBeGreaterThanOrEqual(8);
     expect(finalPass.startedAt).toBeLessThan(finalProbe.exitGateAt);
     expect(finalCapture.before.naturalPeakAt).toBeLessThan(finalProbe.exitGateAt);
+    expect(finalCapture.presentedAt).toBeLessThan(finalProbe.exitGateAt);
     const naturalPeak = (pass) => pass.samples.reduce((peak, sample) => (
       sample.parentOpacity > peak.parentOpacity ? sample : peak
     ));
@@ -846,6 +961,25 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(finalNaturalPeak.coreOpacity).toBeLessThanOrEqual(0.52);
     expect(finalNaturalPeak.warmOpacity).toBeLessThanOrEqual(0.22);
     expect(finalNaturalPeak.coolOpacity).toBeLessThanOrEqual(0.20);
+    for (const [phase, capture, pass] of [
+      ['ordinary', ordinaryCapture, ordinaryPass],
+      ['final', finalCapture, finalPass]
+    ]) {
+      const presentedSample = pass.samples.reduce((nearest, sample) => (
+        Math.abs(sample.at - capture.presentedAt) < Math.abs(nearest.at - capture.presentedAt)
+          ? sample
+          : nearest
+      ));
+      capture.presentedSample = presentedSample;
+      expect(Math.abs(presentedSample.at - capture.presentedAt))
+        .toBeLessThanOrEqual(PRESENTED_FRAME_TOLERANCE_MS);
+      expect(presentedSample.parentOpacity).toBeGreaterThanOrEqual(
+        PARENT_PEAK_LOWER_BOUNDS[phase]
+      );
+      expect(presentedSample.parentOpacity).toBeLessThanOrEqual(
+        PARENT_PEAK_UPPER_BOUNDS[phase]
+      );
+    }
     for (const pass of [ordinaryPass, finalPass]) {
       const deltas = pass.samples.slice(1).map((sample, index) => (
         sample.center - pass.samples[index].center
