@@ -2043,6 +2043,7 @@ Expected: `git diff --check` and `git diff --cached --check` print nothing. The 
 - Changes `POSTER_TIMING` to normal `{ gather: 180, scatter: 260, reveal: 320, hold: 300 }`, fast `{ gather: 80, scatter: 150, reveal: 180, hold: 180 }`, `finalHold: 560`, `finalExposure: 640`, and unchanged `reduceFade: 120`.
 - Adds only the transient CSS custom property `--poster-scatter-ms` to an existing outgoing slot. It adds no DOM, image, request, visible copy, or production dependency.
 - Reuses the existing `.loading-light-core`, `.loading-light-edge.is-warm`, and `.loading-light-edge.is-cool` spans as the three light-curtain slices.
+- Preserves the current profile-change contract: switching an in-flight scene to `reduce` cancels and cleans transient work; `full <-> compact` keeps that scene running and applies the new profile to subsequent scene setup.
 
 - [ ] **Step 1: Write failing timing, decay, continuity, and scope tests**
 
@@ -2089,26 +2090,199 @@ assert.equal(outgoing.classList.contains('is-outgoing'), false);
 assert.equal(outgoing.style.getPropertyValue('--poster-scatter-ms'), '');
 ```
 
-Replace that test's final `while (controller.getState().processing)` loop with one `scheduler.releaseNext()`, `await flush()`, and `await controller.waitForIdle()` to settle the pending hold. Extend the existing reset, freeze, animation-error cleanup, and destroy assertions to require `--poster-scatter-ms === ''` on every affected slot.
+Replace that test's final `while (controller.getState().processing)` loop with one `scheduler.releaseNext()`, `await flush()`, and `await controller.waitForIdle()` to settle the pending hold.
 
-In `test/unit/loading-screen.test.js`, replace the current slit and final-exposure keyframe assertions with:
+Make every lifecycle cleanup assertion non-vacuous with these exact additions:
+
+- In `reset aborts an old finish exposure without settling the new run`, set `slots[0].style.setProperty('--poster-scatter-ms', '260ms')` beside the existing seeded `is-outgoing` state, assert it equals `260ms` before `controller.reset()`, then assert it equals `''` after reset.
+- In `freeze aborts queued work but keeps the current poster active and stable`, seed and pre-assert `--poster-scatter-ms: 260ms` on `slots[1]` before `controller.freeze()`, then assert it is empty afterward.
+- In `animation errors stabilize the current poster, reject finish once, and reset recovers`, seed and pre-assert `--poster-scatter-ms: 260ms` on `slots[0]` before awaiting the rejected `finish()`, then assert the failure cleanup removed it.
+- In `switching to reduce mid-gather cancels animation and resumes every item as a fade`, seed and pre-assert `--poster-scatter-ms: 260ms` on `slots[0]` before `controller.setProfile('reduce')`, then assert it is empty immediately after the switch cleanup.
+- In `setProfile forwards valid changes and destroy is idempotent and terminal`, seed and pre-assert `--poster-scatter-ms: 260ms` on `slots[1]` beside its existing `is-outgoing` state, then assert it is empty after the first `destroy()`.
+
+Add this manual-scheduler test to prove `full <-> compact` does not take the reduce cleanup path:
 
 ```js
+test('full and compact changes preserve the in-flight scene', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, particleCalls, root, slots } = makeFixture({ scheduler });
+  controller.enqueue(slots[0]);
+  controller.enqueue(slots[1]);
+  await flush();
+
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+  assert.equal(controller.getState().processing, true);
+  const pendingBeforeChange = scheduler.pending;
+
+  controller.setProfile('compact');
+
+  assert.equal(controller.getState().profile, 'compact');
+  assert.equal(controller.getState().processing, true);
+  assert.equal(scheduler.pending, pendingBeforeChange);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+  assert.equal(root.dataset.motionProfile, 'compact');
+  assert.deepEqual(particleCalls.at(-1), ['profile', 'compact']);
+
+  let iterations = 0;
+  while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'profile-change drain exceeded its bound');
+    assert.ok(scheduler.pending > 0);
+    scheduler.releaseNext();
+    await flush();
+    iterations += 1;
+  }
+  await controller.waitForIdle();
+
+  assert.equal(controller.getState().activeId, 'archive-02');
+  assert.equal(root.dataset.motionProfile, 'compact');
+});
+```
+
+This test must not expect `switchRunningWorkToReduce()` behavior for `full <-> compact`.
+
+In `test/unit/loading-screen.test.js`, add these bounded CSS helpers above `loading CSS defines the projection layers and motion-specific fallbacks`:
+
+```js
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const extractCssBlock = (source, selector) => {
+  const match = new RegExp(
+    `(?:^|\\})\\s*${escapeRegExp(selector)}\\s*\\{`,
+    'm'
+  ).exec(source);
+  assert.ok(match, `missing CSS block: ${selector}`);
+  const openIndex = match.index + match[0].lastIndexOf('{');
+  let depth = 1;
+  for (let index = openIndex + 1; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}') depth -= 1;
+    if (depth === 0) return source.slice(openIndex + 1, index);
+  }
+  assert.fail(`unterminated CSS block: ${selector}`);
+};
+
+const expectDeclarations = (body, declarations, label) => {
+  for (const [property, value] of Object.entries(declarations)) {
+    assert.match(
+      body,
+      new RegExp(`${escapeRegExp(property)}\\s*:\\s*${escapeRegExp(value)}\\s*;`),
+      `${label} must contain ${property}: ${value}`
+    );
+  }
+};
+
+const expectKeyframeStops = (source, name, stops) => {
+  const keyframeBody = extractCssBlock(source, `@keyframes ${name}`);
+  for (const [percentage, declarations] of Object.entries(stops)) {
+    expectDeclarations(
+      extractCssBlock(keyframeBody, percentage),
+      declarations,
+      `${name} ${percentage}`
+    );
+  }
+  return keyframeBody;
+};
+```
+
+Replace the current `180ms` poster/slit assertions and every unbounded keyframe regex with this code inside that test:
+
+```js
+assert.equal(POSTER_TIMING.finalExposure, 640);
 assert.match(loadingBlock, /--slit-duration:\s*320ms/);
-assert.match(loadingBlock, /--poster-scatter-ms/);
 assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
 assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
 assert.match(loadingBlock, /\.loading-image\s*\{[^}]*clip-path var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-assert.match(loadingBlock, /\.loading-light-slit\.is-lit\[data-direction="ltr"\]\s*\{[^}]*animation:\s*loading-slit-ltr var\(--slit-duration, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
-assert.match(loadingBlock, /@keyframes loading-slit-ltr\s*\{[\s\S]*?0%\s*\{[^}]*opacity:\s*0[\s\S]*?16%\s*\{[^}]*opacity:\s*0\.10[\s\S]*?42%\s*\{[^}]*opacity:\s*0\.68[\s\S]*?64%\s*\{[^}]*opacity:\s*0\.34[\s\S]*?82%\s*\{[^}]*opacity:\s*0\.12[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
-assert.match(loadingBlock, /loading-curtain-core/);
-assert.match(loadingBlock, /loading-curtain-warm/);
-assert.match(loadingBlock, /loading-curtain-cool/);
-assert.match(loadingBlock, /@keyframes loading-final-exposure\s*\{[\s\S]*?0%\s*\{[^}]*opacity:\s*0[\s\S]*?34%\s*\{[^}]*opacity:\s*0\.68[\s\S]*?62%\s*\{[^}]*opacity:\s*0\.30[\s\S]*?84%\s*\{[^}]*opacity:\s*0\.10[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
+
+expectDeclarations(
+  extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),
+  { 'transition-duration': 'var(--poster-scatter-ms, 260ms)' },
+  'outgoing scatter duration'
+);
+
+for (const [selector, animation] of [
+  [
+    '.loading-light-slit.is-lit[data-direction="ltr"]',
+    'loading-slit-ltr var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+  ],
+  [
+    '.loading-light-slit.is-lit[data-direction="rtl"]',
+    'loading-slit-rtl var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+  ],
+  [
+    '.loading-light-slit.is-lit .loading-light-core',
+    'loading-curtain-core var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+  ],
+  [
+    '.loading-light-slit.is-lit .loading-light-edge.is-warm',
+    'loading-curtain-warm var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+  ],
+  [
+    '.loading-light-slit.is-lit .loading-light-edge.is-cool',
+    'loading-curtain-cool var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+  ]
+]) {
+  expectDeclarations(extractCssBlock(loadingBlock, selector), { animation }, selector);
+}
+
+expectKeyframeStops(loadingBlock, 'loading-slit-ltr', {
+  '0%': { opacity: '0', transform: 'translate(-150%, -50%) scaleX(0.004)' },
+  '16%': { opacity: '0.10' },
+  '42%': { opacity: '0.68' },
+  '64%': { opacity: '0.34' },
+  '82%': { opacity: '0.12' },
+  '100%': { opacity: '0', transform: 'translate(50%, -50%) scaleX(0.004)' }
+});
+
+expectKeyframeStops(loadingBlock, 'loading-slit-rtl', {
+  '0%': { opacity: '0', transform: 'translate(50%, -50%) scaleX(0.004)' },
+  '16%': { opacity: '0.10' },
+  '42%': { opacity: '0.68' },
+  '64%': { opacity: '0.34' },
+  '82%': { opacity: '0.12' },
+  '100%': { opacity: '0', transform: 'translate(-150%, -50%) scaleX(0.004)' }
+});
+
+expectKeyframeStops(loadingBlock, 'loading-curtain-core', {
+  '0%': { opacity: '0', transform: 'scaleX(0.08)' },
+  '42%': { opacity: '1', transform: 'scaleX(1)' },
+  '64%': { opacity: '0.46', transform: 'scaleX(0.72)' },
+  '100%': { opacity: '0', transform: 'scaleX(0.18)' }
+});
+
+expectKeyframeStops(loadingBlock, 'loading-curtain-warm', {
+  '0%': { opacity: '0', transform: 'translateX(8%) scaleX(0.04)' },
+  '42%': { opacity: '0.82', transform: 'translateX(0) scaleX(1)' },
+  '64%': { opacity: '0.34', transform: 'translateX(-10%) scaleX(0.80)' },
+  '100%': { opacity: '0', transform: 'translateX(-18%) scaleX(0.56)' }
+});
+
+expectKeyframeStops(loadingBlock, 'loading-curtain-cool', {
+  '0%': { opacity: '0', transform: 'translateX(-8%) scaleX(0.04)' },
+  '42%': { opacity: '0.78', transform: 'translateX(0) scaleX(1)' },
+  '64%': { opacity: '0.32', transform: 'translateX(10%) scaleX(0.80)' },
+  '100%': { opacity: '0', transform: 'translateX(18%) scaleX(0.56)' }
+});
+
+expectDeclarations(
+  extractCssBlock(loadingBlock, '.loading-screen.is-final-exposure .loading-light-slit'),
+  {
+    animation: `loading-final-exposure ${POSTER_TIMING.finalExposure}ms cubic-bezier(0.22, 1, 0.36, 1) both`
+  },
+  'final exposure duration sync'
+);
+
+expectKeyframeStops(loadingBlock, 'loading-final-exposure', {
+  '0%': { opacity: '0', transform: 'translate(-50%, -50%) scaleX(0.004)' },
+  '34%': { opacity: '0.68', transform: 'translate(-50%, -50%) scaleX(1)' },
+  '62%': { opacity: '0.30', transform: 'translate(-50%, -50%) scaleX(1)' },
+  '84%': { opacity: '0.10', transform: 'translate(-50%, -50%) scaleX(1)' },
+  '100%': { opacity: '0', transform: 'translate(-50%, -50%) scaleX(1)' }
+});
+
 assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image|\.loading-light-slit)[^{]*\{[^}]*(?:filter|box-shadow|backdrop-filter)\s*:/s);
 ```
 
-Replace, rather than retain, the four existing `180ms` poster/slit fallback assertions. Keep the existing checks for exactly five slots, zero eager images, one Canvas, one slit container, hidden normal captions, no visible English heading, no loading `url(...)`, and only the reduced-motion `opacity 120ms linear` exception.
+Keep the existing checks for exactly five slots, zero eager images, one Canvas, one slit container, hidden normal captions, no visible English heading, no loading `url(...)`, and only the unit-level reduced-motion `opacity 120ms linear` exception. The LTR and RTL bodies are extracted separately, so a missing stop in one direction cannot pass by matching the next keyframe.
 
 - [ ] **Step 2: Run the focused tests to prove the red state**
 
@@ -2152,7 +2326,7 @@ setActive(activeItem, true);
 activeItem.slot.classList.add('is-revealing');
 ```
 
-Keep scatter and reveal in the existing `Promise.all`. Because reveal is longer than scatter in both timing profiles, remove `is-lit`, `is-outgoing`, and `is-scattering` only after that `Promise.all` resolves. At the same settlement point remove `--poster-scatter-ms` from the outgoing slot. Add `slot.style.removeProperty('--poster-scatter-ms')` to `clearSlotState()`, `cancelWork(...)`, `switchRunningWorkToReduce()`, and `fail(...)`. Do not change `setActive`, queue order, image mounting, the reduce branch, or cancellation-token checks.
+Keep scatter and reveal in the existing `Promise.all`. Because reveal is longer than scatter in both timing profiles, remove `is-lit`, `is-outgoing`, and `is-scattering` only after that `Promise.all` resolves. At the same settlement point remove `--poster-scatter-ms` from the outgoing slot. Add `slot.style.removeProperty('--poster-scatter-ms')` to `clearSlotState()`, the `preserveActive` loop in `cancelWork(...)`, `switchRunningWorkToReduce()`, and `fail(...)`; the non-preserving `cancelWork(...)` path already delegates to `clearSlotState()`. Preserve `setProfile(...)`'s existing `switchingToReduce && !alreadySettled` guard exactly: a running `full <-> compact` change must not invoke cleanup, increment the generation, abort controller sleeps, or requeue the current item. Do not change `setActive`, queue order, image mounting, the reduce branch, or cancellation-token checks.
 
 - [ ] **Step 4: Implement the sliced light curtain and gentler poster planes**
 
@@ -2206,7 +2380,9 @@ Set `loading-final-exposure` to `640ms` and use exactly `0: 0`, `34: 0.68`, `62:
 
 - [ ] **Step 5: Add browser sampling for single-poster visual continuity**
 
-In `test/e2e/loading-poster-transition.spec.js`, extend `window.__vinylLoadingProbe` with:
+The current file has two tests and three Playwright projects, so this focused file produces six cases. Modify only the first test, `single-poster loading sequence is bounded and settles`, through its existing `installBrowserProbe(page)` helper. Leave the independent `captures the loading poster visual` test unchanged; it continues to own screenshot capture and exact-request verification without installing the continuity probe.
+
+In `installBrowserProbe(page)`, extend `window.__vinylLoadingProbe` with:
 
 ```js
 continuityArmed: false,
@@ -2245,16 +2421,18 @@ const samplePosterContinuity = () => {
 requestAnimationFrame(samplePosterContinuity);
 ```
 
-Add these fields to `finalProbe`. For `desktop-chromium` and `mobile-chromium`, assert:
+Add these fields to `finalProbe`. Inside the first test only, guard the full/compact assertions exactly as follows:
 
 ```js
-expect(finalProbe.continuitySamples).toBeGreaterThan(3);
-expect(finalProbe.maxVisualLayers).toBeLessThanOrEqual(2);
-expect(finalProbe.maxDominantPosters).toBeLessThanOrEqual(1);
-expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.70);
+if (!reduce) {
+  expect(finalProbe.continuitySamples).toBeGreaterThan(3);
+  expect(finalProbe.maxVisualLayers).toBeLessThanOrEqual(2);
+  expect(finalProbe.maxDominantPosters).toBeLessThanOrEqual(1);
+  expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.70);
+}
 ```
 
-Do not apply the composite-opacity assertion to `mobile-reduce`; retain its zero-frame, hidden-slit, and direct-fade assertions. Keep the existing exact five-request, concurrency-at-most-two, stopped-frame-loop, uncropped-poster, and effect-attributable `50 ms` long-task assertions unchanged.
+Do not apply the composite-opacity assertion to `mobile-reduce`; retain only its existing zero-frame and hidden-slit browser assertions. The exact `opacity 120ms linear` direct fade remains covered by `test/unit/loading-screen.test.js`, because the current E2E file does not measure its duration or curve. Keep the existing exact five-request, concurrency-at-most-two, stopped-frame-loop, uncropped-poster, and effect-attributable `50 ms` long-task assertions unchanged.
 
 - [ ] **Step 6: Run focused unit and browser verification**
 
@@ -2265,7 +2443,7 @@ node --test test/unit/poster-transition.test.js test/unit/loading-screen.test.js
 npx playwright test test/e2e/loading-poster-transition.spec.js
 ```
 
-Expected: the focused unit command exits 0 with all tests PASS. Playwright reports `3 passed`: desktop and compact mobile sample no blank visual stage and at most one dominant cover; reduced motion requests no frame and shows no slit. All profiles still request exactly five routed covers with concurrency at most 2, and compact reports no effect-attributable long task over `50 ms`.
+Expected: the focused unit command exits 0 with all tests PASS. Playwright reports `6 passed`: the performance/continuity test and the independent screenshot test each run in `desktop-chromium`, `mobile-chromium`, and `mobile-reduce`. The first test samples no blank full/compact stage and at most one dominant cover; reduced motion requests no frame and shows no slit. Both tests retain exact five-cover request verification, concurrency stays at most 2, and compact reports no effect-attributable long task over `50 ms`.
 
 - [ ] **Step 7: Run the complete gate and inspect all three screenshots**
 
@@ -2277,7 +2455,7 @@ find test-results -name 'loading-*.png' -print
 git diff --check
 ```
 
-Expected: both npm commands exit 0; Playwright reports all configured tests passing; `git diff --check` prints nothing. Exactly the existing five cover requests are observed. The three loading screenshots show one complete uncropped dominant poster, no card frame or added visible copy, and a restrained reduce presentation; browser sampling confirms particle scatter plus the sliced light curtain in full/compact and no particles or slit in reduce. Pixel-class traces contain no effect-attributable task over `50 ms`.
+Expected: both npm commands exit 0; Playwright reports all configured tests passing, including six cases from `loading-poster-transition.spec.js`; `git diff --check` prints nothing. Each case observes exactly the five allowlisted cover requests. The three screenshots produced only by `captures the loading poster visual` show one complete uncropped dominant poster, no card frame, and no added visible copy. The separate first test confirms full/compact continuity, zero reduced-motion Canvas frames, a hidden reduced-motion slit, and no Pixel-class effect-attributable task over `50 ms`.
 
 - [ ] **Step 8: Commit only the Visual 6 implementation and tests**
 
