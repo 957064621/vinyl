@@ -3,6 +3,8 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './test/e2e',
   fullyParallel: false,
+  // Performance profiles run one browser at a time for deterministic long-task measurement.
+  workers: 1,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
@@ -16,7 +18,19 @@ export default defineConfig({
   },
   projects: [
     { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'mobile-chromium', use: { ...devices['Pixel 5'], reducedMotion: 'no-preference' } },
-    { name: 'mobile-reduce', use: { ...devices['Pixel 5'], reducedMotion: 'reduce' } }
+    {
+      name: 'mobile-chromium',
+      use: {
+        ...devices['Pixel 5'],
+        contextOptions: { reducedMotion: 'no-preference' }
+      }
+    },
+    {
+      name: 'mobile-reduce',
+      use: {
+        ...devices['Pixel 5'],
+        contextOptions: { reducedMotion: 'reduce' }
+      }
+    }
   ]
 });
