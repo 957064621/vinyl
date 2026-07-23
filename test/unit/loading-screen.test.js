@@ -515,6 +515,58 @@ test('destroy cancels active exit waiters before removing the root and controlle
   assert.equal(harness.calls.filter((call) => call === 'particles.destroy').length, 1);
 });
 
+test('destroy is terminal and later public calls cannot remount work or retain retry callbacks', async () => {
+  const dom = createFixture();
+  const timers = createTimerHarness();
+  const observerCalls = [];
+  dom.window.ResizeObserver = class {
+    observe(node) { observerCalls.push(['observe', node]); }
+    disconnect() { observerCalls.push(['disconnect']); }
+  };
+  const { view, harness } = createInjectedView(dom.window.document, {
+    viewOptions: {
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const root = dom.window.document.getElementById('loadingScreen');
+  const retry = dom.window.document.getElementById('loadingRetry');
+  const image = dom.window.document.createElement('img');
+  let retryCalls = 0;
+
+  view.showError(new CriticalAssetError([{ id: 'archive-01' }]), () => {
+    retryCalls += 1;
+  });
+  assert.equal(typeof retry.onclick, 'function');
+  view.destroy();
+  const callsAfterDestroy = harness.calls.length;
+
+  view.reset();
+  view.setProgress({
+    id: 'archive-01',
+    status: 'ready',
+    completed: 1,
+    total: 5,
+    result: { id: 'archive-01', alt: 'late image', image }
+  });
+  view.showError(new CriticalAssetError([{ id: 'archive-02' }]), () => {
+    retryCalls += 1;
+  });
+  const readyAfterDestroy = view.playReadySequence('full');
+  const exitAfterDestroy = view.exit('full');
+  retry.click();
+  await timers.advance(POSTER_TIMING.full.finalResolve + POSTER_TIMING.full.rootFade + 200);
+  await Promise.all([readyAfterDestroy, exitAfterDestroy]);
+
+  assert.equal(root.isConnected, false);
+  assert.equal(retry.onclick, null);
+  assert.equal(retryCalls, 0);
+  assert.equal(image.isConnected, false);
+  assert.equal(timers.pending, 0);
+  assert.deepEqual(observerCalls.map(([name]) => name), ['observe', 'disconnect']);
+  assert.equal(harness.calls.length, callsAfterDestroy);
+});
+
 test('exit fallback preserves the slit tail and destroys controllers only after both bounds', async () => {
   const dom = createFixture();
   const timers = createTimerHarness();

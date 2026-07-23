@@ -207,6 +207,7 @@ export function createLoadingScreen(documentRef = document, {
   let exitGeneration = 0;
   let exitController = null;
   let controllersDestroyed = false;
+  let destroyed = false;
 
   const cancelExit = ({ clearFallback = false } = {}) => {
     exitGeneration += 1;
@@ -230,14 +231,15 @@ export function createLoadingScreen(documentRef = document, {
   };
 
   const scheduleParticleResize = () => {
-    if (resizeFrame !== null) return;
+    if (destroyed || resizeFrame !== null) return;
     resizeFrame = requestFrame(() => {
       resizeFrame = null;
+      if (destroyed) return;
       particleField.resize();
     });
   };
   const connectResizeObserver = () => {
-    if (resizeObserver || typeof windowRef?.ResizeObserver !== 'function') return;
+    if (destroyed || resizeObserver || typeof windowRef?.ResizeObserver !== 'function') return;
     resizeObserver = new windowRef.ResizeObserver(scheduleParticleResize);
     resizeObserver.observe(canvas);
   };
@@ -269,6 +271,7 @@ export function createLoadingScreen(documentRef = document, {
 
   const view = {
     reset() {
+      if (destroyed) return;
       cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       transition.reset();
@@ -298,6 +301,7 @@ export function createLoadingScreen(documentRef = document, {
       connectResizeObserver();
     },
     setProgress({ id, status, completed, total, result }) {
+      if (destroyed) return;
       progress.textContent = `${twoDigits(completed)} / ${twoDigits(total)}`;
       const progressValue = Math.min(5, Math.max(0, Math.trunc(Number(completed) || 0)));
       root.style.setProperty('--loading-progress', String(progressValue));
@@ -313,6 +317,7 @@ export function createLoadingScreen(documentRef = document, {
       if (status === 'ready') copy.textContent = `已归档 ${completed} / ${total}`;
     },
     showError(error, onRetry) {
+      if (destroyed) return;
       cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       transition.freeze();
@@ -338,6 +343,7 @@ export function createLoadingScreen(documentRef = document, {
         : `影像读取失败：${failureIds || error.message}`;
       retry.hidden = false;
       retry.onclick = () => {
+        if (destroyed) return;
         retry.onclick = null;
         view.reset();
         onRetry();
@@ -345,13 +351,16 @@ export function createLoadingScreen(documentRef = document, {
       retry.focus();
     },
     async playReadySequence(profile) {
+      if (destroyed) return;
       root.dataset.state = 'ready';
       copy.textContent = '档案接入完成';
       try {
         transition.setProfile(profile ?? motionProfile);
         await transition.finish();
+        if (destroyed) return;
         if (visualQueueError) throw visualQueueError;
       } catch (error) {
+        if (destroyed) return;
         root.dataset.state = 'error';
         root.dataset.errorKind = 'visual';
         copy.textContent = '影像呈现失败，请重新载入';
@@ -361,6 +370,7 @@ export function createLoadingScreen(documentRef = document, {
       }
     },
     async exit(profile) {
+      if (destroyed) return;
       cancelExit();
       const exitToken = exitGeneration;
       const controller = new AbortController();
@@ -399,12 +409,16 @@ export function createLoadingScreen(documentRef = document, {
         || controller.signal.aborted
         || exitToken !== exitGeneration
         || exitController !== controller
+        || destroyed
       ) return;
       exitController = null;
       root.remove();
       destroyControllers();
     },
     destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      retry.onclick = null;
       cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       root.remove();

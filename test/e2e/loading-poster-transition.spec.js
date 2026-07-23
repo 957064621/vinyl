@@ -3,6 +3,12 @@ import { writeFile } from 'node:fs/promises';
 import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
 
 const FIXTURE_DELAY_STEP_MS = 80;
+const LIGHT_PEAK_OFFSETS = Object.freeze({ ordinary: 0.60, final: 0.52 });
+const CENTER_PEAK_UPPER_BOUNDS = Object.freeze({
+  ordinary: (255 * 0.28 * 0.62 * 0.78) + 1,
+  final: (255 * 0.22 * 0.52 * 0.78) + 1
+});
+const EDGE_BACKGROUND_DELTA = 3;
 const EXPECTED_ARCHIVE_IDS = Object.freeze([
   'archive-01',
   'archive-02',
@@ -17,7 +23,7 @@ const COVER_FIXTURES = new Map(EXPECTED_ARCHIVE_IDS.map((id, index) => {
   const fixtureIndex = index + 1;
   return [
     new URL(asset.source).pathname,
-    { fixtureIndex, delayMs: fixtureIndex * FIXTURE_DELAY_STEP_MS }
+    { delayMs: fixtureIndex * FIXTURE_DELAY_STEP_MS }
   ];
 }));
 const EXPECTED_COVER_PATHNAMES = [...COVER_FIXTURES.keys()].sort();
@@ -25,12 +31,12 @@ const FAILED_COVER_PATHNAME = new URL(
   CRITICAL_IMAGE_MANIFEST.find(({ id }) => id === 'archive-01').source
 ).pathname;
 
-const coverSvg = (index) => Buffer.from(`
+const DETERMINISTIC_COVER = Buffer.from(`
   <svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800">
     <rect width="600" height="800" fill="#11151d"/>
     <rect x="28" y="28" width="544" height="744" fill="#f4f1e8"/>
     <rect x="56" y="56" width="488" height="688" fill="#26394a"/>
-    <text x="300" y="410" text-anchor="middle" fill="#fffdf4" font-size="64">AR-${String(index).padStart(2, '0')}</text>
+    <rect x="164" y="352" width="272" height="96" fill="#fffdf4"/>
   </svg>
 `);
 
@@ -67,7 +73,7 @@ const installDeterministicCovers = async (page) => {
       await route.fulfill({
         status: 200,
         contentType: 'image/svg+xml',
-        body: coverSvg(fixture.fixtureIndex)
+        body: DETERMINISTIC_COVER
       });
     } finally {
       stats.active -= 1;
@@ -134,7 +140,7 @@ const installFailureThenRetryCovers = async (page) => {
       await route.fulfill({
         status: 200,
         contentType: 'image/svg+xml',
-        body: coverSvg(fixture.fixtureIndex)
+        body: DETERMINISTIC_COVER
       });
     } finally {
       phaseStats.active -= 1;
@@ -226,14 +232,116 @@ const measureHorizontalLightDelta = (page, before, after) => page.evaluate(async
   after: after.toString('base64')
 });
 
-const captureInstrumented = async (page, path) => {
+const getLightOracleClip = (page) => page.evaluate(() => {
+  const stage = document.querySelector('.loading-stage').getBoundingClientRect();
+  const slit = document.querySelector('#loadingLightSlit').getBoundingClientRect();
+  const height = 8;
+  const clip = {
+    x: 0,
+    y: Math.floor(stage.top - height - 6),
+    width: Math.floor(innerWidth),
+    height
+  };
+  const intersects = (rect) => (
+    rect.right > clip.x
+    && rect.left < clip.x + clip.width
+    && rect.bottom > clip.y
+    && rect.top < clip.y + clip.height
+  );
+  const blockers = [
+    ...document.querySelectorAll(
+      '.loading-poster-stack, #loadingParticles, #loadingProgress, #loadingCopy, '
+      + '#loadingRetry, .loading-progress-rail'
+    )
+  ].filter((element) => intersects(element.getBoundingClientRect()))
+    .map((element) => element.id || element.className);
+  return {
+    clip,
+    blockers,
+    slitCoversClipVertically: slit.top <= clip.y && slit.bottom >= clip.y + clip.height
+  };
+});
+
+const readLightAnimation = (phase) => {
+  const root = document.querySelector('#loadingScreen');
+  const slit = document.querySelector('#loadingLightSlit');
+  const prefix = phase === 'final' ? 'loading-final-' : 'loading-slit-';
+  const animation = root?.getAnimations({ subtree: true }).find(({ animationName }) => (
+    animationName?.startsWith(prefix)
+  ));
+  if (!animation) return null;
+  const timing = animation.effect.getComputedTiming();
+  const duration = Number(timing.duration);
+  const peakOffset = phase === 'final' ? 0.52 : 0.60;
+  const naturalPeakAt = animation.startTime + (duration * peakOffset);
+  const animations = root.getAnimations({ subtree: true }).filter(({ animationName }) => (
+    animationName?.startsWith(phase === 'final' ? 'loading-final-' : 'loading-')
+  ));
+  const opacity = (selector) => Number.parseFloat(getComputedStyle(root.querySelector(selector)).opacity) || 0;
+  return {
+    at: performance.now(),
+    currentTime: animation.currentTime,
+    duration,
+    naturalPeakAt,
+    animationName: animation.animationName,
+    playState: animation.playState,
+    playbackRate: animation.playbackRate,
+    direction: slit.dataset.direction,
+    parentOpacity: opacity('#loadingLightSlit'),
+    coreOpacity: opacity('.loading-light-core'),
+    warmOpacity: opacity('.loading-light-edge.is-warm'),
+    coolOpacity: opacity('.loading-light-edge.is-cool'),
+    pausedAnimations: animations.filter(({ playState }) => playState === 'paused').length
+  };
+};
+
+const captureInstrumented = async (page, clip, phase) => {
+  const before = await page.evaluate(readLightAnimation, phase);
+  const buffer = await page.screenshot({ clip });
+  const after = await page.evaluate(readLightAnimation, phase);
+  const acquisition = { start: before.at, end: after?.at ?? await page.evaluate(() => performance.now()) };
+  await page.evaluate(({ start, end }) => {
+    window.__vinylProbeOverhead.push({ start, end });
+  }, acquisition);
+  return { acquisition, before, after, buffer };
+};
+
+const captureBaseline = async (page, clip) => {
   const start = await page.evaluate(() => performance.now());
-  const buffer = await page.screenshot({ path });
+  const buffer = await page.screenshot({ clip });
   const end = await page.evaluate(() => performance.now());
   await page.evaluate(({ start, end }) => {
     window.__vinylProbeOverhead.push({ start, end });
   }, { start, end });
   return buffer;
+};
+
+const captureNaturalPeak = async (page, { clip, phase }) => {
+  const peakOffset = LIGHT_PEAK_OFFSETS[phase];
+  await page.waitForFunction(({ phase, peakOffset }) => {
+    const root = document.querySelector('#loadingScreen');
+    const prefix = phase === 'final' ? 'loading-final-' : 'loading-slit-';
+    const animation = root?.getAnimations({ subtree: true }).find(({ animationName }) => (
+      animationName?.startsWith(prefix)
+    ));
+    if (!animation) return false;
+    const peakTime = Number(animation.effect.getComputedTiming().duration) * peakOffset;
+    return animation.currentTime >= peakTime - 35 && animation.currentTime < peakTime;
+  }, { phase, peakOffset });
+
+  const candidates = [];
+  for (let index = 0; index < 4; index += 1) {
+    const capture = await captureInstrumented(page, clip, phase);
+    candidates.push(capture);
+    if (
+      capture.acquisition.start <= capture.before.naturalPeakAt
+      && capture.acquisition.end >= capture.before.naturalPeakAt
+    ) return { ...capture, candidateCount: candidates.length };
+    if (capture.acquisition.start > capture.before.naturalPeakAt) break;
+  }
+  throw new Error(`No ${phase} screenshot covered its natural peak: ${JSON.stringify(
+    candidates.map(({ acquisition, before }) => ({ acquisition, naturalPeakAt: before.naturalPeakAt }))
+  )}`);
 };
 
 const installBrowserProbe = async (page) => {
@@ -250,6 +358,9 @@ const installBrowserProbe = async (page) => {
       activeIds: [],
       activeTimeline: [],
       currentActiveId: null,
+      decodedNodeCount: 0,
+      decodedNodeUniqueCount: 0,
+      decodedAssetIds: [],
       posterGeometry: null,
       slitHiddenAtFirstActive: null,
       continuityArmed: false,
@@ -356,6 +467,12 @@ const installBrowserProbe = async (page) => {
 
       const inspectActivePosters = () => {
         const active = [...document.querySelectorAll('.loading-frame.is-active')];
+        const decodedNodes = [...document.querySelectorAll('.loading-frame > .loading-image')];
+        if (decodedNodes.length >= probe.decodedNodeCount) {
+          probe.decodedNodeCount = decodedNodes.length;
+          probe.decodedNodeUniqueCount = new Set(decodedNodes).size;
+          probe.decodedAssetIds = decodedNodes.map(({ dataset }) => dataset.assetId);
+        }
         probe.maxActive = Math.max(probe.maxActive, active.length);
         const nextActiveId = active.length === 1 ? active[0].dataset.loadingSlot : null;
         if (nextActiveId && nextActiveId !== probe.currentActiveId) {
@@ -545,38 +662,38 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   let finalLightMetrics = null;
   let finalCapture = null;
   if (!reduce) {
+    const lightOracle = await getLightOracleClip(page);
+    expect(lightOracle.blockers).toEqual([]);
+    expect(lightOracle.slitCoversClipVertically).toBe(true);
     await page.waitForFunction(() => (
       document.querySelector('[data-loading-slot="archive-01"].is-active.is-stable')
       && !document.querySelector('#loadingLightSlit')?.classList.contains('is-lit')
     ));
-    const ordinaryBaseline = await captureInstrumented(
-      page,
-      testInfo.outputPath(`ordinary-baseline-${testInfo.project.name}.png`)
+    const ordinaryBaseline = await captureBaseline(page, lightOracle.clip);
+    await writeFile(
+      testInfo.outputPath(`ordinary-baseline-${testInfo.project.name}.png`),
+      ordinaryBaseline
     );
-    await page.waitForFunction(() => {
-      const slit = document.querySelector('#loadingLightSlit.is-lit');
-      return document.querySelector('[data-loading-slot="archive-02"].is-revealing')
-        && (Number.parseFloat(getComputedStyle(slit).opacity) || 0) >= 0.25;
+    const ordinaryPeak = await captureNaturalPeak(page, {
+      clip: lightOracle.clip,
+      phase: 'ordinary'
     });
-    ordinaryCapture = await page.evaluate(() => {
-      const root = document.querySelector('#loadingScreen');
-      const slit = document.querySelector('#loadingLightSlit');
-      const animations = root.getAnimations({ subtree: true }).filter(({ animationName }) => (
-        animationName?.startsWith('loading-')
-      ));
-      return {
-        at: performance.now(),
-        direction: slit.dataset.direction,
-        parentOpacity: Number.parseFloat(getComputedStyle(slit).opacity) || 0,
-        animationNames: animations.map(({ animationName }) => animationName),
-        pausedAnimations: animations.filter(({ playState }) => playState === 'paused').length
-      };
-    });
-    const ordinaryPeak = await captureInstrumented(
-      page,
-      testInfo.outputPath(`ordinary-natural-peak-${testInfo.project.name}.png`)
+    await writeFile(
+      testInfo.outputPath(`ordinary-natural-peak-${testInfo.project.name}.png`),
+      ordinaryPeak.buffer
     );
-    ordinaryLightMetrics = await measureHorizontalLightDelta(page, ordinaryBaseline, ordinaryPeak);
+    ordinaryCapture = {
+      acquisition: ordinaryPeak.acquisition,
+      before: ordinaryPeak.before,
+      after: ordinaryPeak.after,
+      candidateCount: ordinaryPeak.candidateCount,
+      oracleClip: lightOracle.clip
+    };
+    ordinaryLightMetrics = await measureHorizontalLightDelta(
+      page,
+      ordinaryBaseline,
+      ordinaryPeak.buffer
+    );
 
     await page.waitForFunction(() => (
       window.__vinylLoadingProbe.activeIds.includes('archive-05')
@@ -585,57 +702,60 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       const final = document.querySelector('[data-loading-slot="archive-05"].is-active.is-stable');
       return final && !document.querySelector('#loadingScreen')?.classList.contains('is-final-resolving');
     });
-    const finalBaseline = await captureInstrumented(
-      page,
-      testInfo.outputPath(`final-baseline-${testInfo.project.name}.png`)
+    const finalBaseline = await captureBaseline(page, lightOracle.clip);
+    await writeFile(
+      testInfo.outputPath(`final-baseline-${testInfo.project.name}.png`),
+      finalBaseline
     );
-    await page.waitForFunction(() => {
-      const root = document.querySelector('#loadingScreen.is-final-resolving');
-      const slit = document.querySelector('#loadingLightSlit');
-      return root && (Number.parseFloat(getComputedStyle(slit).opacity) || 0) >= 0.20;
+    const finalPeak = await captureNaturalPeak(page, {
+      clip: lightOracle.clip,
+      phase: 'final'
     });
-    finalCapture = await page.evaluate(() => {
-      const root = document.querySelector('#loadingScreen');
-      const slit = document.querySelector('#loadingLightSlit');
-      const animations = root.getAnimations({ subtree: true }).filter(({ animationName }) => (
-        animationName?.startsWith('loading-final-')
-      ));
-      const opacity = (selector) => Number.parseFloat(getComputedStyle(root.querySelector(selector)).opacity);
-      return {
-        at: performance.now(),
-        direction: slit.dataset.direction,
-        parentOpacity: opacity('#loadingLightSlit'),
-        coreOpacity: opacity('.loading-light-core'),
-        warmOpacity: opacity('.loading-light-edge.is-warm'),
-        coolOpacity: opacity('.loading-light-edge.is-cool'),
-        animationNames: animations.map(({ animationName }) => animationName),
-        pausedAnimations: animations.filter(({ playState }) => playState === 'paused').length
-      };
-    });
-    const finalPeak = await captureInstrumented(
-      page,
-      testInfo.outputPath(`final-natural-peak-${testInfo.project.name}.png`)
+    await writeFile(
+      testInfo.outputPath(`final-natural-peak-${testInfo.project.name}.png`),
+      finalPeak.buffer
     );
-    finalLightMetrics = await measureHorizontalLightDelta(page, finalBaseline, finalPeak);
+    finalCapture = {
+      acquisition: finalPeak.acquisition,
+      before: finalPeak.before,
+      after: finalPeak.after,
+      candidateCount: finalPeak.candidateCount,
+      oracleClip: lightOracle.clip
+    };
+    finalLightMetrics = await measureHorizontalLightDelta(page, finalBaseline, finalPeak.buffer);
 
-    expect(['ltr', 'rtl']).toContain(ordinaryCapture.direction);
-    expect(ordinaryCapture.pausedAnimations).toBe(0);
-    expect(ordinaryCapture.parentOpacity).toBeGreaterThanOrEqual(0.25);
-    expect(['ltr', 'rtl']).toContain(finalCapture.direction);
-    expect(finalCapture.animationNames).toContain(`loading-final-${finalCapture.direction}`);
-    expect(finalCapture.pausedAnimations).toBe(0);
-    expect(finalCapture.parentOpacity).toBeGreaterThanOrEqual(0.20);
-    expect(finalCapture.parentOpacity).toBeLessThanOrEqual(0.22);
-    expect(finalCapture.coreOpacity).toBeLessThanOrEqual(0.52);
-    expect(finalCapture.warmOpacity).toBeLessThanOrEqual(0.22);
-    expect(finalCapture.coolOpacity).toBeLessThanOrEqual(0.20);
+    for (const capture of [ordinaryCapture, finalCapture]) {
+      expect(['ltr', 'rtl']).toContain(capture.before.direction);
+      expect(capture.before.playState).toBe('running');
+      expect(capture.before.playbackRate).toBe(1);
+      expect(capture.before.pausedAnimations).toBe(0);
+      expect(capture.after.playState).toBe('running');
+      expect(capture.after.playbackRate).toBe(1);
+      expect(capture.after.pausedAnimations).toBe(0);
+      expect(capture.acquisition.start).toBeLessThanOrEqual(capture.before.naturalPeakAt);
+      expect(capture.acquisition.end).toBeGreaterThanOrEqual(capture.before.naturalPeakAt);
+    }
+    expect(ordinaryCapture.before.animationName).toBe(
+      `loading-slit-${ordinaryCapture.before.direction}`
+    );
+    expect(finalCapture.before.animationName).toBe(`loading-final-${finalCapture.before.direction}`);
+    for (const state of [finalCapture.before, finalCapture.after]) {
+      expect(state.parentOpacity).toBeLessThanOrEqual(0.22);
+      expect(state.coreOpacity).toBeLessThanOrEqual(0.52);
+      expect(state.warmOpacity).toBeLessThanOrEqual(0.22);
+      expect(state.coolOpacity).toBeLessThanOrEqual(0.20);
+    }
   }
   await expect(loading).toHaveCount(0, { timeout: 10_000 });
   const effectEnd = await page.evaluate(() => performance.now());
   if (!reduce) {
-    for (const metrics of [ordinaryLightMetrics, finalLightMetrics]) {
+    for (const [phase, metrics] of Object.entries({
+      ordinary: ordinaryLightMetrics,
+      final: finalLightMetrics
+    })) {
       expect(metrics.centerPeak).toBeGreaterThan(0.5);
-      const edgeNoiseBound = Math.max(0.5, metrics.centerPeak * 0.25);
+      expect(metrics.centerPeak).toBeLessThanOrEqual(CENTER_PEAK_UPPER_BOUNDS[phase]);
+      const edgeNoiseBound = Math.max(EDGE_BACKGROUND_DELTA, metrics.centerPeak * 0.25);
       expect(metrics.leftEdgeMean).toBeLessThan(edgeNoiseBound);
       expect(metrics.rightEdgeMean).toBeLessThan(edgeNoiseBound);
       expect(metrics.longestNearUniformRatio).toBeLessThanOrEqual(0.35);
@@ -655,6 +775,9 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     maxActive: window.__vinylLoadingProbe.maxActive,
     activeIds: window.__vinylLoadingProbe.activeIds,
     activeTimeline: window.__vinylLoadingProbe.activeTimeline,
+    decodedNodeCount: window.__vinylLoadingProbe.decodedNodeCount,
+    decodedNodeUniqueCount: window.__vinylLoadingProbe.decodedNodeUniqueCount,
+    decodedAssetIds: window.__vinylLoadingProbe.decodedAssetIds,
     continuitySamples: window.__vinylLoadingProbe.continuitySamples,
     maxVisualLayers: window.__vinylLoadingProbe.maxVisualLayers,
     maxDominantPosters: window.__vinylLoadingProbe.maxDominantPosters,
@@ -668,6 +791,9 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     exitGateAt: window.__vinylLoadingProbe.exitGateAt
   }));
   expect(finalProbe.maxActive).toBe(1);
+  expect(finalProbe.decodedNodeCount).toBe(5);
+  expect(finalProbe.decodedNodeUniqueCount).toBe(5);
+  expect(finalProbe.decodedAssetIds).toEqual(EXPECTED_ARCHIVE_IDS);
   if (reduce) {
     expect(framesAtExit).toBe(0);
     expect(finalProbe.phaseLeftIdle).toBe(false);
@@ -698,8 +824,8 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(finalProbe.ignitionLeads.every(({ leadMs }) => leadMs > 0)).toBe(true);
     const ordinaryPass = finalProbe.lightPasses.find((pass) => (
       pass.phase === 'ordinary'
-      && pass.startedAt <= ordinaryCapture.at
-      && pass.endedAt >= ordinaryCapture.at
+      && pass.startedAt <= ordinaryCapture.before.naturalPeakAt
+      && pass.endedAt >= ordinaryCapture.before.naturalPeakAt
     ));
     const finalPass = finalProbe.lightPasses.find((pass) => pass.phase === 'final');
     expect(ordinaryPass).toBeTruthy();
@@ -707,7 +833,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(ordinaryPass.samples.length).toBeGreaterThanOrEqual(8);
     expect(finalPass.samples.length).toBeGreaterThanOrEqual(8);
     expect(finalPass.startedAt).toBeLessThan(finalProbe.exitGateAt);
-    expect(finalCapture.at).toBeLessThan(finalProbe.exitGateAt);
+    expect(finalCapture.before.naturalPeakAt).toBeLessThan(finalProbe.exitGateAt);
     const naturalPeak = (pass) => pass.samples.reduce((peak, sample) => (
       sample.parentOpacity > peak.parentOpacity ? sample : peak
     ));
