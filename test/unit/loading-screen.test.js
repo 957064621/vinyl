@@ -422,6 +422,99 @@ test('full exit waits for both root opacity settlement and proven slit opacity z
   assert.deepEqual(harness.calls.slice(-2), ['transition.destroy', 'particles.destroy']);
 });
 
+test('reset cancels active exit waiters and stale settlement cannot remove the restarted root', async () => {
+  const dom = createFixture();
+  const timers = createTimerHarness();
+  const { view, harness } = createInjectedView(dom.window.document, {
+    viewOptions: {
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const root = dom.window.document.getElementById('loadingScreen');
+  const slit = dom.window.document.getElementById('loadingLightSlit');
+  slit.style.opacity = '1';
+  let exitSettled = false;
+  const exiting = view.exit('full').then(() => { exitSettled = true; });
+  assert.equal(timers.pending, 2);
+
+  view.reset();
+  await exiting;
+
+  assert.equal(exitSettled, true);
+  assert.equal(timers.pending, 0);
+  assert.equal(root.isConnected, true);
+  assert.equal(root.classList.contains('is-exiting'), false);
+  assert.equal(slit.style.animation, '');
+  assert.equal(slit.style.opacity, '');
+  assert.equal(harness.calls.includes('transition.destroy'), false);
+  assert.equal(harness.calls.includes('particles.destroy'), false);
+
+  root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
+  slit.style.opacity = '0';
+  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-ltr'));
+  await timers.advance(POSTER_TIMING.full.finalResolve + POSTER_TIMING.full.rootFade + 200);
+  assert.equal(root.isConnected, true);
+  assert.equal(harness.calls.includes('transition.destroy'), false);
+});
+
+test('freezing for an error cancels active exit cleanup before controller destruction', async () => {
+  const dom = createFixture();
+  const timers = createTimerHarness();
+  const { view, harness } = createInjectedView(dom.window.document, {
+    viewOptions: {
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const root = dom.window.document.getElementById('loadingScreen');
+  const slit = dom.window.document.getElementById('loadingLightSlit');
+  slit.style.opacity = '1';
+  let exitSettled = false;
+  const exiting = view.exit('compact').then(() => { exitSettled = true; });
+
+  view.showError(new VisualTransitionError(new Error('late visual failure')), () => {});
+  await exiting;
+
+  assert.equal(exitSettled, true);
+  assert.equal(timers.pending, 0);
+  assert.equal(root.isConnected, true);
+  assert.equal(root.dataset.state, 'error');
+  assert.equal(harness.calls.includes('transition.freeze'), true);
+  assert.equal(harness.calls.includes('transition.destroy'), false);
+  assert.equal(harness.calls.includes('particles.destroy'), false);
+});
+
+test('destroy cancels active exit waiters before removing the root and controllers once', async () => {
+  const dom = createFixture();
+  const timers = createTimerHarness();
+  const { view, harness } = createInjectedView(dom.window.document, {
+    viewOptions: {
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const root = dom.window.document.getElementById('loadingScreen');
+  const slit = dom.window.document.getElementById('loadingLightSlit');
+  slit.style.opacity = '1';
+  const exiting = view.exit('full');
+  assert.equal(timers.pending, 2);
+
+  view.destroy();
+  view.destroy();
+  await exiting;
+
+  assert.equal(timers.pending, 0);
+  assert.equal(root.isConnected, false);
+  assert.equal(harness.calls.filter((call) => call === 'transition.destroy').length, 1);
+  assert.equal(harness.calls.filter((call) => call === 'particles.destroy').length, 1);
+  slit.style.opacity = '0';
+  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-rtl'));
+  await timers.advance(POSTER_TIMING.full.finalResolve + POSTER_TIMING.full.rootFade + 200);
+  assert.equal(harness.calls.filter((call) => call === 'transition.destroy').length, 1);
+  assert.equal(harness.calls.filter((call) => call === 'particles.destroy').length, 1);
+});
+
 test('exit fallback preserves the slit tail and destroys controllers only after both bounds', async () => {
   const dom = createFixture();
   const timers = createTimerHarness();
@@ -757,6 +850,9 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   }
   assert.match(extractCssBlock(loadingBlock, '.loading-light-edge.is-warm'), /rgba\(255, 244, 222, 0\)\s+72%/);
   assert.match(extractCssBlock(loadingBlock, '.loading-light-edge.is-cool'), /rgba\(220, 241, 255, 0\)\s+28%/);
+  const coreBeam = extractCssBlock(loadingBlock, '.loading-light-core');
+  assert.match(coreBeam, /rgba\(255, 255, 255, 0\)\s+32%/);
+  assert.match(coreBeam, /rgba\(255, 255, 255, 0\)\s+68%/);
   assert.ok(((46 * 0.28) + 8 + (46 * 0.28)) <= 35, 'effective beam width must stay within 35vw');
   assert.match(loadingBlock, /\.loading-controls\s*\{[^}]*z-index:\s*5/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*object-fit:\s*contain/s);

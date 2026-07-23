@@ -464,6 +464,47 @@ test('finish during a pre-classified normal hold waits its remainder before expo
   await finishing;
 });
 
+for (const [initialProfile, nextProfile] of [
+  ['compact', 'full'],
+  ['full', 'compact']
+]) {
+  test(`final hold and resolve stay bound to ${initialProfile} when switching to ${nextProfile}`, async () => {
+    const scheduler = makeManualScheduler();
+    const { controller, root, slots } = makeFixture({ scheduler, profile: initialProfile });
+    const initialTiming = VISUAL8_TIMING[initialProfile];
+    controller.enqueue(slots[0]);
+    await flush();
+
+    let guard = 0;
+    while (controller.getState().processing) {
+      assert.ok(guard < 16, 'initial profile scene exceeded its scheduler bound');
+      assert.ok(scheduler.pending > 0);
+      scheduler.releaseNext();
+      await flush();
+      guard += 1;
+    }
+    await controller.waitForIdle();
+
+    const finishing = controller.finish();
+    await flush();
+    assert.deepEqual(scheduler.durations, [
+      initialTiming.finalHold - initialTiming.normal.hold
+    ]);
+
+    controller.setProfile(nextProfile);
+    scheduler.releaseNext();
+    await flush();
+
+    assert.equal(controller.getState().profile, nextProfile);
+    assert.deepEqual(scheduler.durations, [initialTiming.exitLead, initialTiming.finalResolve]);
+    assert.equal(root.style.getPropertyValue('--final-resolve-ms'), `${initialTiming.finalResolve}ms`);
+    assert.equal(root.dataset.motionProfile, nextProfile);
+
+    scheduler.releaseDuration(initialTiming.exitLead);
+    await finishing;
+  });
+}
+
 test('animated transitions overlap outgoing scatter with incoming reveal', async () => {
   const scheduler = makeManualScheduler();
   const { controller, particleCalls, root, slit, slots } = makeFixture({ scheduler });

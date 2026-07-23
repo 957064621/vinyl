@@ -461,8 +461,9 @@ export function createPosterTransition({
           if (lastError) throw lastError;
 
           const token = generation;
-          if (currentProfile !== 'reduce' && activeItem) {
-            const profileTiming = POSTER_TIMING[currentProfile];
+          const finalSceneProfile = currentProfile;
+          if (finalSceneProfile !== 'reduce' && activeItem) {
+            const profileTiming = POSTER_TIMING[finalSceneProfile];
             const remainingHold = Math.max(
               0,
               profileTiming.finalHold - completedReadableHold
@@ -476,10 +477,10 @@ export function createPosterTransition({
             }
           }
 
-          if (currentProfile !== 'reduce') {
-            const profileTiming = POSTER_TIMING[currentProfile];
+          if (finalSceneProfile !== 'reduce') {
+            const profileTiming = POSTER_TIMING[finalSceneProfile];
             slit.dataset.direction = lastDirection;
-            slit.dataset.motionProfile = currentProfile;
+            slit.dataset.motionProfile = finalSceneProfile;
             root.style.setProperty('--final-resolve-ms', `${profileTiming.finalResolve}ms`);
             root.classList.add('is-final-resolving');
             const gateWork = sleep(profileTiming.exitLead, token);

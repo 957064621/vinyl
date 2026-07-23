@@ -46,6 +46,7 @@ const createNoopParticleField = (initialProfile) => {
 const waitForTransition = (element, {
   propertyName = 'opacity',
   timeoutMs = 560,
+  signal,
   setTimer = setTimeout,
   clearTimer = clearTimeout
 } = {}) => new Promise((resolve) => {
@@ -55,25 +56,33 @@ const waitForTransition = (element, {
   const cleanup = () => {
     clearTimer(timer);
     element.removeEventListener('transitionend', handleTransitionEnd);
+    signal?.removeEventListener('abort', handleAbort);
   };
-  const finish = () => {
+  const finish = (completed) => {
     if (settled) return;
     settled = true;
     cleanup();
-    resolve();
+    resolve(completed);
   };
   const handleTransitionEnd = (event) => {
     if (event.target !== element || event.propertyName !== propertyName) return;
-    finish();
+    finish(true);
   };
+  const handleAbort = () => finish(false);
 
-  timer = setTimer(finish, timeoutMs);
+  if (signal?.aborted) {
+    finish(false);
+    return;
+  }
+  timer = setTimer(() => finish(true), timeoutMs);
   element.addEventListener('transitionend', handleTransitionEnd);
+  signal?.addEventListener('abort', handleAbort, { once: true });
 });
 
 const waitForSlitOpacityZero = (root, slit, {
   profile,
   windowRef,
+  signal,
   setTimer = setTimeout,
   clearTimer = clearTimeout
 } = {}) => new Promise((resolve) => {
@@ -86,33 +95,48 @@ const waitForSlitOpacityZero = (root, slit, {
   const cleanup = () => {
     clearTimer(timer);
     slit.removeEventListener('animationend', handleAnimationEnd);
+    signal?.removeEventListener('abort', handleAbort);
   };
-  const finish = () => {
+  const finish = (completed) => {
+    if (!completed) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(false);
+      return;
+    }
     if (settled || !opacityIsZero()) return;
     settled = true;
     cleanup();
-    resolve();
+    resolve(true);
   };
   const handleAnimationEnd = (event) => {
     if (
       event.target !== slit
       || !['loading-final-ltr', 'loading-final-rtl'].includes(event.animationName)
     ) return;
-    finish();
+    finish(true);
   };
+  const handleAbort = () => finish(false);
 
+  if (signal?.aborted) {
+    finish(false);
+    return;
+  }
   slit.addEventListener('animationend', handleAnimationEnd);
+  signal?.addEventListener('abort', handleAbort, { once: true });
   if (opacityIsZero() && !root.classList.contains('is-final-resolving')) {
-    finish();
+    finish(true);
     return;
   }
 
   const timing = POSTER_TIMING[profile];
   const finalTail = timing.finalResolve - timing.exitLead;
   timer = setTimer(() => {
+    if (signal?.aborted) return;
     slit.style.animation = 'none';
     slit.style.opacity = '0';
-    finish();
+    finish(true);
   }, finalTail + 80);
 });
 
@@ -180,6 +204,30 @@ export function createLoadingScreen(documentRef = document, {
   const cancelFrame = windowRef?.cancelAnimationFrame?.bind(windowRef) ?? clearTimer;
   let resizeFrame = null;
   let resizeObserver = null;
+  let exitGeneration = 0;
+  let exitController = null;
+  let controllersDestroyed = false;
+
+  const cancelExit = ({ clearFallback = false } = {}) => {
+    exitGeneration += 1;
+    exitController?.abort();
+    exitController = null;
+    root.classList.remove('is-exiting');
+    if (!clearFallback) return;
+    slit.style.removeProperty('animation');
+    slit.style.removeProperty('opacity');
+  };
+
+  const destroyControllers = () => {
+    if (controllersDestroyed) return;
+    controllersDestroyed = true;
+    try {
+      transition.destroy();
+    } catch {}
+    try {
+      particleField.destroy();
+    } catch {}
+  };
 
   const scheduleParticleResize = () => {
     if (resizeFrame !== null) return;
@@ -221,6 +269,7 @@ export function createLoadingScreen(documentRef = document, {
 
   const view = {
     reset() {
+      cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       transition.reset();
       particleField.clear();
@@ -264,6 +313,7 @@ export function createLoadingScreen(documentRef = document, {
       if (status === 'ready') copy.textContent = `已归档 ${completed} / ${total}`;
     },
     showError(error, onRetry) {
+      cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       transition.freeze();
       particleField.clear();
@@ -311,37 +361,54 @@ export function createLoadingScreen(documentRef = document, {
       }
     },
     async exit(profile) {
+      cancelExit();
+      const exitToken = exitGeneration;
+      const controller = new AbortController();
+      exitController = controller;
       disconnectResizeObserver();
       root.classList.add('is-exiting');
       const timing = POSTER_TIMING[profile];
+      let completed;
       if (profile === 'reduce') {
-        await waitForTransition(root, {
+        completed = await waitForTransition(root, {
           timeoutMs: timing.fade + 80,
+          signal: controller.signal,
           setTimer,
           clearTimer
         });
       } else {
-        await Promise.all([
+        const results = await Promise.all([
           waitForTransition(root, {
             timeoutMs: timing.rootFade + 80,
+            signal: controller.signal,
             setTimer,
             clearTimer
           }),
           waitForSlitOpacityZero(root, slit, {
             profile,
             windowRef,
+            signal: controller.signal,
             setTimer,
             clearTimer
           })
         ]);
+        completed = results.every(Boolean);
       }
+      if (
+        !completed
+        || controller.signal.aborted
+        || exitToken !== exitGeneration
+        || exitController !== controller
+      ) return;
+      exitController = null;
       root.remove();
-      try {
-        transition.destroy();
-      } catch {}
-      try {
-        particleField.destroy();
-      } catch {}
+      destroyControllers();
+    },
+    destroy() {
+      cancelExit({ clearFallback: true });
+      disconnectResizeObserver();
+      root.remove();
+      destroyControllers();
     }
   };
 

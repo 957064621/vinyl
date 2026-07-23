@@ -200,11 +200,26 @@ const measureHorizontalLightDelta = (page, before, after) => page.evaluate(async
   const edgeWidth = Math.max(1, Math.floor(canvas.width * 0.1));
   const middle = columns.slice(edgeWidth, -edgeWidth);
   const centerPeak = Math.max(...middle);
+  const brightFloor = Math.max(0.35, centerPeak * 0.08);
+  const uniformStep = Math.max(0.35, centerPeak * 0.04);
+  let longestNearUniformRun = 0;
+  let currentNearUniformRun = 0;
+  for (let index = 0; index < columns.length; index += 1) {
+    const value = columns[index];
+    const followsUniformly = currentNearUniformRun === 0
+      || Math.abs(value - columns[index - 1]) <= uniformStep;
+    if (value >= brightFloor && followsUniformly) currentNearUniformRun += 1;
+    else currentNearUniformRun = value >= brightFloor ? 1 : 0;
+    longestNearUniformRun = Math.max(longestNearUniformRun, currentNearUniformRun);
+  }
   return {
     centerPeak,
     leftEdgeMean: mean(columns.slice(0, edgeWidth)),
     rightEdgeMean: mean(columns.slice(-edgeWidth)),
-    brightWidthRatio: columns.filter((value) => value >= centerPeak * 0.65).length / columns.length
+    longestNearUniformRun,
+    longestNearUniformRatio: longestNearUniformRun / columns.length,
+    brightFloor,
+    uniformStep
   };
 }, {
   before: before.toString('base64'),
@@ -250,7 +265,10 @@ const installBrowserProbe = async (page) => {
       scatterHandoffs: [],
       clearedPixelCounts: [],
       scatterStartFrameCount: null,
-      settledFrameCount: null
+      settledFrameCount: null,
+      lightPasses: [],
+      activeLightPass: null,
+      exitGateAt: null
     };
 
     new PerformanceObserver((list) => {
@@ -381,13 +399,56 @@ const installBrowserProbe = async (page) => {
 
       const samplePosterContinuity = () => {
         const loading = document.querySelector('#loadingScreen');
-        if (!loading) return;
+        if (!loading) {
+          if (probe.activeLightPass) {
+            probe.activeLightPass.endedAt = performance.now();
+            probe.lightPasses.push(probe.activeLightPass);
+            probe.activeLightPass = null;
+          }
+          return;
+        }
         const visualFrames = [...loading.querySelectorAll('.loading-frame.is-active, .loading-frame.is-outgoing')];
         probe.continuityArmed ||= Boolean(loading.querySelector('.loading-frame.is-stable'));
 
         const now = performance.now();
         const slit = loading.querySelector('#loadingLightSlit');
         const slitLit = Boolean(slit?.classList.contains('is-lit'));
+        const finalResolving = loading.classList.contains('is-final-resolving');
+        const lightPhase = finalResolving ? 'final' : (slitLit ? 'ordinary' : null);
+        if (loading.classList.contains('is-exiting') && probe.exitGateAt === null) {
+          probe.exitGateAt = now;
+        }
+        if (lightPhase) {
+          if (!probe.activeLightPass || probe.activeLightPass.phase !== lightPhase) {
+            if (probe.activeLightPass) {
+              probe.activeLightPass.endedAt = now;
+              probe.lightPasses.push(probe.activeLightPass);
+            }
+            probe.activeLightPass = {
+              phase: lightPhase,
+              direction: slit.dataset.direction,
+              startedAt: now,
+              endedAt: null,
+              samples: []
+            };
+          }
+          const bounds = slit.getBoundingClientRect();
+          const opacity = (selector) => Number.parseFloat(
+            getComputedStyle(loading.querySelector(selector)).opacity
+          ) || 0;
+          probe.activeLightPass.samples.push({
+            at: now,
+            center: bounds.left + (bounds.width / 2),
+            parentOpacity: opacity('#loadingLightSlit'),
+            coreOpacity: opacity('.loading-light-core'),
+            warmOpacity: opacity('.loading-light-edge.is-warm'),
+            coolOpacity: opacity('.loading-light-edge.is-cool')
+          });
+        } else if (probe.activeLightPass) {
+          probe.activeLightPass.endedAt = now;
+          probe.lightPasses.push(probe.activeLightPass);
+          probe.activeLightPass = null;
+        }
         if (slitLit && !probe.wasSlitLit) probe.currentIgnitionAt = now;
         if (!slitLit && probe.wasSlitLit) probe.currentIgnitionAt = null;
         probe.wasSlitLit = slitLit;
@@ -479,11 +540,44 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   });
 
   if (reduce) expect(initialProbe.slitHiddenAtFirstActive).toBe(true);
+  let ordinaryLightMetrics = null;
+  let ordinaryCapture = null;
   let finalLightMetrics = null;
-  let finalCss = null;
-  let finalBaseline = null;
-  let finalPeak = null;
+  let finalCapture = null;
   if (!reduce) {
+    await page.waitForFunction(() => (
+      document.querySelector('[data-loading-slot="archive-01"].is-active.is-stable')
+      && !document.querySelector('#loadingLightSlit')?.classList.contains('is-lit')
+    ));
+    const ordinaryBaseline = await captureInstrumented(
+      page,
+      testInfo.outputPath(`ordinary-baseline-${testInfo.project.name}.png`)
+    );
+    await page.waitForFunction(() => {
+      const slit = document.querySelector('#loadingLightSlit.is-lit');
+      return document.querySelector('[data-loading-slot="archive-02"].is-revealing')
+        && (Number.parseFloat(getComputedStyle(slit).opacity) || 0) >= 0.25;
+    });
+    ordinaryCapture = await page.evaluate(() => {
+      const root = document.querySelector('#loadingScreen');
+      const slit = document.querySelector('#loadingLightSlit');
+      const animations = root.getAnimations({ subtree: true }).filter(({ animationName }) => (
+        animationName?.startsWith('loading-')
+      ));
+      return {
+        at: performance.now(),
+        direction: slit.dataset.direction,
+        parentOpacity: Number.parseFloat(getComputedStyle(slit).opacity) || 0,
+        animationNames: animations.map(({ animationName }) => animationName),
+        pausedAnimations: animations.filter(({ playState }) => playState === 'paused').length
+      };
+    });
+    const ordinaryPeak = await captureInstrumented(
+      page,
+      testInfo.outputPath(`ordinary-natural-peak-${testInfo.project.name}.png`)
+    );
+    ordinaryLightMetrics = await measureHorizontalLightDelta(page, ordinaryBaseline, ordinaryPeak);
+
     await page.waitForFunction(() => (
       window.__vinylLoadingProbe.activeIds.includes('archive-05')
     ), null, { timeout: 8_000 });
@@ -491,78 +585,61 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       const final = document.querySelector('[data-loading-slot="archive-05"].is-active.is-stable');
       return final && !document.querySelector('#loadingScreen')?.classList.contains('is-final-resolving');
     });
-    const baselinePath = testInfo.outputPath(`final-baseline-${testInfo.project.name}.png`);
-    const peakPath = testInfo.outputPath(`final-peak-${testInfo.project.name}.png`);
-    finalBaseline = await captureInstrumented(page, baselinePath);
-    await page.waitForFunction(() => (
-      document.querySelector('#loadingScreen')?.classList.contains('is-final-resolving')
-    ));
-    const finalResolve = testInfo.project.name === 'desktop-chromium' ? 1100 : 920;
-    finalCss = await page.evaluate(async (resolveMs) => {
+    const finalBaseline = await captureInstrumented(
+      page,
+      testInfo.outputPath(`final-baseline-${testInfo.project.name}.png`)
+    );
+    await page.waitForFunction(() => {
+      const root = document.querySelector('#loadingScreen.is-final-resolving');
+      const slit = document.querySelector('#loadingLightSlit');
+      return root && (Number.parseFloat(getComputedStyle(slit).opacity) || 0) >= 0.20;
+    });
+    finalCapture = await page.evaluate(() => {
       const root = document.querySelector('#loadingScreen');
       const slit = document.querySelector('#loadingLightSlit');
       const animations = root.getAnimations({ subtree: true }).filter(({ animationName }) => (
         animationName?.startsWith('loading-final-')
       ));
-      for (const animation of animations) {
-        animation.pause();
-      }
-      const parentAnimation = animations.find(({ animationName }) => (
-        animationName === `loading-final-${slit.dataset.direction}`
-      ));
-      let peak = { at: 0, opacity: 0 };
-      const beamCenters = [];
-      for (let step = 0; step <= 100; step += 2) {
-        for (const animation of animations) animation.currentTime = resolveMs * (step / 100);
-        const opacity = Number.parseFloat(getComputedStyle(slit).opacity);
-        if (opacity > peak.opacity) peak = { at: step / 100, opacity };
-      }
-      for (const progress of [0.15, 0.4, 0.65, 0.9]) {
-        parentAnimation.currentTime = resolveMs * progress;
-        const bounds = slit.getBoundingClientRect();
-        beamCenters.push(bounds.left + (bounds.width / 2));
-      }
-      for (const animation of animations) animation.currentTime = resolveMs * peak.at;
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const opacity = (selector) => Number.parseFloat(getComputedStyle(root.querySelector(selector)).opacity);
       return {
+        at: performance.now(),
         direction: slit.dataset.direction,
-        peakProgress: peak.at,
-        beamCenters,
         parentOpacity: opacity('#loadingLightSlit'),
         coreOpacity: opacity('.loading-light-core'),
         warmOpacity: opacity('.loading-light-edge.is-warm'),
         coolOpacity: opacity('.loading-light-edge.is-cool'),
-        animationNames: animations.map(({ animationName }) => animationName)
+        animationNames: animations.map(({ animationName }) => animationName),
+        pausedAnimations: animations.filter(({ playState }) => playState === 'paused').length
       };
-    }, finalResolve);
-    finalPeak = await captureInstrumented(page, peakPath);
-    await page.evaluate(() => {
-      for (const animation of document.querySelector('#loadingScreen')?.getAnimations({ subtree: true }) ?? []) {
-        if (animation.animationName?.startsWith('loading-final-')) animation.play();
-      }
     });
+    const finalPeak = await captureInstrumented(
+      page,
+      testInfo.outputPath(`final-natural-peak-${testInfo.project.name}.png`)
+    );
+    finalLightMetrics = await measureHorizontalLightDelta(page, finalBaseline, finalPeak);
 
-    expect(['ltr', 'rtl']).toContain(finalCss.direction);
-    expect(finalCss.animationNames).toContain(`loading-final-${finalCss.direction}`);
-    const centerSteps = finalCss.beamCenters.slice(1).map((value, index) => (
-      value - finalCss.beamCenters[index]
-    ));
-    expect(centerSteps.every((delta) => finalCss.direction === 'ltr' ? delta > 0 : delta < 0)).toBe(true);
-    expect(finalCss.parentOpacity).toBeGreaterThanOrEqual(0.20);
-    expect(finalCss.parentOpacity).toBeLessThanOrEqual(0.22);
-    expect(finalCss.coreOpacity).toBeLessThanOrEqual(0.52);
-    expect(finalCss.warmOpacity).toBeLessThanOrEqual(0.22);
-    expect(finalCss.coolOpacity).toBeLessThanOrEqual(0.20);
+    expect(['ltr', 'rtl']).toContain(ordinaryCapture.direction);
+    expect(ordinaryCapture.pausedAnimations).toBe(0);
+    expect(ordinaryCapture.parentOpacity).toBeGreaterThanOrEqual(0.25);
+    expect(['ltr', 'rtl']).toContain(finalCapture.direction);
+    expect(finalCapture.animationNames).toContain(`loading-final-${finalCapture.direction}`);
+    expect(finalCapture.pausedAnimations).toBe(0);
+    expect(finalCapture.parentOpacity).toBeGreaterThanOrEqual(0.20);
+    expect(finalCapture.parentOpacity).toBeLessThanOrEqual(0.22);
+    expect(finalCapture.coreOpacity).toBeLessThanOrEqual(0.52);
+    expect(finalCapture.warmOpacity).toBeLessThanOrEqual(0.22);
+    expect(finalCapture.coolOpacity).toBeLessThanOrEqual(0.20);
   }
   await expect(loading).toHaveCount(0, { timeout: 10_000 });
   const effectEnd = await page.evaluate(() => performance.now());
   if (!reduce) {
-    finalLightMetrics = await measureHorizontalLightDelta(page, finalBaseline, finalPeak);
-    expect(finalLightMetrics.centerPeak).toBeGreaterThan(0.5);
-    expect(finalLightMetrics.leftEdgeMean).toBeLessThan(finalLightMetrics.centerPeak * 0.25);
-    expect(finalLightMetrics.rightEdgeMean).toBeLessThan(finalLightMetrics.centerPeak * 0.25);
-    expect(finalLightMetrics.brightWidthRatio).toBeLessThan(0.30);
+    for (const metrics of [ordinaryLightMetrics, finalLightMetrics]) {
+      expect(metrics.centerPeak).toBeGreaterThan(0.5);
+      const edgeNoiseBound = Math.max(0.5, metrics.centerPeak * 0.25);
+      expect(metrics.leftEdgeMean).toBeLessThan(edgeNoiseBound);
+      expect(metrics.rightEdgeMean).toBeLessThan(edgeNoiseBound);
+      expect(metrics.longestNearUniformRatio).toBeLessThanOrEqual(0.35);
+    }
   }
 
   const framesAtExit = Number(await canvasHandle.evaluate((element) => element.dataset.frameCount));
@@ -586,7 +663,9 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     ignitionLeads: window.__vinylLoadingProbe.ignitionLeads,
     gatheredPixels: window.__vinylLoadingProbe.gatheredPixels,
     scatterHandoffs: window.__vinylLoadingProbe.scatterHandoffs,
-    clearedPixelCounts: window.__vinylLoadingProbe.clearedPixelCounts
+    clearedPixelCounts: window.__vinylLoadingProbe.clearedPixelCounts,
+    lightPasses: window.__vinylLoadingProbe.lightPasses,
+    exitGateAt: window.__vinylLoadingProbe.exitGateAt
   }));
   expect(finalProbe.maxActive).toBe(1);
   if (reduce) {
@@ -617,6 +696,36 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     }
     expect(finalProbe.ignitionLeads).toHaveLength(4);
     expect(finalProbe.ignitionLeads.every(({ leadMs }) => leadMs > 0)).toBe(true);
+    const ordinaryPass = finalProbe.lightPasses.find((pass) => (
+      pass.phase === 'ordinary'
+      && pass.startedAt <= ordinaryCapture.at
+      && pass.endedAt >= ordinaryCapture.at
+    ));
+    const finalPass = finalProbe.lightPasses.find((pass) => pass.phase === 'final');
+    expect(ordinaryPass).toBeTruthy();
+    expect(finalPass).toBeTruthy();
+    expect(ordinaryPass.samples.length).toBeGreaterThanOrEqual(8);
+    expect(finalPass.samples.length).toBeGreaterThanOrEqual(8);
+    expect(finalPass.startedAt).toBeLessThan(finalProbe.exitGateAt);
+    expect(finalCapture.at).toBeLessThan(finalProbe.exitGateAt);
+    const naturalPeak = (pass) => pass.samples.reduce((peak, sample) => (
+      sample.parentOpacity > peak.parentOpacity ? sample : peak
+    ));
+    const ordinaryNaturalPeak = naturalPeak(ordinaryPass);
+    const finalNaturalPeak = naturalPeak(finalPass);
+    expect(ordinaryNaturalPeak.at).toBeGreaterThanOrEqual(ordinaryPass.startedAt);
+    expect(ordinaryNaturalPeak.parentOpacity).toBeGreaterThanOrEqual(0.27);
+    expect(finalNaturalPeak.parentOpacity).toBeGreaterThanOrEqual(0.20);
+    expect(finalNaturalPeak.at).toBeLessThan(finalProbe.exitGateAt);
+    expect(finalNaturalPeak.coreOpacity).toBeLessThanOrEqual(0.52);
+    expect(finalNaturalPeak.warmOpacity).toBeLessThanOrEqual(0.22);
+    expect(finalNaturalPeak.coolOpacity).toBeLessThanOrEqual(0.20);
+    for (const pass of [ordinaryPass, finalPass]) {
+      const deltas = pass.samples.slice(1).map((sample, index) => (
+        sample.center - pass.samples[index].center
+      ));
+      expect(deltas.every((delta) => pass.direction === 'ltr' ? delta >= -0.5 : delta <= 0.5)).toBe(true);
+    }
     if (testInfo.project.name === 'mobile-chromium') {
       const activeDeltas = finalProbe.activeTimeline.slice(1).map(({ at }, index) => (
         at - finalProbe.activeTimeline[index].at
@@ -669,7 +778,9 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     requestCount: stats.total,
     maxRequestConcurrency: stats.maxActive,
     effectLongTasks,
-    finalCss,
+    ordinaryCapture,
+    ordinaryLightMetrics,
+    finalCapture,
     finalLightMetrics,
     ...finalProbe
   }, null, 2));
