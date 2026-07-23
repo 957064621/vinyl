@@ -17,7 +17,7 @@ const makeImmediateScheduler = (sleeps) => ({
   }
 });
 
-const makeManualScheduler = () => {
+const makeManualScheduler = ({ retainAfterAbort = () => false } = {}) => {
   const pending = [];
   const sleepCalls = [];
 
@@ -29,16 +29,21 @@ const makeManualScheduler = () => {
         const entry = {
           ms,
           signal,
+          abortObserved: false,
           release(value = true) {
-            if (settled) return;
+            if (settled) return false;
             settled = true;
             signal.removeEventListener('abort', abort);
             const index = pending.indexOf(entry);
             if (index >= 0) pending.splice(index, 1);
             resolve(value);
+            return true;
           }
         };
-        const abort = () => entry.release(false);
+        const abort = () => {
+          entry.abortObserved = true;
+          if (!retainAfterAbort(entry)) entry.release(false);
+        };
 
         if (signal.aborted) {
           entry.release(false);
@@ -53,6 +58,9 @@ const makeManualScheduler = () => {
     },
     releaseDuration(ms) {
       pending.find((entry) => entry.ms === ms)?.release(true);
+    },
+    pendingDuration(ms) {
+      return pending.filter((entry) => entry.ms === ms).length;
     },
     get pending() {
       return pending.length;
@@ -763,7 +771,9 @@ test('enqueue defers collaborators to one microtask and stale reservations canno
 });
 
 test('finish resolves at the 180ms exit gate and stale exposure completion cannot mutate reset', async () => {
-  const scheduler = makeManualScheduler();
+  const scheduler = makeManualScheduler({
+    retainAfterAbort: ({ ms }) => ms === POSTER_TIMING.finalExposure
+  });
   const { controller, root, slots } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
   let idle = false;
@@ -790,22 +800,44 @@ test('finish resolves at the 180ms exit gate and stale exposure completion canno
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.finalExposure]);
   const staleExposure = scheduler.entries.find(({ ms }) => ms === POSTER_TIMING.finalExposure);
   assert.ok(staleExposure);
+  assert.equal(staleExposure.abortObserved, false);
+  assert.equal(scheduler.pendingDuration(POSTER_TIMING.finalExposure), 1);
 
   controller.reset();
+  assert.equal(staleExposure.abortObserved, true);
+  assert.equal(scheduler.pendingDuration(POSTER_TIMING.finalExposure), 1);
   controller.enqueue(slots[1]);
   await flush();
   assert.equal(root.dataset.exposureSettled, undefined);
-  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+  assert.deepEqual(scheduler.durations, [
+    POSTER_TIMING.finalExposure,
+    POSTER_TIMING.normal.gather
+  ]);
   scheduler.releaseDuration(POSTER_TIMING.normal.gather);
   await flush();
   assert.equal(controller.getState().activeId, 'archive-02');
+  const replacementState = {
+    controller: controller.getState(),
+    rootClass: root.className,
+    activeClass: slots[1].className,
+    transitionSettled: root.dataset.transitionSettled,
+    exposureSettled: root.dataset.exposureSettled
+  };
 
-  staleExposure.release(true);
+  assert.equal(staleExposure.release(true), true);
+  assert.equal(scheduler.pendingDuration(POSTER_TIMING.finalExposure), 0);
   await flush();
   assert.equal(root.classList.contains('is-final-exposure'), false);
   assert.equal(root.dataset.transitionSettled, undefined);
   assert.equal(root.dataset.exposureSettled, undefined);
   assert.equal(controller.getState().activeId, 'archive-02');
+  assert.deepEqual({
+    controller: controller.getState(),
+    rootClass: root.className,
+    activeClass: slots[1].className,
+    transitionSettled: root.dataset.transitionSettled,
+    exposureSettled: root.dataset.exposureSettled
+  }, replacementState);
 });
 
 test('reset starts a new run immediately and stale particle completion cannot reactivate the old poster', async () => {
