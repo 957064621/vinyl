@@ -595,6 +595,9 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   const css = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8');
   const loadingBlock = css.slice(css.indexOf('.loading-screen {'), css.indexOf('.app-shell {'));
 
+  assert.doesNotMatch(css, /fonts\.googleapis/i);
+  assert.doesNotMatch(css, /fonts\.gstatic/i);
+  assert.doesNotMatch(css, /@import\s+url\(\s*["']?https?:/i);
   assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*z-index:\s*1000/s);
   assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*box-sizing:\s*border-box/s);
   assert.match(loadingBlock, /padding:\s*max\(24px, env\(safe-area-inset-top\)\)\s+max\(24px, env\(safe-area-inset-right\)\)\s+max\(24px, env\(safe-area-inset-bottom\)\)\s+max\(24px, env\(safe-area-inset-left\)\)/s);
