@@ -152,7 +152,7 @@
             </button>
 
             <div class="player-pill" id="playerPill">
-                <button class="player-ctrl-btn" id="playerToggleBtn">
+                <button class="player-ctrl-btn" id="playerToggleBtn" type="button">
                     <svg class="icon-play" viewBox="0 0 24 24"><path fill="currentColor" d="M9.2 7.3c0-.78.84-1.25 1.5-.84l6.6 4.2c.63.4.63 1.31 0 1.72l-6.6 4.2c-.66.41-1.5-.06-1.5-.84z"/></svg>
                     <svg class="icon-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M8.6 7.4c0-.66.54-1.2 1.2-1.2h.9c.66 0 1.2.54 1.2 1.2v9.2c0 .66-.54 1.2-1.2 1.2h-.9c-.66 0-1.2-.54-1.2-1.2zm4.7 0c0-.66.54-1.2 1.2-1.2h.9c.66 0 1.2.54 1.2 1.2v9.2c0 .66-.54 1.2-1.2 1.2h-.9c-.66 0-1.2-.54-1.2-1.2z"/></svg>
                 </button>
@@ -162,6 +162,10 @@
                     </div>
                 </div>
                 <div class="player-time" id="playerTime">0:00</div>
+            </div>
+            <div class="audio-status" id="audioStatus" role="status" hidden>
+                <span id="audioStatusText">音频加载失败</span>
+                <button class="audio-retry" id="audioRetry" type="button">重新加载</button>
             </div>
         </div>
 

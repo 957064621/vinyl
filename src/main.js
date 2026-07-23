@@ -12,6 +12,7 @@ import {
     createPlaylistSelectionGuard,
     getPlaylistViewportItems
 } from './ui/playlist.js';
+import { createAudioController } from './player/audio-controller.js';
 
 startCriticalAssetGate({
     motionProfile: window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -36,6 +37,9 @@ startCriticalAssetGate({
         const trackWrap = document.getElementById('trackWrap');
         const trackFill = document.getElementById('trackFill');
         const playerTime = document.getElementById('playerTime');
+        const audioStatus = document.getElementById('audioStatus');
+        const audioStatusText = document.getElementById('audioStatusText');
+        const audioRetry = document.getElementById('audioRetry');
         const playlistToggleBtn = document.getElementById('playlistToggleBtn');
         const lyricToggleBtn = document.getElementById('lyricToggleBtn');
         const lyricDismissHint = document.getElementById('lyricDismissHint');
@@ -85,12 +89,12 @@ startCriticalAssetGate({
         };
 
         const audioEl = document.createElement('audio');
-        audioEl.setAttribute('playsinline', '');
         audioEl.setAttribute('webkit-playsinline', '');
-        audioEl.preload = 'metadata';
         let isAudioPlaying = false;
         let volumeFadeFrame = null;
-        let isDraggingTrack = false;
+        let isSeeking = false;
+        let timeUpdateRAF = null;
+        let suppressPlaybackMotion = false;
         let isTrackSwitching = false;
         let isHandlingTrackEnd = false;
         let buttonTextTransitionId = 0;
@@ -241,11 +245,6 @@ startCriticalAssetGate({
 
         const toInlineCoverProxySrc = (src = '') => src;
 
-        const getPlayableMusicSrcByIndex = (index) => {
-            const track = getTrackByIndex(index);
-            return track?.musicOssUrl || '';
-        };
-
         const getArtworkType = (src = '') => {
             if (/\.png(?:\?|$)/i.test(src)) return 'image/png';
             if (/\.webp(?:\?|$)/i.test(src)) return 'image/webp';
@@ -258,108 +257,6 @@ startCriticalAssetGate({
             if (playbackPlatform.isWeChat) return true;
             return false;
         };
-
-        const updateMediaSessionPlaybackState = () => {
-            if (!('mediaSession' in navigator)) return;
-            try {
-                navigator.mediaSession.playbackState = isAudioPlaying ? 'playing' : 'paused';
-            } catch (error) {
-                // Ignore unsupported playbackState writes on partial implementations.
-            }
-        };
-
-        const updateMediaSessionMetadata = (index = currentLyricIndex) => {
-            if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
-            if (!Number.isInteger(index) || index < 0 || index >= lyricsPool.length) return;
-
-            const track = lyricsPool[index];
-            const title = stripSongMarks(track.song);
-            const artworkSrc = toInlineCoverProxySrc(getCoverSrcByLyricIndex(index));
-
-            try {
-                navigator.mediaSession.metadata = new MediaMetadata({
-                    title,
-                    artist: track.artist || '薛之谦',
-                    album: track.album || '歌词抽取机',
-                    artwork: [
-                        {
-                            src: artworkSrc,
-                            sizes: '512x512',
-                            type: getArtworkType(artworkSrc)
-                        }
-                    ]
-                });
-            } catch (error) {
-                // Ignore metadata failures on constrained browsers/webviews.
-            }
-        };
-
-        const updateMediaSessionPositionState = () => {
-            if (!('mediaSession' in navigator) || typeof navigator.mediaSession.setPositionState !== 'function') return;
-
-            const duration = Number.isFinite(audioEl.duration) ? audioEl.duration : NaN;
-            if (!Number.isFinite(duration) || duration <= 0) return;
-
-            const playbackRate = Number.isFinite(audioEl.playbackRate) && audioEl.playbackRate > 0 ? audioEl.playbackRate : 1;
-            const position = Number.isFinite(audioEl.currentTime) ? audioEl.currentTime : 0;
-
-            try {
-                navigator.mediaSession.setPositionState({
-                    duration,
-                    playbackRate,
-                    position: Math.min(Math.max(0, position), duration)
-                });
-            } catch (error) {
-                // Ignore unsupported or transient position state updates.
-            }
-        };
-
-        const setMediaSessionAction = (action, handler) => {
-            if (!('mediaSession' in navigator)) return;
-            try {
-                navigator.mediaSession.setActionHandler(action, handler);
-            } catch (error) {
-                // Ignore unsupported action handlers.
-            }
-        };
-
-        let timeUpdateRAF = null;
-        audioEl.addEventListener('timeupdate', () => {
-            if (isDraggingTrack) return;
-            if (timeUpdateRAF) cancelAnimationFrame(timeUpdateRAF);
-            
-            timeUpdateRAF = requestAnimationFrame(() => {
-                const progress = (audioEl.currentTime / audioEl.duration) || 0;
-                trackFill.style.transform = `translate3d(${(progress - 1) * 100}%, 0, 0)`;
-                
-                const newTime = formatAudioTime(audioEl.currentTime);
-                if (playerTime.innerText !== newTime) {
-                    playerTime.innerText = newTime;
-                }
-                updateMediaSessionPositionState();
-            });
-        });
-
-        audioEl.addEventListener('loadedmetadata', () => {
-            playerTime.innerText = '0:00';
-            trackFill.style.transform = 'translate3d(-100%, 0, 0)';
-            updateMediaSessionPositionState();
-        });
-        audioEl.addEventListener('durationchange', updateMediaSessionPositionState);
-        audioEl.addEventListener('ratechange', updateMediaSessionPositionState);
-        audioEl.addEventListener('seeked', updateMediaSessionPositionState);
-
-        let audioSourceTrackIndex = -1;
-        let audioSourceRequestId = 0;
-
-        audioEl.addEventListener('error', () => {
-            if (audioSourceTrackIndex === -1) return;
-            const song = lyricsPool[audioSourceTrackIndex];
-            console.warn('[vinyl] Audio playback failed.', {
-                song: song?.song,
-                src: audioEl.currentSrc || audioEl.src
-            });
-        });
 
         const cancelVolumeFade = () => {
             if (volumeFadeFrame) {
@@ -386,7 +283,7 @@ startCriticalAssetGate({
                 const finishStop = () => {
                     cancelVolumeFade();
                     isAudioPlaying = false;
-                    audioEl.pause();
+                    audioController.pause();
                     audioEl.playbackRate = 1;
                     if (canSetMediaVolume) audioEl.volume = 1;
                     playerToggleBtn.classList.remove('is-disabled');
@@ -459,167 +356,169 @@ startCriticalAssetGate({
             }
         };
 
-        const toggleAudioState = async (play, options = {}) => {
-            const { skipMotion = false, stopDuration = 800 } = options;
-            if (play === isAudioPlaying) return;
+        const resetRejectedPlaybackVisual = () => {
+            turntable.classList.remove('is-playing');
+            spinAnimation.pause();
+            sheenAnimation.pause();
+            spinAnimation.playbackRate = 0;
+            updateSheenByRate(0);
+            setTonearmAngle(ARM_REST_ANGLE);
+        };
 
-            isAudioPlaying = play;
-            cancelVolumeFade();
+        const renderAudioState = ({ status, error }) => {
+            const failed = status === 'error';
+            audioStatus.hidden = !failed;
+            audioStatusText.textContent = failed
+                ? `音频加载失败：${error?.message || '未知错误'}`
+                : '';
+            audioRetry.disabled = status === 'loading';
+            dynamicIsland.setAttribute('aria-busy', String(status === 'loading'));
+            document.body.dataset.audioState = status;
 
-            if (play) {
-                if (canSetMediaVolume) audioEl.volume = 1;
+            if (status === 'playing') {
+                const wasPlaying = isAudioPlaying;
+                isAudioPlaying = true;
                 playerToggleBtn.classList.remove('is-disabled');
                 setPlayerToggleState(true);
-                const playAttempt = audioEl.play();
-                if (playAttempt && typeof playAttempt.catch === 'function') {
-                    playAttempt.catch((e) => {
-                        console.log('Audio init pending interaction', e);
-                        isAudioPlaying = false;
-                        setPlayerToggleState(false);
-                        updateMediaSessionPlaybackState();
-                        if (!isDrawing && !isTrackSwitching) {
-                            turntable.classList.remove('is-playing');
-                            spinAnimation.pause();
-                            sheenAnimation.pause();
-                            spinAnimation.playbackRate = 0;
-                            updateSheenByRate(0);
-                            setTonearmAngle(ARM_REST_ANGLE);
-                        }
+                if (!wasPlaying && !suppressPlaybackMotion && !isDrawing && !isTrackSwitching) {
+                    void animateTurntableToTargetRate({
+                        targetRate: 0.68,
+                        duration: 1800,
+                        easing: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
                     });
-                }
-
-                if (!skipMotion && !isDrawing && !isTrackSwitching) {
-                    animateTonearm({
+                    void animateTonearm({
                         from: getCurrentArmAngle(),
                         to: ARM_PLAY_ANGLE,
                         duration: 1200,
                         easing: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
                     });
                 }
-            } else {
-                await stopAndFadeOutAudio(stopDuration, { disableControl: false });
-                if (!skipMotion && !isDrawing && !isTrackSwitching) {
-                    animateTonearm({
-                        from: getCurrentArmAngle(),
-                        to: ARM_REST_ANGLE,
-                        duration: 1200,
-                        easing: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-                    });
-                }
+                return;
             }
-        };
 
-        audioEl.addEventListener('play', () => {
-            isAudioPlaying = true;
-            playerToggleBtn.classList.remove('is-disabled');
-            setPlayerToggleState(true);
-            updateMediaSessionPlaybackState();
-            updateMediaSessionPositionState();
-            if (!isDrawing && !isTrackSwitching) {
-                animateTurntableToTargetRate({
-                    targetRate: 0.68,
-                    duration: 1800,
-                    easing: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
-                });
-            }
-        });
-
-        audioEl.addEventListener('pause', () => {
+            if (status !== 'paused' && status !== 'ready' && status !== 'error') return;
+            const wasPlaying = isAudioPlaying;
             isAudioPlaying = false;
             setPlayerToggleState(false);
-            updateMediaSessionPlaybackState();
-            updateMediaSessionPositionState();
-            if (!isDrawing && !isTrackSwitching) {
-                animateTurntableToTargetRate({
+
+            if (failed) {
+                resetRejectedPlaybackVisual();
+                return;
+            }
+            if (wasPlaying && !suppressPlaybackMotion && !isDrawing && !isTrackSwitching) {
+                void animateTurntableToTargetRate({
                     targetRate: 0,
                     duration: 2200,
                     easing: (t) => 1 - Math.pow(1 - t, 4)
                 });
+                void animateTonearm({
+                    from: getCurrentArmAngle(),
+                    to: ARM_REST_ANGLE,
+                    duration: 1200,
+                    easing: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+                });
             }
 
             if (
+                status === 'paused' &&
                 (playbackPlatform.isIOS || playbackPlatform.isWeChat) &&
                 document.visibilityState !== 'visible' &&
                 audioEl.ended &&
                 !isTrackSwitching &&
                 currentLyricIndex !== -1
             ) {
-                handleTrackEnded();
+                void handleTrackEnded();
+            }
+        };
+
+        const audioController = createAudioController({
+            audio: audioEl,
+            onStateChange: renderAudioState,
+            onEnded: () => { void handleTrackEnded(); },
+            onTimeUpdate: ({ currentTime, duration }) => {
+                if (isSeeking || !Number.isFinite(duration) || duration <= 0) return;
+                if (timeUpdateRAF) cancelAnimationFrame(timeUpdateRAF);
+                timeUpdateRAF = requestAnimationFrame(() => {
+                    const progress = Math.max(0, Math.min(1, currentTime / duration));
+                    trackFill.style.transform = `translate3d(${(progress - 1) * 100}%, 0, 0)`;
+                    const newTime = formatAudioTime(currentTime);
+                    if (playerTime.innerText !== newTime) playerTime.innerText = newTime;
+                });
             }
         });
 
-        audioEl.addEventListener('ended', () => {
-            handleTrackEnded();
-        });
+        const toggleAudioState = async (play, options = {}) => {
+            const { skipMotion = false, stopDuration = 800 } = options;
+            if (play === isAudioPlaying) return;
+
+            cancelVolumeFade();
+            suppressPlaybackMotion = skipMotion;
+
+            try {
+                if (play) {
+                    if (canSetMediaVolume) audioEl.volume = 1;
+                    playerToggleBtn.classList.remove('is-disabled');
+                    try {
+                        return await audioController.play();
+                    } catch (error) {
+                        console.warn('[vinyl] Audio playback failed.', {
+                            song: audioController.getState().track?.title,
+                            message: error.message
+                        });
+                        return false;
+                    }
+                }
+
+                await stopAndFadeOutAudio(stopDuration, { disableControl: false });
+                return true;
+            } finally {
+                suppressPlaybackMotion = false;
+            }
+        };
 
         playerToggleBtn.addEventListener('click', () => {
             if (isTrackSwitching) return;
-            toggleAudioState(!isAudioPlaying);
+            void toggleAudioState(audioController.getState().status !== 'playing');
         });
 
-        let trackDragRect = null;
-        const updateAudioTime = (e) => {
-            if (!audioEl.duration) return;
-            const rect = trackDragRect || trackWrap.getBoundingClientRect();
-            let clientX = e.clientX;
-            if (e.touches && e.touches.length > 0) {
-                clientX = e.touches[0].clientX;
-            } else if (e.changedTouches && e.changedTouches.length > 0) {
-                clientX = e.changedTouches[0].clientX;
-            }
-            let percent = (clientX - rect.left) / rect.width;
-            percent = Math.max(0, Math.min(1, percent));
-            audioEl.currentTime = percent * audioEl.duration;
-            trackFill.style.transform = `translate3d(${(percent - 1) * 100}%, 0, 0)`;
+        const seekFromPointer = (event) => {
+            const rect = trackWrap.getBoundingClientRect();
+            const fraction = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0;
+            audioController.seekToFraction(fraction);
+            const progress = Math.max(0, Math.min(1, fraction));
+            trackFill.style.transform = `translate3d(${(progress - 1) * 100}%, 0, 0)`;
             playerTime.innerText = formatAudioTime(audioEl.currentTime);
         };
 
-        trackWrap.addEventListener('mousedown', (e) => {
-            isDraggingTrack = true;
-            trackDragRect = trackWrap.getBoundingClientRect();
+        trackWrap.addEventListener('pointerdown', (event) => {
+            isSeeking = true;
             trackFill.style.transition = 'none';
-            updateAudioTime(e);
+            trackWrap.setPointerCapture(event.pointerId);
+            seekFromPointer(event);
         });
-
-        window.addEventListener('mousemove', (e) => {
-            if (isDraggingTrack) updateAudioTime(e);
+        trackWrap.addEventListener('pointermove', (event) => {
+            if (isSeeking) seekFromPointer(event);
         });
-
-        window.addEventListener('mouseup', () => {
-            if (isDraggingTrack) {
-                isDraggingTrack = false;
-                trackDragRect = null;
-                trackFill.style.transition = '';
+        trackWrap.addEventListener('pointerup', (event) => {
+            isSeeking = false;
+            trackFill.style.transition = '';
+            if (trackWrap.hasPointerCapture(event.pointerId)) {
+                trackWrap.releasePointerCapture(event.pointerId);
             }
         });
-
-        trackWrap.addEventListener('touchstart', (e) => {
-            if (e.cancelable) e.preventDefault();
-            isDraggingTrack = true;
-            trackDragRect = trackWrap.getBoundingClientRect();
-            trackFill.style.transition = 'none';
-            updateAudioTime(e);
-        }, {passive: false});
-
-        window.addEventListener('touchmove', (e) => {
-            if (!isDraggingTrack) return;
-            if (e.cancelable) e.preventDefault();
-            updateAudioTime(e);
-        }, {passive: false});
-
-        window.addEventListener('touchend', () => {
-            if (isDraggingTrack) {
-                isDraggingTrack = false;
-                trackDragRect = null;
-                trackFill.style.transition = '';
-            }
+        trackWrap.addEventListener('pointercancel', () => {
+            isSeeking = false;
+            trackFill.style.transition = '';
         });
 
-        window.addEventListener('touchcancel', () => {
-            if (isDraggingTrack) {
-                isDraggingTrack = false;
-                trackDragRect = null;
-                trackFill.style.transition = '';
+        audioRetry.addEventListener('click', async () => {
+            audioRetry.disabled = true;
+            try {
+                await audioController.retry();
+            } catch {
+                // The controller republishes the recoverable error for the status command.
+            } finally {
+                audioRetry.disabled = false;
             }
         });
 
@@ -1131,7 +1030,6 @@ startCriticalAssetGate({
             currentLyricIndex = index;
             void applyCoverVisual(index);
             consumeLyricIndexFromQueue(index);
-            updateMediaSessionMetadata(index);
             updatePlaylistActiveTrack(index);
         };
 
@@ -1150,22 +1048,29 @@ startCriticalAssetGate({
 
         const setAudioSourceByIndex = async (index) => {
             const song = lyricsPool[index];
-            audioSourceTrackIndex = index;
-            const requestId = ++audioSourceRequestId;
-            const playbackSrc = getPlayableMusicSrcByIndex(index);
-            if (!playbackSrc) {
+            const artworkSrc = toInlineCoverProxySrc(getCoverSrcByLyricIndex(index));
+            playerTime.innerText = '0:00';
+            trackFill.style.transform = 'translate3d(-100%, 0, 0)';
+
+            try {
+                return await audioController.load({
+                    ...song,
+                    title: stripSongMarks(song.song),
+                    musicOssUrl: song.musicOssUrl,
+                    artwork: [{
+                        src: artworkSrc,
+                        sizes: '512x512',
+                        type: getArtworkType(artworkSrc)
+                    }]
+                });
+            } catch (error) {
                 console.warn('[vinyl] Missing playable audio URL.', {
                     song: song.song,
-                    musicOssUrl: song.musicOssUrl
+                    musicOssUrl: song.musicOssUrl,
+                    message: error.message
                 });
-                audioEl.removeAttribute('src');
-                audioEl.load();
-                return;
+                return false;
             }
-
-            if (requestId !== audioSourceRequestId) return;
-            audioEl.src = playbackSrc;
-            audioEl.load();
         };
 
         const PLAYLIST_CONTENT_REST_TRANSFORM = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset)))';
@@ -1312,7 +1217,6 @@ startCriticalAssetGate({
 
             isHandlingTrackEnd = true;
             isAudioPlaying = false;
-            updateMediaSessionPlaybackState();
 
             try {
                 const nextIndex = pickNextAutoLyricIndex();
@@ -1331,66 +1235,31 @@ startCriticalAssetGate({
             }
         };
 
-        const setupMediaSessionHandlers = () => {
-            if (!('mediaSession' in navigator)) return;
-
-            const jumpToIndex = (index) => {
-                if (!Number.isInteger(index) || index < 0) return;
-
-                if (shouldUseHeadlessTrackSwitch()) {
-                    switchToTrackHeadless(index);
-                } else {
-                    switchToTrackWithTransition(index, { stopDuration: 220 });
-                }
-            };
-
-            setMediaSessionAction('play', () => {
-                toggleAudioState(true, { skipMotion: shouldUseHeadlessTrackSwitch() });
-            });
-
-            setMediaSessionAction('pause', () => {
-                const stopDuration = shouldUseHeadlessTrackSwitch() ? 0 : 220;
-                toggleAudioState(false, { skipMotion: true, stopDuration });
-            });
-
-            setMediaSessionAction('seekto', (details = {}) => {
-                if (!Number.isFinite(details.seekTime)) return;
-                const duration = Number.isFinite(audioEl.duration) ? audioEl.duration : NaN;
-                const nextTime = Number.isFinite(duration) && duration > 0
-                    ? Math.min(Math.max(0, details.seekTime), duration)
-                    : Math.max(0, details.seekTime);
-
-                try {
-                    if (details.fastSeek && typeof audioEl.fastSeek === 'function') {
-                        audioEl.fastSeek(nextTime);
-                    } else {
-                        audioEl.currentTime = nextTime;
-                    }
-                    updateMediaSessionPositionState();
-                } catch (error) {
-                    // Ignore seek failures on constrained browsers.
-                }
-            });
-
-            setMediaSessionAction('nexttrack', () => {
-                if (currentLyricIndex === -1) return;
-                const nextIndex = pickNextAutoLyricIndex();
-                jumpToIndex(nextIndex);
-            });
-
-            setMediaSessionAction('previoustrack', () => {
-                if (currentLyricIndex === -1) return;
-                const previousIndex = pickPreviousLyricIndex();
-                jumpToIndex(previousIndex);
-            });
-
-            setMediaSessionAction('stop', () => {
-                toggleAudioState(false, { skipMotion: true, stopDuration: 0 });
-            });
+        const jumpToMediaTrack = (index) => {
+            if (!Number.isInteger(index) || index < 0) return;
+            if (shouldUseHeadlessTrackSwitch()) {
+                void switchToTrackHeadless(index);
+            } else {
+                void switchToTrackWithTransition(index, { stopDuration: 220 });
+            }
         };
 
+        audioController.bindMediaActions({
+            playTrack: () => toggleAudioState(true, { skipMotion: shouldUseHeadlessTrackSwitch() }),
+            pauseTrack: () => toggleAudioState(false, {
+                skipMotion: true,
+                stopDuration: shouldUseHeadlessTrackSwitch() ? 0 : 220
+            }),
+            nextTrack: () => {
+                if (currentLyricIndex !== -1) jumpToMediaTrack(pickNextAutoLyricIndex());
+            },
+            previousTrack: () => {
+                if (currentLyricIndex !== -1) jumpToMediaTrack(pickPreviousLyricIndex());
+            },
+            stopTrack: () => toggleAudioState(false, { skipMotion: true, stopDuration: 0 })
+        });
+
         updatePlaybackModeUI();
-        setupMediaSessionHandlers();
 
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState !== 'visible' || currentLyricIndex === -1) return;

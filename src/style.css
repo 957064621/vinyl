@@ -2377,6 +2377,67 @@
             transition-delay: 0s;
         }
 
+        .audio-status[hidden] {
+            display: none;
+        }
+
+        .audio-status {
+            position: absolute;
+            top: calc(var(--control-rail-top) + var(--control-height) + 10px);
+            left: 50%;
+            z-index: 3;
+            display: flex;
+            width: min(92vw, 360px);
+            min-width: 0;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 8px 8px 11px;
+            border: 1px solid rgba(255, 151, 135, 0.28);
+            border-left: 3px solid rgba(255, 151, 135, 0.82);
+            border-radius: 6px;
+            background: rgba(13, 16, 24, 0.92);
+            color: rgba(255, 235, 231, 0.94);
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+            transform: translateX(-50%);
+        }
+
+        #audioStatusText {
+            min-width: 0;
+            font-size: 11px;
+            line-height: 1.45;
+            letter-spacing: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .audio-retry {
+            min-width: 76px;
+            min-height: 32px;
+            flex: 0 0 auto;
+            padding: 0 10px;
+            border: 1px solid rgba(255, 255, 255, 0.24);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+            font: inherit;
+            font-size: 11px;
+            letter-spacing: 0;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .audio-retry:disabled {
+            cursor: wait;
+            opacity: 0.5;
+        }
+
+        @media (hover: hover) and (pointer: fine) {
+            .audio-retry:not(:disabled):hover {
+                border-color: rgba(255, 255, 255, 0.42);
+                background: rgba(255, 255, 255, 0.16);
+            }
+        }
+
         .player-ctrl-btn {
             width: 40px;
             height: 40px;
