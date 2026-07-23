@@ -1,8 +1,8 @@
 export const POSTER_TIMING = Object.freeze({
-  normal: Object.freeze({ gather: 160, scatter: 160, reveal: 180, hold: 300 }),
-  fast: Object.freeze({ gather: 80, scatter: 100, reveal: 100, hold: 160 }),
-  finalHold: 520,
-  finalExposure: 520,
+  normal: Object.freeze({ gather: 180, scatter: 260, reveal: 320, hold: 300 }),
+  fast: Object.freeze({ gather: 80, scatter: 150, reveal: 180, hold: 180 }),
+  finalHold: 560,
+  finalExposure: 640,
   reduceFade: 120
 });
 
@@ -180,6 +180,7 @@ export function createPosterTransition({
     const outgoing = activeItem;
     if (outgoing) {
       setActive(outgoing, false);
+      outgoing.slot.style.setProperty('--poster-scatter-ms', `${timing.scatter}ms`);
       outgoing.slot.classList.remove('is-stable');
       outgoing.slot.classList.add('is-outgoing', 'is-scattering');
     }
@@ -202,6 +203,7 @@ export function createPosterTransition({
     if (!isCurrent(token) || scattered === false || revealed === false) return;
     if (outgoing) {
       outgoing.slot.classList.remove('is-outgoing', 'is-scattering');
+      outgoing.slot.style.removeProperty('--poster-scatter-ms');
     }
     activeItem.slot.classList.remove('is-revealing');
     activeItem.slot.classList.add('is-stable');
@@ -251,6 +253,7 @@ export function createPosterTransition({
     root.style.removeProperty('--slit-duration');
     for (const slot of slots()) {
       slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
+      slot.style.removeProperty('--poster-scatter-ms');
     }
     stabilize(activeItem);
     try {
@@ -315,6 +318,7 @@ export function createPosterTransition({
       delete slot.dataset.transitionOrder;
       delete slot.dataset.slitDirection;
       slot.style.removeProperty('--poster-reveal-ms');
+      slot.style.removeProperty('--poster-scatter-ms');
       for (const image of slot.querySelectorAll('img')) {
         image.setAttribute('aria-hidden', 'true');
       }
@@ -343,6 +347,7 @@ export function createPosterTransition({
     if (preserveActive) {
       for (const slot of slots()) {
         slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
+        slot.style.removeProperty('--poster-scatter-ms');
       }
       stabilize(activeItem);
     }
@@ -372,6 +377,7 @@ export function createPosterTransition({
     delete root.dataset.transitionSettled;
     for (const slot of slots()) {
       slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
+      slot.style.removeProperty('--poster-scatter-ms');
       if (activeItem?.slot === slot) slot.classList.add('is-stable');
     }
     settleParticleField();

@@ -28,6 +28,7 @@ const makeManualScheduler = () => {
         let settled = false;
         const entry = {
           ms,
+          signal,
           release(value = true) {
             if (settled) return;
             settled = true;
@@ -55,6 +56,9 @@ const makeManualScheduler = () => {
     },
     get durations() {
       return pending.map(({ ms }) => ms);
+    },
+    get signals() {
+      return pending.map(({ signal }) => signal);
     },
     get sleepCalls() {
       return [...sleepCalls];
@@ -157,16 +161,19 @@ const makeFixture = ({
   };
 };
 
-test('timing tables are deeply frozen and preserve exact phase totals', () => {
+test('timing tables are deeply frozen and preserve exact Visual 6 wall times', () => {
   assert.deepEqual(POSTER_TIMING, {
-    normal: { gather: 160, scatter: 160, reveal: 180, hold: 300 },
-    fast: { gather: 80, scatter: 100, reveal: 100, hold: 160 },
-    finalHold: 520,
-    finalExposure: 520,
+    normal: { gather: 180, scatter: 260, reveal: 320, hold: 300 },
+    fast: { gather: 80, scatter: 150, reveal: 180, hold: 180 },
+    finalHold: 560,
+    finalExposure: 640,
     reduceFade: 120
   });
-  assert.equal(Object.values(POSTER_TIMING.normal).reduce((sum, value) => sum + value, 0), 800);
-  assert.equal(Object.values(POSTER_TIMING.fast).reduce((sum, value) => sum + value, 0), 440);
+  const wallTime = ({ gather, scatter, reveal, hold }) => (
+    gather + Math.max(scatter, reveal) + hold
+  );
+  assert.equal(wallTime(POSTER_TIMING.normal), 800);
+  assert.equal(wallTime(POSTER_TIMING.fast), 440);
   assert.equal(Object.isFrozen(POSTER_TIMING), true);
   assert.equal(Object.isFrozen(POSTER_TIMING.normal), true);
   assert.equal(Object.isFrozen(POSTER_TIMING.fast), true);
@@ -397,7 +404,7 @@ test('finish during a pre-classified normal hold waits its remainder before expo
 
 test('animated transitions overlap outgoing scatter with incoming reveal', async () => {
   const scheduler = makeManualScheduler();
-  const { controller, particleCalls, root, slots } = makeFixture({ scheduler });
+  const { controller, particleCalls, root, slit, slots } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
   controller.enqueue(slots[1]);
   await flush();
@@ -425,19 +432,142 @@ test('animated transitions overlap outgoing scatter with incoming reveal', async
   assert.equal(root.style.getPropertyValue('--slit-duration'), `${POSTER_TIMING.normal.reveal}ms`);
   assert.ok(particleCalls.some(([name]) => name === 'scatter'));
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.scatter, POSTER_TIMING.normal.reveal]);
+  assert.equal(
+    outgoing.style.getPropertyValue('--poster-scatter-ms'),
+    `${POSTER_TIMING.normal.scatter}ms`
+  );
+  assert.equal(slit.classList.contains('is-lit'), true);
+
+  scheduler.releaseNext();
+  await flush();
+  assert.equal(slit.classList.contains('is-lit'), true, 'light remains until the longer reveal decays');
+  assert.equal(outgoing.classList.contains('is-outgoing'), true);
+
+  scheduler.releaseNext();
+  await flush();
+  assert.equal(slit.classList.contains('is-lit'), false);
+  assert.equal(outgoing.classList.contains('is-outgoing'), false);
+  assert.equal(outgoing.style.getPropertyValue('--poster-scatter-ms'), '');
+
+  scheduler.releaseNext();
+  await flush();
+  await controller.waitForIdle();
+  assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
+  assert.equal(root.querySelectorAll('.is-active').length, 1);
+  assert.strictEqual(root.querySelector('.is-active'), incoming);
+});
+
+test('full to compact settles particles without cancelling the poster handoff', async () => {
+  const scheduler = makeManualScheduler();
+  const particleCalls = [];
+  let particleProfile = 'full';
+  let activeParticle = null;
+  const startParticle = (phase, bounds) => new Promise((resolve) => {
+    particleCalls.push([phase, particleProfile, bounds]);
+    activeParticle = { phase, resolve };
+  });
+  const settleParticle = () => {
+    if (!activeParticle) return;
+    const { phase, resolve } = activeParticle;
+    activeParticle = null;
+    particleCalls.push(['settle', phase]);
+    resolve();
+  };
+  const particleField = {
+    gather: (bounds) => startParticle('gather', bounds),
+    scatter: (bounds) => startParticle('scatter', bounds),
+    finish: settleParticle,
+    setProfile(profile) {
+      particleProfile = profile;
+      particleCalls.push(['profile', profile]);
+      settleParticle();
+    }
+  };
+  const { controller, root, slots } = makeFixture({ scheduler, particleField });
+  controller.enqueue(slots[0]);
+  controller.enqueue(slots[1]);
+  await flush();
+
+  settleParticle();
+  scheduler.releaseNext();
+  await flush();
+  scheduler.releaseNext();
+  await flush();
+  scheduler.releaseNext();
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+
+  settleParticle();
+  scheduler.releaseNext();
+  await flush();
+  assert.equal(slots[0].classList.contains('is-outgoing'), true);
+  assert.equal(slots[1].classList.contains('is-revealing'), true);
+  assert.deepEqual(scheduler.durations, [
+    POSTER_TIMING.normal.scatter,
+    POSTER_TIMING.normal.reveal
+  ]);
+  const signalsBeforeChange = scheduler.signals;
+  assert.equal(signalsBeforeChange.every((signal) => !signal.aborted), true);
+
+  controller.setProfile('compact');
+  await flush();
+
+  assert.equal(controller.getState().profile, 'compact');
+  assert.equal(controller.getState().processing, true);
+  assert.equal(root.dataset.motionProfile, 'compact');
+  assert.deepEqual(particleCalls.slice(-2), [
+    ['profile', 'compact'],
+    ['settle', 'scatter']
+  ]);
+  assert.deepEqual(scheduler.signals, signalsBeforeChange);
+  assert.equal(scheduler.signals.every((signal) => !signal.aborted), true);
+  assert.deepEqual(scheduler.durations, [
+    POSTER_TIMING.normal.scatter,
+    POSTER_TIMING.normal.reveal
+  ]);
+  assert.equal(slots[0].classList.contains('is-outgoing'), true);
+  assert.equal(slots[1].classList.contains('is-revealing'), true);
 
   let iterations = 0;
   while (controller.getState().processing) {
-    assert.ok(iterations < 32, 'scheduler processing drain exceeded its bound');
+    assert.ok(iterations < 32, 'profile-change drain exceeded its bound');
+    settleParticle();
     assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
     await flush();
     iterations += 1;
   }
   await controller.waitForIdle();
-  assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
-  assert.equal(root.querySelectorAll('.is-active').length, 1);
-  assert.strictEqual(root.querySelector('.is-active'), incoming);
+
+  assert.equal(controller.getState().activeId, 'archive-02');
+  assert.equal(root.dataset.motionProfile, 'compact');
+
+  controller.enqueue(slots[2]);
+  await flush();
+  assert.equal(
+    particleCalls.some(([phase, profile]) => phase === 'gather' && profile === 'compact'),
+    true
+  );
+
+  settleParticle();
+  scheduler.releaseNext();
+  await flush();
+  assert.equal(
+    slots[2].style.getPropertyValue('--poster-reveal-ms'),
+    `${POSTER_TIMING.normal.reveal}ms`
+  );
+
+  iterations = 0;
+  while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'next-profile scene drain exceeded its bound');
+    settleParticle();
+    assert.ok(scheduler.pending > 0);
+    scheduler.releaseNext();
+    await flush();
+    iterations += 1;
+  }
+  await controller.waitForIdle();
+  assert.equal(controller.getState().activeId, 'archive-03');
 });
 
 test('scatter rejection during overlap stabilizes the incoming poster and cleans transient state', async () => {
@@ -644,7 +774,9 @@ test('reset aborts an old finish exposure without settling the new run', async (
   assert.equal(root.classList.contains('is-final-exposure'), true);
 
   slots[0].classList.add('is-outgoing');
+  slots[0].style.setProperty('--poster-scatter-ms', '260ms');
   root.style.setProperty('--slit-duration', '180ms');
+  assert.equal(slots[0].style.getPropertyValue('--poster-scatter-ms'), '260ms');
 
   controller.reset();
   controller.enqueue(slots[1]);
@@ -654,6 +786,7 @@ test('reset aborts an old finish exposure without settling the new run', async (
   assert.equal(root.classList.contains('is-final-exposure'), false);
   assert.equal(root.dataset.transitionSettled, undefined);
   assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
+  assert.equal(slots[0].style.getPropertyValue('--poster-scatter-ms'), '');
   assert.equal(root.style.getPropertyValue('--slit-duration'), '');
   assert.equal(controller.getState().activeId, null);
   iterations = 0;
@@ -679,7 +812,9 @@ test('freeze aborts queued work but keeps the current poster active and stable',
   assert.equal(slots[0].classList.contains('is-active'), true);
 
   slots[1].classList.add('is-outgoing');
+  slots[1].style.setProperty('--poster-scatter-ms', '260ms');
   root.style.setProperty('--slit-duration', '180ms');
+  assert.equal(slots[1].style.getPropertyValue('--poster-scatter-ms'), '260ms');
 
   controller.freeze();
 
@@ -695,6 +830,7 @@ test('freeze aborts queued work but keeps the current poster active and stable',
   assert.equal(slots[0].classList.contains('is-stable'), true);
   assert.equal(slots[0].classList.contains('is-scattering'), false);
   assert.equal(slots[1].classList.contains('is-outgoing'), false);
+  assert.equal(slots[1].style.getPropertyValue('--poster-scatter-ms'), '');
   assert.equal(slots[1].classList.contains('is-active'), false);
   assert.equal(slit.classList.contains('is-lit'), false);
   assert.equal(root.style.getPropertyValue('--slit-duration'), '');
@@ -722,7 +858,11 @@ test('switching to reduce mid-gather cancels animation and resumes every item as
   await flush();
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
 
+  slots[0].style.setProperty('--poster-scatter-ms', '260ms');
+  assert.equal(slots[0].style.getPropertyValue('--poster-scatter-ms'), '260ms');
+
   controller.setProfile('reduce');
+  assert.equal(slots[0].style.getPropertyValue('--poster-scatter-ms'), '');
   await flush();
   let iterations = 0;
   while (controller.getState().processing) {
@@ -807,11 +947,14 @@ test('animation errors stabilize the current poster, reject finish once, and res
   controller.enqueue(slots[0]);
   controller.enqueue(slots[1]);
 
+  slots[0].style.setProperty('--poster-scatter-ms', '260ms');
+  assert.equal(slots[0].style.getPropertyValue('--poster-scatter-ms'), '260ms');
   await assert.rejects(controller.finish(), expected);
   assert.deepEqual(errors, [expected]);
   assert.equal(controller.getState().queued, 0);
   assert.equal(slots[0].classList.contains('is-active'), true);
   assert.equal(slots[0].classList.contains('is-stable'), true);
+  assert.equal(slots[0].style.getPropertyValue('--poster-scatter-ms'), '');
   assert.equal(slots[0].dataset.status, undefined, 'visual failures must not become image failures');
 
   controller.reset();
@@ -903,12 +1046,15 @@ test('setProfile forwards valid changes and destroy is idempotent and terminal',
   await waitForIdle();
 
   slots[1].classList.add('is-outgoing');
+  slots[1].style.setProperty('--poster-scatter-ms', '260ms');
   root.style.setProperty('--slit-duration', '180ms');
+  assert.equal(slots[1].style.getPropertyValue('--poster-scatter-ms'), '260ms');
 
   controller.destroy();
   controller.destroy();
   assert.equal(controller.enqueue(slots[1]), false);
   assert.equal(root.querySelectorAll('.is-active, .is-outgoing, .is-revealing, .is-scattering, .is-stable').length, 0);
+  assert.equal(slots[1].style.getPropertyValue('--poster-scatter-ms'), '');
   assert.equal(root.style.getPropertyValue('--slit-duration'), '');
   assert.equal(images.every((image) => image.getAttribute('aria-hidden') === 'true'), true);
   assert.deepEqual(controller.getState(), {

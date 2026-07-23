@@ -591,6 +591,46 @@ test('application markup starts as one inert root outside the loading screen', (
   assert.match(criticalStyle, /\.loading-intake\s*\{[^}]*width:\s*min\(100%, 680px\)[^}]*height:\s*min\(100%, 820px\)/s);
 });
 
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const extractCssBlock = (source, selector) => {
+  const match = new RegExp(
+    `(?:^|\\})\\s*${escapeRegExp(selector)}\\s*\\{`,
+    'm'
+  ).exec(source);
+  assert.ok(match, `missing CSS block: ${selector}`);
+  const openIndex = match.index + match[0].lastIndexOf('{');
+  let depth = 1;
+  for (let index = openIndex + 1; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}') depth -= 1;
+    if (depth === 0) return source.slice(openIndex + 1, index);
+  }
+  assert.fail(`unterminated CSS block: ${selector}`);
+};
+
+const expectDeclarations = (body, declarations, label) => {
+  for (const [property, value] of Object.entries(declarations)) {
+    assert.match(
+      body,
+      new RegExp(`${escapeRegExp(property)}\\s*:\\s*${escapeRegExp(value)}\\s*;`),
+      `${label} must contain ${property}: ${value}`
+    );
+  }
+};
+
+const expectKeyframeStops = (source, name, stops) => {
+  const keyframeBody = extractCssBlock(source, `@keyframes ${name}`);
+  for (const [percentage, declarations] of Object.entries(stops)) {
+    expectDeclarations(
+      extractCssBlock(keyframeBody, percentage),
+      declarations,
+      `${name} ${percentage}`
+    );
+  }
+  return keyframeBody;
+};
+
 test('loading CSS defines the projection layers and motion-specific fallbacks', () => {
   const css = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8');
   const loadingBlock = css.slice(css.indexOf('.loading-screen {'), css.indexOf('.app-shell {'));
@@ -612,28 +652,125 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-frame\.is-active,\s*\.loading-frame\.is-outgoing,\s*\.loading-frame\.is-failed\s*\{[^}]*visibility:\s*visible/s);
   assert.doesNotMatch(loadingBlock, /\.loading-frame\.is-active figcaption/);
   assert.match(loadingBlock, /\.loading-frame\.is-failed figcaption\s*\{[^}]*opacity:\s*1/s);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-reveal-ms, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*clip-path var\(--poster-reveal-ms, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
-  assert.match(loadingBlock, /--slit-duration:\s*180ms/);
-  assert.match(loadingBlock, /\.loading-light-slit\.is-lit\[data-direction="ltr"\]\s*\{[^}]*animation:\s*loading-slit-ltr var\(--slit-duration, 180ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\) both/s);
-  assert.match(loadingBlock, /@keyframes loading-slit-ltr\s*\{[\s\S]*?12%\s*\{[^}]*opacity:\s*0\.12[\s\S]*?48%\s*\{[^}]*opacity:\s*0\.78[\s\S]*?82%\s*\{[^}]*opacity:\s*0\.18[\s\S]*?100%\s*\{[^}]*opacity:\s*0/s);
-  const finalExposureRule = loadingBlock.match(
-    /\.loading-screen\.is-final-exposure \.loading-light-slit\s*\{[^}]*\}/s
-  )?.[0] ?? '';
-  assert.ok(
-    finalExposureRule.includes('loading-final-exposure ' + POSTER_TIMING.finalExposure + 'ms'),
-    'the CSS exposure envelope must match POSTER_TIMING.finalExposure'
+  assert.equal(POSTER_TIMING.finalExposure, 640);
+  assert.match(loadingBlock, /--slit-duration:\s*320ms/);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*clip-path var\(--poster-reveal-ms, 320ms\) cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
+
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),
+    { 'transition-duration': 'var(--poster-scatter-ms, 260ms)' },
+    'outgoing scatter duration'
   );
-  assert.match(finalExposureRule, /cubic-bezier\(0\.22, 1, 0\.36, 1\) both/);
-  assert.match(loadingBlock, /@keyframes loading-final-exposure\s*\{[\s\S]*?0%\s*\{[^}]*opacity:\s*0[\s\S]*?38%\s*\{[^}]*opacity:\s*0\.72[\s\S]*?72%\s*\{[^}]*opacity:\s*0\.36[\s\S]*?100%\s*\{[^}]*opacity:\s*0\.08/s);
+
+  for (const [selector, transform] of [
+    [
+      '.loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
+      'translate3d(2.4%, -0.6%, 0) rotateX(1.2deg) scale(0.992)'
+    ],
+    [
+      '.loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
+      'translate3d(-2.4%, -0.6%, 0) rotateX(-1.2deg) scale(0.992)'
+    ],
+    [
+      '.loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
+      'translate(14px, -2px) scale(0.992)'
+    ],
+    [
+      '.loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
+      'translate(-14px, -2px) scale(0.992)'
+    ]
+  ]) {
+    expectDeclarations(extractCssBlock(loadingBlock, selector), { transform }, selector);
+  }
+
+  for (const [selector, animation] of [
+    [
+      '.loading-light-slit.is-lit[data-direction="ltr"]',
+      'loading-slit-ltr var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+    ],
+    [
+      '.loading-light-slit.is-lit[data-direction="rtl"]',
+      'loading-slit-rtl var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+    ],
+    [
+      '.loading-light-slit.is-lit .loading-light-core',
+      'loading-curtain-core var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+    ],
+    [
+      '.loading-light-slit.is-lit .loading-light-edge.is-warm',
+      'loading-curtain-warm var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+    ],
+    [
+      '.loading-light-slit.is-lit .loading-light-edge.is-cool',
+      'loading-curtain-cool var(--slit-duration, 320ms) cubic-bezier(0.22, 1, 0.36, 1) both'
+    ]
+  ]) {
+    expectDeclarations(extractCssBlock(loadingBlock, selector), { animation }, selector);
+  }
+
+  expectKeyframeStops(loadingBlock, 'loading-slit-ltr', {
+    '0%': { opacity: '0', transform: 'translate(-150%, -50%) scaleX(0.004)' },
+    '16%': { opacity: '0.10' },
+    '42%': { opacity: '0.68' },
+    '64%': { opacity: '0.34' },
+    '82%': { opacity: '0.12' },
+    '100%': { opacity: '0', transform: 'translate(50%, -50%) scaleX(0.004)' }
+  });
+
+  expectKeyframeStops(loadingBlock, 'loading-slit-rtl', {
+    '0%': { opacity: '0', transform: 'translate(50%, -50%) scaleX(0.004)' },
+    '16%': { opacity: '0.10' },
+    '42%': { opacity: '0.68' },
+    '64%': { opacity: '0.34' },
+    '82%': { opacity: '0.12' },
+    '100%': { opacity: '0', transform: 'translate(-150%, -50%) scaleX(0.004)' }
+  });
+
+  expectKeyframeStops(loadingBlock, 'loading-curtain-core', {
+    '0%': { opacity: '0', transform: 'scaleX(0.08)' },
+    '42%': { opacity: '1', transform: 'scaleX(1)' },
+    '64%': { opacity: '0.46', transform: 'scaleX(0.72)' },
+    '100%': { opacity: '0', transform: 'scaleX(0.18)' }
+  });
+
+  expectKeyframeStops(loadingBlock, 'loading-curtain-warm', {
+    '0%': { opacity: '0', transform: 'translateX(8%) scaleX(0.04)' },
+    '42%': { opacity: '0.82', transform: 'translateX(0) scaleX(1)' },
+    '64%': { opacity: '0.34', transform: 'translateX(-10%) scaleX(0.80)' },
+    '100%': { opacity: '0', transform: 'translateX(-18%) scaleX(0.56)' }
+  });
+
+  expectKeyframeStops(loadingBlock, 'loading-curtain-cool', {
+    '0%': { opacity: '0', transform: 'translateX(-8%) scaleX(0.04)' },
+    '42%': { opacity: '0.78', transform: 'translateX(0) scaleX(1)' },
+    '64%': { opacity: '0.32', transform: 'translateX(10%) scaleX(0.80)' },
+    '100%': { opacity: '0', transform: 'translateX(18%) scaleX(0.56)' }
+  });
+
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-screen.is-final-exposure .loading-light-slit'),
+    {
+      animation: `loading-final-exposure ${POSTER_TIMING.finalExposure}ms cubic-bezier(0.22, 1, 0.36, 1) both`
+    },
+    'final exposure duration sync'
+  );
+
+  expectKeyframeStops(loadingBlock, 'loading-final-exposure', {
+    '0%': { opacity: '0', transform: 'translate(-50%, -50%) scaleX(0.004)' },
+    '34%': { opacity: '0.68', transform: 'translate(-50%, -50%) scaleX(1)' },
+    '62%': { opacity: '0.30', transform: 'translate(-50%, -50%) scaleX(1)' },
+    '84%': { opacity: '0.10', transform: 'translate(-50%, -50%) scaleX(1)' },
+    '100%': { opacity: '0', transform: 'translate(-50%, -50%) scaleX(1)' }
+  });
   assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
   assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s cubic-bezier\(0\.22, 1, 0\.36, 1\)/s);
   assert.deepEqual(
     loadingBlock.match(/transition:[^;]*linear;/g),
     ['transition: opacity 120ms linear;']
   );
-  assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image)[^{]*\{[^}]*(?:filter|box-shadow)\s*:/s);
+  assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image|\.loading-light-slit)[^{]*\{[^}]*(?:filter|box-shadow|backdrop-filter)\s*:/s);
   assert.doesNotMatch(loadingBlock, /letter-spacing:\s*-/);
   assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
   assert.match(loadingBlock, /data-motion-profile="compact"[^{]*\{[^}]*perspective:\s*none/s);

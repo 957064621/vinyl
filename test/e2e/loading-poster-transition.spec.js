@@ -93,7 +93,12 @@ const installBrowserProbe = async (page) => {
       activeIds: [],
       currentActiveId: null,
       posterGeometry: null,
-      slitHiddenAtFirstActive: null
+      slitHiddenAtFirstActive: null,
+      continuityArmed: false,
+      continuitySamples: 0,
+      maxVisualLayers: 0,
+      maxDominantPosters: 0,
+      minCompositeOpacity: 1
     };
 
     new PerformanceObserver((list) => {
@@ -165,6 +170,31 @@ const installBrowserProbe = async (page) => {
 
       inspectActivePosters();
       inspectCanvas();
+
+      const samplePosterContinuity = () => {
+        const loading = document.querySelector('#loadingScreen');
+        if (!loading) return;
+        const visualFrames = [...loading.querySelectorAll('.loading-frame.is-active, .loading-frame.is-outgoing')];
+        probe.continuityArmed ||= Boolean(loading.querySelector('.loading-frame.is-stable'));
+
+        if (probe.continuityArmed && !loading.classList.contains('is-final-exposure')) {
+          const opacities = visualFrames.map((frame) => (
+            Number.parseFloat(getComputedStyle(frame.querySelector('.loading-image')).opacity) || 0
+          ));
+          probe.continuitySamples += 1;
+          probe.maxVisualLayers = Math.max(probe.maxVisualLayers, visualFrames.length);
+          probe.maxDominantPosters = Math.max(
+            probe.maxDominantPosters,
+            opacities.filter((opacity) => opacity > 0.55).length
+          );
+          probe.minCompositeOpacity = Math.min(
+            probe.minCompositeOpacity,
+            opacities.reduce((sum, opacity) => sum + opacity, 0)
+          );
+        }
+        requestAnimationFrame(samplePosterContinuity);
+      };
+      requestAnimationFrame(samplePosterContinuity);
     }, { once: true });
   });
 };
@@ -222,7 +252,11 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     phaseLeftIdle: window.__vinylLoadingProbe.phaseLeftIdle,
     firstRenderedFrameNontransparent: window.__vinylLoadingProbe.firstRenderedFrameNontransparent,
     maxActive: window.__vinylLoadingProbe.maxActive,
-    activeIds: window.__vinylLoadingProbe.activeIds
+    activeIds: window.__vinylLoadingProbe.activeIds,
+    continuitySamples: window.__vinylLoadingProbe.continuitySamples,
+    maxVisualLayers: window.__vinylLoadingProbe.maxVisualLayers,
+    maxDominantPosters: window.__vinylLoadingProbe.maxDominantPosters,
+    minCompositeOpacity: window.__vinylLoadingProbe.minCompositeOpacity
   }));
   expect(finalProbe.maxActive).toBe(1);
   if (reduce) {
@@ -232,6 +266,12 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   } else {
     expect(finalProbe.phaseLeftIdle).toBe(true);
     expect(finalProbe.firstRenderedFrameNontransparent).toBe(true);
+  }
+  if (!reduce) {
+    expect(finalProbe.continuitySamples).toBeGreaterThan(3);
+    expect(finalProbe.maxVisualLayers).toBeLessThanOrEqual(2);
+    expect(finalProbe.maxDominantPosters).toBeLessThanOrEqual(1);
+    expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.70);
   }
   expect(finalProbe.activeIds).toEqual([
     'archive-01',
