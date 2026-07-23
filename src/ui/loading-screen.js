@@ -72,6 +72,7 @@ const waitForTransition = (element, {
 });
 
 const waitForSlitOpacityZero = (root, slit, {
+  profile,
   windowRef,
   setTimer = setTimeout,
   clearTimer = clearTimeout
@@ -93,22 +94,26 @@ const waitForSlitOpacityZero = (root, slit, {
     resolve();
   };
   const handleAnimationEnd = (event) => {
-    if (event.target !== slit || event.animationName !== 'loading-final-exposure') return;
+    if (
+      event.target !== slit
+      || !['loading-final-ltr', 'loading-final-rtl'].includes(event.animationName)
+    ) return;
     finish();
   };
 
   slit.addEventListener('animationend', handleAnimationEnd);
-  if (opacityIsZero() && !root.classList.contains('is-final-exposure')) {
+  if (opacityIsZero() && !root.classList.contains('is-final-resolving')) {
     finish();
     return;
   }
 
-  const exposureTail = POSTER_TIMING.finalExposure - POSTER_TIMING.exitLead;
+  const timing = POSTER_TIMING[profile];
+  const finalTail = timing.finalResolve - timing.exitLead;
   timer = setTimer(() => {
     slit.style.animation = 'none';
     slit.style.opacity = '0';
     finish();
-  }, exposureTail + 80);
+  }, finalTail + 80);
 });
 
 export function createLoadingScreen(documentRef = document, {
@@ -169,6 +174,33 @@ export function createLoadingScreen(documentRef = document, {
       visualQueueError ||= error;
     }
   });
+  const windowRef = documentRef.defaultView;
+  const requestFrame = windowRef?.requestAnimationFrame?.bind(windowRef)
+    ?? ((callback) => setTimer(callback, 16));
+  const cancelFrame = windowRef?.cancelAnimationFrame?.bind(windowRef) ?? clearTimer;
+  let resizeFrame = null;
+  let resizeObserver = null;
+
+  const scheduleParticleResize = () => {
+    if (resizeFrame !== null) return;
+    resizeFrame = requestFrame(() => {
+      resizeFrame = null;
+      particleField.resize();
+    });
+  };
+  const connectResizeObserver = () => {
+    if (resizeObserver || typeof windowRef?.ResizeObserver !== 'function') return;
+    resizeObserver = new windowRef.ResizeObserver(scheduleParticleResize);
+    resizeObserver.observe(canvas);
+  };
+  const disconnectResizeObserver = () => {
+    resizeObserver?.disconnect();
+    resizeObserver = null;
+    if (resizeFrame === null) return;
+    cancelFrame(resizeFrame);
+    resizeFrame = null;
+  };
+  connectResizeObserver();
 
   const mountImage = (result) => {
     const slot = slots.get(result.id);
@@ -189,13 +221,16 @@ export function createLoadingScreen(documentRef = document, {
 
   const view = {
     reset() {
+      disconnectResizeObserver();
       transition.reset();
       particleField.clear();
       visualQueueError = null;
       root.dataset.state = 'loading';
       delete root.dataset.errorKind;
       delete root.dataset.transitionSettled;
-      root.classList.remove('is-exiting', 'is-final-exposure');
+      delete root.dataset.finalSettled;
+      root.classList.remove('is-exiting', 'is-final-resolving');
+      root.style.removeProperty('--final-resolve-ms');
       root.style.setProperty('--loading-progress', '0');
       retry.hidden = true;
       retry.onclick = null;
@@ -205,11 +240,13 @@ export function createLoadingScreen(documentRef = document, {
         delete slot.dataset.status;
         delete slot.dataset.transitionOrder;
         delete slot.dataset.slitDirection;
-        slot.style.removeProperty('--poster-reveal-ms');
+        delete slot.dataset.motionProfile;
+        slot.style.removeProperty('--poster-handoff-ms');
         slot.classList.remove(...VISUAL_SLOT_CLASSES);
         slot.querySelector('figcaption')?.setAttribute('aria-hidden', 'true');
         slot.querySelector('img')?.remove();
       }
+      connectResizeObserver();
     },
     setProgress({ id, status, completed, total, result }) {
       progress.textContent = `${twoDigits(completed)} / ${twoDigits(total)}`;
@@ -227,6 +264,7 @@ export function createLoadingScreen(documentRef = document, {
       if (status === 'ready') copy.textContent = `已归档 ${completed} / ${total}`;
     },
     showError(error, onRetry) {
+      disconnectResizeObserver();
       transition.freeze();
       particleField.clear();
       root.dataset.state = 'error';
@@ -273,18 +311,25 @@ export function createLoadingScreen(documentRef = document, {
       }
     },
     async exit(profile) {
+      disconnectResizeObserver();
       root.classList.add('is-exiting');
+      const timing = POSTER_TIMING[profile];
       if (profile === 'reduce') {
         await waitForTransition(root, {
-          timeoutMs: 180,
+          timeoutMs: timing.fade + 80,
           setTimer,
           clearTimer
         });
       } else {
         await Promise.all([
-          waitForTransition(root, { setTimer, clearTimer }),
+          waitForTransition(root, {
+            timeoutMs: timing.rootFade + 80,
+            setTimer,
+            clearTimer
+          }),
           waitForSlitOpacityZero(root, slit, {
-            windowRef: documentRef.defaultView,
+            profile,
+            windowRef,
             setTimer,
             clearTimer
           })

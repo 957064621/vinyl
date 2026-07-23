@@ -361,7 +361,7 @@ test('reset clears the queue, canvas, progress, images, and every visual slot cl
   slot.dataset.status = 'failed';
   slot.classList.add('is-ready', 'is-failed', 'is-active', 'is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
   root.dataset.errorKind = 'visual';
-  root.classList.add('is-final-exposure', 'is-exiting');
+  root.classList.add('is-final-resolving', 'is-exiting');
   root.style.setProperty('--loading-progress', '4');
 
   view.reset();
@@ -369,7 +369,7 @@ test('reset clears the queue, canvas, progress, images, and every visual slot cl
   assert.deepEqual(harness.calls.slice(-2), ['transition.reset', 'particles.clear']);
   assert.equal(root.dataset.state, 'loading');
   assert.equal(root.dataset.errorKind, undefined);
-  assert.equal(root.classList.contains('is-final-exposure'), false);
+  assert.equal(root.classList.contains('is-final-resolving'), false);
   assert.equal(root.classList.contains('is-exiting'), false);
   assert.equal(root.style.getPropertyValue('--loading-progress'), '0');
   assert.equal(slot.dataset.status, undefined);
@@ -416,7 +416,7 @@ test('full exit waits for both root opacity settlement and proven slit opacity z
   assert.equal(harness.calls.includes('transition.destroy'), false);
 
   slit.style.opacity = '0';
-  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-exposure'));
+  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-ltr'));
   await exiting;
   assert.equal(root.isConnected, false);
   assert.deepEqual(harness.calls.slice(-2), ['transition.destroy', 'particles.destroy']);
@@ -437,17 +437,18 @@ test('exit fallback preserves the slit tail and destroys controllers only after 
   let settled = false;
   const exiting = view.exit('compact').then(() => { settled = true; });
 
-  await timers.advance(POSTER_TIMING.finalExposure - POSTER_TIMING.exitLead - 1);
+  const timing = POSTER_TIMING.compact;
+  await timers.advance(timing.finalResolve - timing.exitLead - 1);
   assert.equal(root.isConnected, true);
   assert.equal(settled, false);
   assert.equal(harness.calls.includes('transition.destroy'), false);
 
   slit.style.opacity = '0';
-  await timers.advance(101);
-  assert.equal(root.isConnected, true, 'root fallback must still observe the 480ms fade');
+  await timers.advance(81);
+  assert.equal(root.isConnected, true, 'root fallback must still observe the 560ms fade');
   assert.equal(harness.calls.includes('particles.destroy'), false);
 
-  await timers.advance(100);
+  await timers.advance(timing.rootFade - (timing.finalResolve - timing.exitLead));
   await exiting;
   assert.equal(root.isConnected, false);
   assert.equal(settled, true);
@@ -743,34 +744,52 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-poster-stack\s*\{[^}]*z-index:\s*2/s);
   assert.match(loadingBlock, /\.loading-particles\s*\{[^}]*z-index:\s*3/s);
   assert.match(loadingBlock, /\.loading-light-slit\s*\{[^}]*z-index:\s*4/s);
+  for (const selector of [
+    '.loading-light-core',
+    '.loading-light-edge.is-warm',
+    '.loading-light-edge.is-cool'
+  ]) {
+    const beam = extractCssBlock(loadingBlock, selector);
+    assert.match(beam, /background:\s*linear-gradient\(/, `${selector} must use a gradient beam`);
+    assert.match(beam, /rgba\([^)]*,\s*0\)\s+0%/, `${selector} must start transparent`);
+    assert.match(beam, /rgba\([^)]*,\s*0\)\s+100%/, `${selector} must end transparent`);
+    assert.doesNotMatch(beam, /background:\s*rgba\(/, `${selector} must not be a solid rectangle`);
+  }
+  assert.match(extractCssBlock(loadingBlock, '.loading-light-edge.is-warm'), /rgba\(255, 244, 222, 0\)\s+72%/);
+  assert.match(extractCssBlock(loadingBlock, '.loading-light-edge.is-cool'), /rgba\(220, 241, 255, 0\)\s+28%/);
+  assert.ok(((46 * 0.28) + 8 + (46 * 0.28)) <= 35, 'effective beam width must stay within 35vw');
   assert.match(loadingBlock, /\.loading-controls\s*\{[^}]*z-index:\s*5/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*object-fit:\s*contain/s);
-  assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*transition:\s*opacity 480ms cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
+  assert.match(loadingBlock, /--loading-motion-ease:\s*cubic-bezier\(0\.22, 1, 0\.36, 1\)/);
+  assert.match(loadingBlock, /--loading-handoff-ease:\s*cubic-bezier\(0\.42, 0, 0\.58, 1\)/);
+  assert.match(loadingBlock, /--loading-light-ease:\s*cubic-bezier\(0\.4, 0, 0\.2, 1\)/);
+  assert.match(loadingBlock, /--loading-settle-ease:\s*cubic-bezier\(0\.32, 0\.72, 0, 1\)/);
+  assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*transition:\s*opacity 680ms var\(--loading-settle-ease\)/s);
   assert.match(loadingBlock, /\.loading-frame\s*\{[^}]*visibility:\s*hidden/s);
   assert.match(loadingBlock, /\.loading-frame\.is-active,\s*\.loading-frame\.is-outgoing,\s*\.loading-frame\.is-failed\s*\{[^}]*visibility:\s*visible/s);
   assert.doesNotMatch(extractCssBlock(loadingBlock, '.loading-frame'), /transition[^;]*opacity|opacity[^;]*transition/);
   assert.doesNotMatch(loadingBlock, /clip-path/);
   assert.doesNotMatch(loadingBlock, /\.loading-frame\.is-active figcaption/);
   assert.match(loadingBlock, /\.loading-frame\.is-failed figcaption\s*\{[^}]*opacity:\s*1/s);
-  assert.equal(POSTER_TIMING.finalExposure, 560);
-  assert.equal(POSTER_TIMING.exitLead, 180);
-  assert.match(loadingBlock, /--slit-duration:\s*440ms/);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-reveal-ms, 440ms\) cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-reveal-ms, 440ms\) cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
+  assert.equal(POSTER_TIMING.full.finalResolve, 1100);
+  assert.equal(POSTER_TIMING.full.exitLead, 620);
+  assert.match(loadingBlock, /--slit-duration:\s*941ms/);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-handoff-ms, 820ms\) var\(--loading-handoff-ease\)/s);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-handoff-ms, 820ms\) var\(--loading-handoff-ease\)/s);
 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),
     {
-      transition: 'opacity var(--poster-reveal-ms, 440ms) cubic-bezier(0.32, 0.72, 0, 1),\n                transform var(--poster-scatter-ms, 360ms) cubic-bezier(0.32, 0.72, 0, 1)'
+      transition: 'opacity var(--poster-handoff-ms, 820ms) var(--loading-handoff-ease),\n                transform var(--poster-handoff-ms, 820ms) var(--loading-handoff-ease)'
     },
     'outgoing scatter duration'
   );
 
   for (const [selector, transform] of [
-    ['.loading-frame[data-slit-direction="ltr"] .loading-image', 'translateX(-1.6%) scale(0.996)'],
-    ['.loading-frame[data-slit-direction="rtl"] .loading-image', 'translateX(1.6%) scale(0.996)'],
-    ['.loading-screen[data-motion-profile="compact"] .loading-frame[data-slit-direction="ltr"] .loading-image', 'translateX(-10px) scale(0.996)'],
-    ['.loading-screen[data-motion-profile="compact"] .loading-frame[data-slit-direction="rtl"] .loading-image', 'translateX(10px) scale(0.996)']
+    ['.loading-frame[data-slit-direction="ltr"] .loading-image', 'translateX(-0.9%) scale(0.997)'],
+    ['.loading-frame[data-slit-direction="rtl"] .loading-image', 'translateX(0.9%) scale(0.997)'],
+    ['.loading-frame[data-motion-profile="compact"][data-slit-direction="ltr"] .loading-image', 'translateX(-6px) scale(0.998)'],
+    ['.loading-frame[data-motion-profile="compact"][data-slit-direction="rtl"] .loading-image', 'translateX(6px) scale(0.998)']
   ]) {
     expectDeclarations(extractCssBlock(loadingBlock, selector), { transform }, selector);
   }
@@ -778,19 +797,19 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   for (const [selector, transform] of [
     [
       '.loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
-      'translateX(1.2%) scale(0.992)'
+      'translateX(0.75%) scale(0.996)'
     ],
     [
       '.loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
-      'translateX(-1.2%) scale(0.992)'
+      'translateX(-0.75%) scale(0.996)'
     ],
     [
-      '.loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
-      'translateX(8px) scale(0.992)'
+      '.loading-frame[data-motion-profile="compact"].is-scattering[data-slit-direction="ltr"] .loading-image',
+      'translateX(5px) scale(0.997)'
     ],
     [
-      '.loading-screen[data-motion-profile="compact"] .loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
-      'translateX(-8px) scale(0.992)'
+      '.loading-frame[data-motion-profile="compact"].is-scattering[data-slit-direction="rtl"] .loading-image',
+      'translateX(-5px) scale(0.997)'
     ]
   ]) {
     expectDeclarations(extractCssBlock(loadingBlock, selector), { transform }, selector);
@@ -799,84 +818,94 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   for (const [selector, animation] of [
     [
       '.loading-light-slit.is-lit[data-direction="ltr"]',
-      'loading-slit-ltr var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
+      'loading-slit-ltr var(--slit-duration, 941ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit[data-direction="rtl"]',
-      'loading-slit-rtl var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
+      'loading-slit-rtl var(--slit-duration, 941ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-core',
-      'loading-curtain-core var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
+      'loading-curtain-core var(--slit-duration, 941ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-edge.is-warm',
-      'loading-curtain-warm var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
+      'loading-curtain-warm var(--slit-duration, 941ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-edge.is-cool',
-      'loading-curtain-cool var(--slit-duration, 440ms) cubic-bezier(0.32, 0.72, 0, 1) both'
+      'loading-curtain-cool var(--slit-duration, 941ms) var(--loading-light-ease) both'
     ]
   ]) {
     expectDeclarations(extractCssBlock(loadingBlock, selector), { animation }, selector);
   }
 
   expectKeyframeStops(loadingBlock, 'loading-slit-ltr', {
-    '0%': { opacity: '0', transform: 'translate(-150%, -50%) scaleX(0.004)' },
-    '12%': { opacity: '0.06' },
-    '30%': { opacity: '0.42' },
-    '52%': { opacity: '0.22' },
-    '76%': { opacity: '0.08' },
-    '100%': { opacity: '0', transform: 'translate(50%, -50%) scaleX(0.004)' }
+    '0%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' },
+    '18%': { opacity: '0.025' },
+    '42%': { opacity: '0.18' },
+    '60%': { opacity: '0.28' },
+    '82%': { opacity: '0.09' },
+    '100%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' }
   });
 
   expectKeyframeStops(loadingBlock, 'loading-slit-rtl', {
-    '0%': { opacity: '0', transform: 'translate(50%, -50%) scaleX(0.004)' },
-    '12%': { opacity: '0.06' },
-    '30%': { opacity: '0.42' },
-    '52%': { opacity: '0.22' },
-    '76%': { opacity: '0.08' },
-    '100%': { opacity: '0', transform: 'translate(-150%, -50%) scaleX(0.004)' }
+    '0%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' },
+    '18%': { opacity: '0.025' },
+    '42%': { opacity: '0.18' },
+    '60%': { opacity: '0.28' },
+    '82%': { opacity: '0.09' },
+    '100%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' }
   });
 
   expectKeyframeStops(loadingBlock, 'loading-curtain-core', {
-    '0%': { opacity: '0', transform: 'scaleX(0.08)' },
-    '30%': { opacity: '1', transform: 'scaleX(1)' },
-    '52%': { opacity: '0.46', transform: 'scaleX(0.72)' },
-    '100%': { opacity: '0', transform: 'scaleX(0.18)' }
+    '0%': { opacity: '0', transform: 'scaleX(0.16)' },
+    '42%': { opacity: '0.62', transform: 'scaleX(0.68)' },
+    '60%': { opacity: '0.48', transform: 'scaleX(0.62)' },
+    '100%': { opacity: '0', transform: 'scaleX(0.20)' }
   });
 
   expectKeyframeStops(loadingBlock, 'loading-curtain-warm', {
-    '0%': { opacity: '0', transform: 'translateX(8%) scaleX(0.04)' },
-    '30%': { opacity: '0.82', transform: 'translateX(0) scaleX(1)' },
-    '52%': { opacity: '0.34', transform: 'translateX(-10%) scaleX(0.80)' },
-    '100%': { opacity: '0', transform: 'translateX(-18%) scaleX(0.56)' }
+    '0%': { opacity: '0', transform: 'translateX(4%) scaleX(0.12)' },
+    '42%': { opacity: '0.26', transform: 'translateX(0) scaleX(0.62)' },
+    '60%': { opacity: '0.20', transform: 'translateX(-2%) scaleX(0.56)' },
+    '100%': { opacity: '0', transform: 'translateX(-8%) scaleX(0.22)' }
   });
 
   expectKeyframeStops(loadingBlock, 'loading-curtain-cool', {
-    '0%': { opacity: '0', transform: 'translateX(-8%) scaleX(0.04)' },
-    '30%': { opacity: '0.78', transform: 'translateX(0) scaleX(1)' },
-    '52%': { opacity: '0.32', transform: 'translateX(10%) scaleX(0.80)' },
-    '100%': { opacity: '0', transform: 'translateX(18%) scaleX(0.56)' }
+    '0%': { opacity: '0', transform: 'translateX(-4%) scaleX(0.12)' },
+    '42%': { opacity: '0.23', transform: 'translateX(0) scaleX(0.62)' },
+    '60%': { opacity: '0.18', transform: 'translateX(2%) scaleX(0.56)' },
+    '100%': { opacity: '0', transform: 'translateX(8%) scaleX(0.22)' }
   });
 
   expectDeclarations(
-    extractCssBlock(loadingBlock, '.loading-screen.is-final-exposure .loading-light-slit'),
+    extractCssBlock(loadingBlock, '.loading-screen.is-final-resolving .loading-light-slit[data-direction="ltr"]'),
     {
-      animation: `loading-final-exposure ${POSTER_TIMING.finalExposure}ms cubic-bezier(0.32, 0.72, 0, 1) both`
+      animation: 'loading-final-ltr var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
     },
-    'final exposure duration sync'
+    'final directional duration sync'
   );
 
-  expectKeyframeStops(loadingBlock, 'loading-final-exposure', {
-    '0%': { opacity: '0', transform: 'translate(-50%, -50%) scaleX(0.004)' },
-    '34%': { opacity: '0.68', transform: 'translate(-50%, -50%) scaleX(1)' },
-    '62%': { opacity: '0.30', transform: 'translate(-50%, -50%) scaleX(1)' },
-    '84%': { opacity: '0.10', transform: 'translate(-50%, -50%) scaleX(1)' },
-    '100%': { opacity: '0', transform: 'translate(-50%, -50%) scaleX(1)' }
+  expectKeyframeStops(loadingBlock, 'loading-final-ltr', {
+    '0%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' },
+    '18%': { opacity: '0.03' },
+    '38%': { opacity: '0.14' },
+    '52%': { opacity: '0.22' },
+    '70%': { opacity: '0.11' },
+    '86%': { opacity: '0.03' },
+    '100%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' }
   });
-  assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
-  assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s cubic-bezier\(0\.32, 0\.72, 0, 1\)/s);
+  expectKeyframeStops(loadingBlock, 'loading-final-rtl', {
+    '0%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' },
+    '100%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' }
+  });
+  assert.doesNotMatch(loadingBlock, /loading-final-exposure|scaleX\(1\)/);
+  assert.match(loadingBlock, /loading-final-core[\s\S]*opacity:\s*0\.52/);
+  assert.match(loadingBlock, /loading-final-warm[\s\S]*opacity:\s*0\.22/);
+  assert.match(loadingBlock, /loading-final-cool[\s\S]*opacity:\s*0\.20/);
+  assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms var\(--loading-motion-ease\)/s);
+  assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s var\(--loading-motion-ease\)/s);
   assert.deepEqual(loadingBlock.match(/transition:[^;]*linear;/g), [
     'transition: opacity 120ms linear;',
     'transition: opacity 120ms linear;'
@@ -888,7 +917,7 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   const posterScales = [...loadingBlock.matchAll(/(?<!X)scale\(([0-9.]+)\)/g)]
     .map(([, scale]) => Number(scale));
   assert.ok(posterScales.length > 0);
-  assert.ok(posterScales.every((scale) => scale >= 0.992 && scale <= 1));
+  assert.ok(posterScales.every((scale) => scale >= 0.996 && scale <= 1));
   assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\]\s*\{[^}]*transition:\s*opacity 120ms linear/s);
   assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\] \.loading-frame\s*\{[^}]*transition:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-particles[\s\S]*display:\s*none/s);

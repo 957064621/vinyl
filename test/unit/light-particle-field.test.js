@@ -11,6 +11,7 @@ const createContext = () => {
   const calls = [];
   let fillStyle = '';
   let strokeStyle = '';
+  let globalAlpha = 1;
   let hasPixels = false;
   const context = {
     calls,
@@ -51,6 +52,13 @@ const createContext = () => {
         calls.push(['strokeStyle', value]);
       }
     },
+    globalAlpha: {
+      get: () => globalAlpha,
+      set(value) {
+        globalAlpha = value;
+        calls.push(['globalAlpha', value]);
+      }
+    },
     hasPixels: {
       get: () => hasPixels
     }
@@ -82,6 +90,16 @@ const renderFingerprint = (frame) => frame.filter(([name]) => (
 ));
 
 const lastRenderFingerprint = (calls) => renderFingerprint(renderedFrames(calls).at(-1));
+
+const frameEnergy = (frame) => {
+  const alpha = frame.findLast(([name]) => name === 'globalAlpha')?.[1];
+  const move = frame.find(([name]) => name === 'moveTo');
+  const line = frame.find(([name]) => name === 'lineTo');
+  return {
+    alpha,
+    trail: move && line ? Math.hypot(move[1] - line[1], move[2] - line[2]) : null
+  };
+};
 
 const assertTerminalClear = (calls, label) => {
   const lastClearIndex = calls.findLastIndex(([name]) => name === 'clearRect');
@@ -319,6 +337,76 @@ test('scatter starts from the exact gathered render and only then clears on sett
   const lastClearIndex = fixture.context.calls.findLastIndex(([name]) => name === 'clearRect');
   assert.equal(fixture.context.calls.slice(lastClearIndex + 1).some(([name]) => name === 'arc'), false);
   field.destroy();
+});
+
+test('gather and scatter use smootherstep positions with the exact Visual 8 energy envelope', async () => {
+  const fixture = createFixture();
+  const field = createField(fixture, 'compact');
+  const bounds = { left: 60, top: 50, width: 100, height: 80 };
+
+  const gathering = field.gather(bounds, 100);
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(35);
+  fixture.scheduler.step(100);
+  await gathering;
+  const gatherFrames = renderedFrames(fixture.context.calls);
+  const gatherEnergy = gatherFrames.slice(-3).map(frameEnergy);
+  assert.deepEqual(gatherEnergy.map(({ alpha }) => alpha), [0.04, 0.20, 0.36]);
+  assert.ok(gatherEnergy[0].trail < gatherEnergy[1].trail);
+  assert.ok(gatherEnergy[1].trail < gatherEnergy[2].trail);
+
+  const gatheredFingerprint = lastRenderFingerprint(fixture.context.calls);
+  const scattering = field.scatter(bounds, 100);
+  fixture.scheduler.step(100);
+  assert.deepEqual(lastRenderFingerprint(fixture.context.calls), gatheredFingerprint);
+  fixture.scheduler.step(145);
+  fixture.scheduler.step(200);
+  await scattering;
+  const scatterFrames = renderedFrames(fixture.context.calls).slice(-3);
+  const scatterEnergy = scatterFrames.map(frameEnergy);
+  assert.deepEqual(scatterEnergy.map(({ alpha }) => alpha), [0.36, 0.24, 0]);
+  assert.ok(scatterEnergy[0].trail > scatterEnergy[2].trail);
+  assert.equal(fixture.scheduler.pendingCount, 0);
+  field.destroy();
+});
+
+test('resize redraws an active frame once without a new RAF or random regeneration', async () => {
+  let randomCalls = 0;
+  const fixture = createFixture({ width: 320, height: 180, dpr: 1 });
+  const field = createLightParticleField({
+    canvas: fixture.canvas,
+    documentRef: fixture.document,
+    windowRef: fixture.dom.window,
+    profile: 'compact',
+    random: () => {
+      randomCalls += 1;
+      return 0.375;
+    },
+    requestFrame: fixture.scheduler.requestFrame,
+    cancelFrame: fixture.scheduler.cancelFrame
+  });
+  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 }, 100);
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(35);
+  const callsBeforeResize = randomCalls;
+  const pendingBeforeResize = fixture.scheduler.pendingCount;
+  const framesBeforeResize = renderedFrames(fixture.context.calls).length;
+
+  fixture.setSize(160, 90);
+  field.resize();
+
+  assert.equal(randomCalls, callsBeforeResize);
+  assert.equal(fixture.scheduler.pendingCount, pendingBeforeResize);
+  assert.equal(renderedFrames(fixture.context.calls).length, framesBeforeResize + 1);
+  const coordinates = lastRenderFingerprint(fixture.context.calls)
+    .filter(([name]) => name === 'arc' || name === 'moveTo' || name === 'lineTo')
+    .flatMap(([, x, y]) => [x, y]);
+  assert.ok(coordinates.every((coordinate, index) => (
+    coordinate >= 0 && coordinate <= (index % 2 === 0 ? 160 : 90)
+  )));
+
+  field.destroy();
+  await gathering;
 });
 
 test('explicit scene durations override slower particle profile defaults', async () => {

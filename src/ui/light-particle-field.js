@@ -11,6 +11,36 @@ const PARTICLE_COLORS = Object.freeze([
 
 const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
 const finite = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const interpolate = (start, end, progress) => start + ((end - start) * progress);
+
+const energyFor = (phase, progress) => {
+  if (phase === 'gather') {
+    if (progress <= 0.35) {
+      const segment = progress / 0.35;
+      return {
+        alpha: interpolate(0.04, 0.20, segment),
+        trail: interpolate(0.35, 0.72, segment)
+      };
+    }
+    const segment = (progress - 0.35) / 0.65;
+    return {
+      alpha: interpolate(0.20, 0.36, segment),
+      trail: interpolate(0.72, 1, segment)
+    };
+  }
+  if (progress <= 0.45) {
+    const segment = progress / 0.45;
+    return {
+      alpha: interpolate(0.36, 0.24, segment),
+      trail: interpolate(1, 0.68, segment)
+    };
+  }
+  const segment = (progress - 0.45) / 0.55;
+  return {
+    alpha: interpolate(0.24, 0, segment),
+    trail: interpolate(0.68, 0.12, segment)
+  };
+};
 
 export const createLightParticleField = ({
   canvas,
@@ -143,7 +173,8 @@ export const createLightParticleField = ({
     };
   });
 
-  const drawParticle = (particle, position, trailEnd) => {
+  const drawParticle = (particle, position, trailEnd, alpha) => {
+    context.globalAlpha = alpha;
     context.beginPath();
     context.fillStyle = particle.color.point;
     context.arc(position.x, position.y, particle.radius, 0, Math.PI * 2);
@@ -159,7 +190,8 @@ export const createLightParticleField = ({
 
   const render = (progress) => {
     erase();
-    const eased = progress * progress * (3 - (2 * progress));
+    const eased = progress * progress * progress * (progress * ((6 * progress) - 15) + 10);
+    const energy = energyFor(command?.phase ?? getCanvasData('phase'), progress);
 
     for (const particle of particles) {
       const dx = particle.end.x - particle.start.x;
@@ -167,8 +199,9 @@ export const createLightParticleField = ({
       const x = clamp(particle.start.x + (dx * eased), 0, cssWidth);
       const y = clamp(particle.start.y + (dy * eased), 0, cssHeight);
       const distance = Math.hypot(dx, dy) || 1;
-      const naturalLineX = clamp(x - ((dx / distance) * particle.trail), 0, cssWidth);
-      const naturalLineY = clamp(y - ((dy / distance) * particle.trail), 0, cssHeight);
+      const trailLength = particle.trail * energy.trail;
+      const naturalLineX = clamp(x - ((dx / distance) * trailLength), 0, cssWidth);
+      const naturalLineY = clamp(y - ((dy / distance) * trailLength), 0, cssHeight);
       const lineX = particle.startTrail
         ? particle.startTrail.x + ((naturalLineX - particle.startTrail.x) * eased)
         : naturalLineX;
@@ -178,16 +211,26 @@ export const createLightParticleField = ({
 
       const position = { x, y };
       const trailEnd = { x: lineX, y: lineY };
-      drawParticle(particle, position, trailEnd);
-      particle.rendered = { position, trailEnd };
+      drawParticle(particle, position, trailEnd, energy.alpha);
+      particle.rendered = {
+        position,
+        trailEnd,
+        alpha: energy.alpha,
+        trail: energy.trail
+      };
     }
   };
 
-  const redrawRetained = () => {
+  const redrawRendered = () => {
     erase();
     for (const particle of particles) {
       if (!particle.rendered) continue;
-      drawParticle(particle, particle.rendered.position, particle.rendered.trailEnd);
+      drawParticle(
+        particle,
+        particle.rendered.position,
+        particle.rendered.trailEnd,
+        particle.rendered.alpha
+      );
     }
   };
 
@@ -263,7 +306,7 @@ export const createLightParticleField = ({
     }
     setCanvasData('phase', phase);
     const promise = new Promise((resolve) => {
-      command = { duration, elapsed: 0, lastTimestamp: null, resolve };
+      command = { phase, duration, elapsed: 0, lastTimestamp: null, resolve };
     });
     schedule();
     return promise;
@@ -306,10 +349,9 @@ export const createLightParticleField = ({
     }
     if (
       (sizeChanged || backingChanged)
-      && getCanvasData('phase') === 'gathered'
       && particles.some(({ rendered }) => rendered)
     ) {
-      redrawRetained();
+      redrawRendered();
     }
   };
 

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
 
-const FIXTURE_DELAY_STEP_MS = 160;
+const FIXTURE_DELAY_STEP_MS = 80;
 const EXPECTED_ARCHIVE_IDS = Object.freeze([
   'archive-01',
   'archive-02',
@@ -162,9 +162,69 @@ const canvasState = (canvas) => canvas.evaluate((element) => {
   return { alphaCount, phase: element.dataset.phase };
 });
 
+const measureHorizontalLightDelta = (page, before, after) => page.evaluate(async ({ before, after }) => {
+  const decode = (base64) => new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = `data:image/png;base64,${base64}`;
+  });
+  const [beforeImage, afterImage] = await Promise.all([decode(before), decode(after)]);
+  const canvas = document.createElement('canvas');
+  canvas.width = beforeImage.naturalWidth;
+  canvas.height = beforeImage.naturalHeight;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  const pixelsFor = (image) => {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0);
+    return context.getImageData(0, 0, canvas.width, canvas.height).data;
+  };
+  const beforePixels = pixelsFor(beforeImage);
+  const afterPixels = pixelsFor(afterImage);
+  const columns = Array(canvas.width).fill(0);
+  for (let x = 0; x < canvas.width; x += 1) {
+    let total = 0;
+    for (let y = 0; y < canvas.height; y += 2) {
+      const index = ((y * canvas.width) + x) * 4;
+      const beforeLuma = (beforePixels[index] * 0.2126)
+        + (beforePixels[index + 1] * 0.7152)
+        + (beforePixels[index + 2] * 0.0722);
+      const afterLuma = (afterPixels[index] * 0.2126)
+        + (afterPixels[index + 1] * 0.7152)
+        + (afterPixels[index + 2] * 0.0722);
+      total += Math.max(0, afterLuma - beforeLuma);
+    }
+    columns[x] = total / Math.ceil(canvas.height / 2);
+  }
+  const mean = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
+  const edgeWidth = Math.max(1, Math.floor(canvas.width * 0.1));
+  const middle = columns.slice(edgeWidth, -edgeWidth);
+  const centerPeak = Math.max(...middle);
+  return {
+    centerPeak,
+    leftEdgeMean: mean(columns.slice(0, edgeWidth)),
+    rightEdgeMean: mean(columns.slice(-edgeWidth)),
+    brightWidthRatio: columns.filter((value) => value >= centerPeak * 0.65).length / columns.length
+  };
+}, {
+  before: before.toString('base64'),
+  after: after.toString('base64')
+});
+
+const captureInstrumented = async (page, path) => {
+  const start = await page.evaluate(() => performance.now());
+  const buffer = await page.screenshot({ path });
+  const end = await page.evaluate(() => performance.now());
+  await page.evaluate(({ start, end }) => {
+    window.__vinylProbeOverhead.push({ start, end });
+  }, { start, end });
+  return buffer;
+};
+
 const installBrowserProbe = async (page) => {
   await page.addInitScript(() => {
     window.__vinylLongTasks = [];
+    window.__vinylProbeOverhead = [];
     window.__vinylLoadingProbe = {
       canvas: null,
       effectStart: null,
@@ -173,6 +233,7 @@ const installBrowserProbe = async (page) => {
       firstRenderedFrameNontransparent: null,
       maxActive: 0,
       activeIds: [],
+      activeTimeline: [],
       currentActiveId: null,
       posterGeometry: null,
       slitHiddenAtFirstActive: null,
@@ -181,6 +242,10 @@ const installBrowserProbe = async (page) => {
       maxVisualLayers: 0,
       maxDominantPosters: 0,
       minCompositeOpacity: 1,
+      midHandoffs: {},
+      ignitionLeads: [],
+      currentIgnitionAt: null,
+      wasSlitLit: false,
       gatheredPixels: [],
       scatterHandoffs: [],
       clearedPixelCounts: [],
@@ -274,7 +339,11 @@ const installBrowserProbe = async (page) => {
       const inspectActivePosters = () => {
         const active = [...document.querySelectorAll('.loading-frame.is-active')];
         probe.maxActive = Math.max(probe.maxActive, active.length);
-        probe.currentActiveId = active.length === 1 ? active[0].dataset.loadingSlot : null;
+        const nextActiveId = active.length === 1 ? active[0].dataset.loadingSlot : null;
+        if (nextActiveId && nextActiveId !== probe.currentActiveId) {
+          probe.activeTimeline.push({ id: nextActiveId, at: performance.now() });
+        }
+        probe.currentActiveId = nextActiveId;
         for (const slot of active) {
           if (!probe.activeIds.includes(slot.dataset.loadingSlot)) {
             probe.activeIds.push(slot.dataset.loadingSlot);
@@ -316,7 +385,14 @@ const installBrowserProbe = async (page) => {
         const visualFrames = [...loading.querySelectorAll('.loading-frame.is-active, .loading-frame.is-outgoing')];
         probe.continuityArmed ||= Boolean(loading.querySelector('.loading-frame.is-stable'));
 
-        if (probe.continuityArmed && !loading.classList.contains('is-final-exposure')) {
+        const now = performance.now();
+        const slit = loading.querySelector('#loadingLightSlit');
+        const slitLit = Boolean(slit?.classList.contains('is-lit'));
+        if (slitLit && !probe.wasSlitLit) probe.currentIgnitionAt = now;
+        if (!slitLit && probe.wasSlitLit) probe.currentIgnitionAt = null;
+        probe.wasSlitLit = slitLit;
+
+        if (probe.continuityArmed && !loading.classList.contains('is-final-resolving')) {
           const effectiveOpacities = visualFrames.map((frame) => {
             const frameStyle = getComputedStyle(frame);
             const imageStyle = getComputedStyle(frame.querySelector('.loading-image'));
@@ -334,6 +410,30 @@ const installBrowserProbe = async (page) => {
             probe.minCompositeOpacity,
             effectiveOpacities.reduce((sum, opacity) => sum + opacity, 0)
           );
+          const incoming = visualFrames.find((frame) => frame.classList.contains('is-revealing'));
+          if (incoming && Number(incoming.dataset.transitionOrder) > 1) {
+            const index = visualFrames.indexOf(incoming);
+            const opacity = effectiveOpacities[index];
+            const id = incoming.dataset.loadingSlot;
+            if (opacity >= 0.15 && opacity <= 0.85) {
+              const sample = probe.midHandoffs[id] ?? { first: now, last: now, count: 0 };
+              sample.last = now;
+              sample.count += 1;
+              probe.midHandoffs[id] = sample;
+            }
+            if (
+              opacity > 0.05
+              && probe.currentIgnitionAt !== null
+              && !probe.ignitionLeads.some((entry) => entry.id === id)
+            ) {
+              probe.ignitionLeads.push({
+                id,
+                ignitionAt: probe.currentIgnitionAt,
+                dominanceAt: now,
+                leadMs: now - probe.currentIgnitionAt
+              });
+            }
+          }
         }
         requestAnimationFrame(samplePosterContinuity);
       };
@@ -379,13 +479,91 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   });
 
   if (reduce) expect(initialProbe.slitHiddenAtFirstActive).toBe(true);
+  let finalLightMetrics = null;
+  let finalCss = null;
+  let finalBaseline = null;
+  let finalPeak = null;
   if (!reduce) {
     await page.waitForFunction(() => (
       window.__vinylLoadingProbe.activeIds.includes('archive-05')
     ), null, { timeout: 8_000 });
+    await page.waitForFunction(() => {
+      const final = document.querySelector('[data-loading-slot="archive-05"].is-active.is-stable');
+      return final && !document.querySelector('#loadingScreen')?.classList.contains('is-final-resolving');
+    });
+    const baselinePath = testInfo.outputPath(`final-baseline-${testInfo.project.name}.png`);
+    const peakPath = testInfo.outputPath(`final-peak-${testInfo.project.name}.png`);
+    finalBaseline = await captureInstrumented(page, baselinePath);
+    await page.waitForFunction(() => (
+      document.querySelector('#loadingScreen')?.classList.contains('is-final-resolving')
+    ));
+    const finalResolve = testInfo.project.name === 'desktop-chromium' ? 1100 : 920;
+    finalCss = await page.evaluate(async (resolveMs) => {
+      const root = document.querySelector('#loadingScreen');
+      const slit = document.querySelector('#loadingLightSlit');
+      const animations = root.getAnimations({ subtree: true }).filter(({ animationName }) => (
+        animationName?.startsWith('loading-final-')
+      ));
+      for (const animation of animations) {
+        animation.pause();
+      }
+      const parentAnimation = animations.find(({ animationName }) => (
+        animationName === `loading-final-${slit.dataset.direction}`
+      ));
+      let peak = { at: 0, opacity: 0 };
+      const beamCenters = [];
+      for (let step = 0; step <= 100; step += 2) {
+        for (const animation of animations) animation.currentTime = resolveMs * (step / 100);
+        const opacity = Number.parseFloat(getComputedStyle(slit).opacity);
+        if (opacity > peak.opacity) peak = { at: step / 100, opacity };
+      }
+      for (const progress of [0.15, 0.4, 0.65, 0.9]) {
+        parentAnimation.currentTime = resolveMs * progress;
+        const bounds = slit.getBoundingClientRect();
+        beamCenters.push(bounds.left + (bounds.width / 2));
+      }
+      for (const animation of animations) animation.currentTime = resolveMs * peak.at;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const opacity = (selector) => Number.parseFloat(getComputedStyle(root.querySelector(selector)).opacity);
+      return {
+        direction: slit.dataset.direction,
+        peakProgress: peak.at,
+        beamCenters,
+        parentOpacity: opacity('#loadingLightSlit'),
+        coreOpacity: opacity('.loading-light-core'),
+        warmOpacity: opacity('.loading-light-edge.is-warm'),
+        coolOpacity: opacity('.loading-light-edge.is-cool'),
+        animationNames: animations.map(({ animationName }) => animationName)
+      };
+    }, finalResolve);
+    finalPeak = await captureInstrumented(page, peakPath);
+    await page.evaluate(() => {
+      for (const animation of document.querySelector('#loadingScreen')?.getAnimations({ subtree: true }) ?? []) {
+        if (animation.animationName?.startsWith('loading-final-')) animation.play();
+      }
+    });
+
+    expect(['ltr', 'rtl']).toContain(finalCss.direction);
+    expect(finalCss.animationNames).toContain(`loading-final-${finalCss.direction}`);
+    const centerSteps = finalCss.beamCenters.slice(1).map((value, index) => (
+      value - finalCss.beamCenters[index]
+    ));
+    expect(centerSteps.every((delta) => finalCss.direction === 'ltr' ? delta > 0 : delta < 0)).toBe(true);
+    expect(finalCss.parentOpacity).toBeGreaterThanOrEqual(0.20);
+    expect(finalCss.parentOpacity).toBeLessThanOrEqual(0.22);
+    expect(finalCss.coreOpacity).toBeLessThanOrEqual(0.52);
+    expect(finalCss.warmOpacity).toBeLessThanOrEqual(0.22);
+    expect(finalCss.coolOpacity).toBeLessThanOrEqual(0.20);
   }
   await expect(loading).toHaveCount(0, { timeout: 10_000 });
   const effectEnd = await page.evaluate(() => performance.now());
+  if (!reduce) {
+    finalLightMetrics = await measureHorizontalLightDelta(page, finalBaseline, finalPeak);
+    expect(finalLightMetrics.centerPeak).toBeGreaterThan(0.5);
+    expect(finalLightMetrics.leftEdgeMean).toBeLessThan(finalLightMetrics.centerPeak * 0.25);
+    expect(finalLightMetrics.rightEdgeMean).toBeLessThan(finalLightMetrics.centerPeak * 0.25);
+    expect(finalLightMetrics.brightWidthRatio).toBeLessThan(0.30);
+  }
 
   const framesAtExit = Number(await canvasHandle.evaluate((element) => element.dataset.frameCount));
   await page.evaluate(() => new Promise((resolve) => {
@@ -399,10 +577,13 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     firstRenderedFrameNontransparent: window.__vinylLoadingProbe.firstRenderedFrameNontransparent,
     maxActive: window.__vinylLoadingProbe.maxActive,
     activeIds: window.__vinylLoadingProbe.activeIds,
+    activeTimeline: window.__vinylLoadingProbe.activeTimeline,
     continuitySamples: window.__vinylLoadingProbe.continuitySamples,
     maxVisualLayers: window.__vinylLoadingProbe.maxVisualLayers,
     maxDominantPosters: window.__vinylLoadingProbe.maxDominantPosters,
     minCompositeOpacity: window.__vinylLoadingProbe.minCompositeOpacity,
+    midHandoffs: window.__vinylLoadingProbe.midHandoffs,
+    ignitionLeads: window.__vinylLoadingProbe.ignitionLeads,
     gatheredPixels: window.__vinylLoadingProbe.gatheredPixels,
     scatterHandoffs: window.__vinylLoadingProbe.scatterHandoffs,
     clearedPixelCounts: window.__vinylLoadingProbe.clearedPixelCounts
@@ -427,7 +608,21 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(finalProbe.continuitySamples).toBeGreaterThan(3);
     expect(finalProbe.maxVisualLayers).toBeLessThanOrEqual(2);
     expect(finalProbe.maxDominantPosters).toBeLessThanOrEqual(1);
-    expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.90);
+    expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.94);
+    const midHandoffs = Object.values(finalProbe.midHandoffs);
+    expect(midHandoffs).toHaveLength(4);
+    for (const sample of midHandoffs) {
+      expect(sample.count).toBeGreaterThanOrEqual(8);
+      expect(sample.last - sample.first).toBeGreaterThanOrEqual(210);
+    }
+    expect(finalProbe.ignitionLeads).toHaveLength(4);
+    expect(finalProbe.ignitionLeads.every(({ leadMs }) => leadMs > 0)).toBe(true);
+    if (testInfo.project.name === 'mobile-chromium') {
+      const activeDeltas = finalProbe.activeTimeline.slice(1).map(({ at }, index) => (
+        at - finalProbe.activeTimeline[index].at
+      ));
+      expect(activeDeltas.slice(-3).every((duration) => duration >= 900 && duration < 1000)).toBe(true);
+    }
   }
   expect(finalProbe.activeIds).toEqual([
     'archive-01',
@@ -445,6 +640,10 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     window.__vinylLongTasks.filter((entry) => (
       entry.startTime >= window.__vinylLoadingProbe.effectStart
       && entry.startTime <= end
+      && !window.__vinylProbeOverhead.some((overhead) => (
+        entry.startTime <= overhead.end
+        && (entry.startTime + entry.duration) >= overhead.start
+      ))
     ))
   ), { end: effectEnd });
   expect(effectLongTasks.filter(({ duration }) => duration > 50)).toEqual([]);
@@ -470,6 +669,8 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     requestCount: stats.total,
     maxRequestConcurrency: stats.maxActive,
     effectLongTasks,
+    finalCss,
+    finalLightMetrics,
     ...finalProbe
   }, null, 2));
   await testInfo.attach('loading-poster-transition-metrics.json', {

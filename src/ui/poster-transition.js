@@ -1,10 +1,21 @@
 export const POSTER_TIMING = Object.freeze({
-  normal: Object.freeze({ gather: 140, scatter: 360, reveal: 440, hold: 220 }),
-  fast: Object.freeze({ gather: 80, scatter: 240, reveal: 300, hold: 120 }),
-  finalHold: 420,
-  finalExposure: 560,
-  exitLead: 180,
-  reduceFade: 120
+  full: Object.freeze({
+    normal: Object.freeze({ gather: 220, handoff: 820, hold: 420 }),
+    compressed: Object.freeze({ gather: 160, handoff: 620, hold: 260 }),
+    finalHold: 840,
+    finalResolve: 1100,
+    exitLead: 620,
+    rootFade: 680
+  }),
+  compact: Object.freeze({
+    normal: Object.freeze({ gather: 180, handoff: 720, hold: 360 }),
+    compressed: Object.freeze({ gather: 120, handoff: 560, hold: 240 }),
+    finalHold: 720,
+    finalResolve: 920,
+    exitLead: 520,
+    rootFade: 560
+  }),
+  reduce: Object.freeze({ fade: 120 })
 });
 
 const PROFILES = Object.freeze(['full', 'compact', 'reduce']);
@@ -92,6 +103,7 @@ export function createPosterTransition({
   let errorReported = false;
   let finishPromise = null;
   let runToken = {};
+  let lastDirection = 'ltr';
   const idleWaiters = new Set();
 
   const slots = () => [...root.querySelectorAll('[data-loading-slot]')];
@@ -145,9 +157,9 @@ export function createPosterTransition({
     idleWaiters.clear();
   };
 
-  const timingFor = () => {
+  const timingFor = (sceneProfile) => {
     if (queue.length > 2) compressedDrain = true;
-    return compressedDrain ? POSTER_TIMING.fast : POSTER_TIMING.normal;
+    return POSTER_TIMING[sceneProfile][compressedDrain ? 'compressed' : 'normal'];
   };
 
   const runReduceItem = async (item, token) => {
@@ -163,14 +175,25 @@ export function createPosterTransition({
     completedReadableHold = 0;
     setActive(activeItem, true);
     activeItem.slot.classList.add('is-revealing');
-    if (!await sleep(POSTER_TIMING.reduceFade, token)) return;
+    if (!await sleep(POSTER_TIMING.reduce.fade, token)) return;
     activeItem.slot.classList.remove('is-revealing');
     activeItem.slot.classList.add('is-stable');
   };
 
-  const runAnimatedItem = async (item, token, timing) => {
+  const runAnimatedItem = async (item, token, timing, sceneProfile) => {
     const bounds = item.slot.getBoundingClientRect();
     slit.dataset.direction = item.direction;
+    slit.dataset.motionProfile = sceneProfile;
+    item.slot.dataset.motionProfile = sceneProfile;
+    const ignition = timing.gather * 0.45;
+    const slitDuration = (timing.gather - ignition) + timing.handoff;
+    const slitWork = (async () => {
+      if (!await sleep(ignition, token)) return false;
+      if (!isCurrent(token)) return false;
+      root.style.setProperty('--slit-duration', `${slitDuration}ms`);
+      slit.classList.add('is-lit');
+      return sleep(slitDuration, token);
+    })();
 
     const [, gathered] = await Promise.all([
       Promise.resolve(particleField.gather(bounds, timing.gather)),
@@ -181,55 +204,56 @@ export function createPosterTransition({
     const outgoing = activeItem;
     if (outgoing) {
       setActive(outgoing, false);
-      outgoing.slot.style.setProperty('--poster-scatter-ms', `${timing.scatter}ms`);
+      outgoing.slot.dataset.motionProfile = sceneProfile;
+      outgoing.slot.style.setProperty('--poster-handoff-ms', `${timing.handoff}ms`);
       outgoing.slot.classList.remove('is-stable');
       outgoing.slot.classList.add('is-outgoing', 'is-scattering');
     }
 
     activeItem = item;
+    lastDirection = item.direction;
     completedReadableHold = 0;
-    root.style.setProperty('--slit-duration', String(timing.reveal) + 'ms');
-    slit.classList.add('is-lit');
     setActive(activeItem, true);
+    activeItem.slot.style.setProperty('--poster-handoff-ms', `${timing.handoff}ms`);
     activeItem.slot.classList.add('is-revealing');
     const scatterWork = outgoing
       ? Promise.all([
-          Promise.resolve(particleField.scatter(outgoing.slot.getBoundingClientRect(), timing.scatter)),
-          sleep(timing.scatter, token)
+          Promise.resolve(particleField.scatter(outgoing.slot.getBoundingClientRect(), timing.handoff)),
+          sleep(timing.handoff, token)
         ])
-      : Promise.resolve([true, true]);
-    const revealWork = sleep(timing.reveal, token);
-    const [scatterResult, revealed] = await Promise.all([scatterWork, revealWork]);
+      : Promise.all([Promise.resolve(true), sleep(timing.handoff, token)]);
+    const [scatterResult, slitSettled] = await Promise.all([scatterWork, slitWork]);
     const scattered = outgoing ? scatterResult[1] : true;
-    if (!isCurrent(token) || scattered === false || revealed === false) return;
+    if (!isCurrent(token) || scattered === false || slitSettled === false) return;
     if (outgoing) {
       outgoing.slot.classList.remove('is-outgoing', 'is-scattering');
-      outgoing.slot.style.removeProperty('--poster-scatter-ms');
+      outgoing.slot.style.removeProperty('--poster-handoff-ms');
     }
     activeItem.slot.classList.remove('is-revealing');
     activeItem.slot.classList.add('is-stable');
     slit.classList.remove('is-lit');
 
     const finalItem = sealed && queue.length === 0;
-    const hold = finalItem ? POSTER_TIMING.finalHold : timing.hold;
+    const profileTiming = POSTER_TIMING[sceneProfile];
+    const hold = finalItem ? profileTiming.finalHold : timing.hold;
     if (await sleep(hold, token) && activeItem === item) {
       completedReadableHold = Math.min(
-        POSTER_TIMING.finalHold,
+        profileTiming.finalHold,
         completedReadableHold + hold
       );
     }
   };
 
   const runItem = async (item, token) => {
-    const timing = currentProfile === 'reduce' ? POSTER_TIMING.normal : timingFor();
-    const reveal = currentProfile === 'reduce' ? POSTER_TIMING.reduceFade : timing.reveal;
-    item.slot.style.setProperty('--poster-reveal-ms', `${reveal}ms`);
-
-    if (currentProfile === 'reduce') {
+    const sceneProfile = currentProfile;
+    if (sceneProfile === 'reduce') {
+      item.slot.style.setProperty('--poster-handoff-ms', `${POSTER_TIMING.reduce.fade}ms`);
       await runReduceItem(item, token);
       return;
     }
-    await runAnimatedItem(item, token, timing);
+    const timing = timingFor(sceneProfile);
+    item.slot.style.setProperty('--poster-handoff-ms', `${timing.handoff}ms`);
+    await runAnimatedItem(item, token, timing, sceneProfile);
   };
 
   const settleParticleField = () => {
@@ -254,7 +278,7 @@ export function createPosterTransition({
     root.style.removeProperty('--slit-duration');
     for (const slot of slots()) {
       slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
-      slot.style.removeProperty('--poster-scatter-ms');
+      slot.style.removeProperty('--poster-handoff-ms');
     }
     stabilize(activeItem);
     try {
@@ -318,8 +342,8 @@ export function createPosterTransition({
       slot.classList.remove('is-active', 'is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
       delete slot.dataset.transitionOrder;
       delete slot.dataset.slitDirection;
-      slot.style.removeProperty('--poster-reveal-ms');
-      slot.style.removeProperty('--poster-scatter-ms');
+      delete slot.dataset.motionProfile;
+      slot.style.removeProperty('--poster-handoff-ms');
       for (const image of slot.querySelectorAll('img')) {
         image.setAttribute('aria-hidden', 'true');
       }
@@ -340,16 +364,18 @@ export function createPosterTransition({
     compressedDrain = false;
     slit.classList.remove('is-lit');
     delete slit.dataset.direction;
+    delete slit.dataset.motionProfile;
     root.style.removeProperty('--slit-duration');
-    root.classList.remove('is-final-exposure');
+    root.style.removeProperty('--final-resolve-ms');
+    root.classList.remove('is-final-resolving');
     delete root.dataset.transitionSettled;
-    delete root.dataset.exposureSettled;
+    delete root.dataset.finalSettled;
     settleParticleField();
 
     if (preserveActive) {
       for (const slot of slots()) {
         slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
-        slot.style.removeProperty('--poster-scatter-ms');
+        slot.style.removeProperty('--poster-handoff-ms');
       }
       stabilize(activeItem);
     }
@@ -374,13 +400,15 @@ export function createPosterTransition({
 
     slit.classList.remove('is-lit');
     delete slit.dataset.direction;
+    delete slit.dataset.motionProfile;
     root.style.removeProperty('--slit-duration');
-    root.classList.remove('is-final-exposure');
+    root.style.removeProperty('--final-resolve-ms');
+    root.classList.remove('is-final-resolving');
     delete root.dataset.transitionSettled;
-    delete root.dataset.exposureSettled;
+    delete root.dataset.finalSettled;
     for (const slot of slots()) {
       slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
-      slot.style.removeProperty('--poster-scatter-ms');
+      slot.style.removeProperty('--poster-handoff-ms');
       if (activeItem?.slot === slot) slot.classList.add('is-stable');
     }
     settleParticleField();
@@ -434,9 +462,10 @@ export function createPosterTransition({
 
           const token = generation;
           if (currentProfile !== 'reduce' && activeItem) {
+            const profileTiming = POSTER_TIMING[currentProfile];
             const remainingHold = Math.max(
               0,
-              POSTER_TIMING.finalHold - completedReadableHold
+              profileTiming.finalHold - completedReadableHold
             );
             if (remainingHold > 0) {
               if (!await sleep(remainingHold, token)) {
@@ -447,16 +476,20 @@ export function createPosterTransition({
             }
           }
 
-          root.classList.add('is-final-exposure');
           if (currentProfile !== 'reduce') {
-            const gateWork = sleep(POSTER_TIMING.exitLead, token);
-            const exposureWork = sleep(POSTER_TIMING.finalExposure, token);
-            void exposureWork.then((completed) => {
+            const profileTiming = POSTER_TIMING[currentProfile];
+            slit.dataset.direction = lastDirection;
+            slit.dataset.motionProfile = currentProfile;
+            root.style.setProperty('--final-resolve-ms', `${profileTiming.finalResolve}ms`);
+            root.classList.add('is-final-resolving');
+            const gateWork = sleep(profileTiming.exitLead, token);
+            const finalWork = sleep(profileTiming.finalResolve, token);
+            void finalWork.then((completed) => {
               if (
                 completed
                 && isCurrent(token)
                 && runToken === finishingRun
-              ) root.dataset.exposureSettled = 'true';
+              ) root.dataset.finalSettled = 'true';
             }).catch(() => {});
             if (!await gateWork) {
               if (generation !== token) continue;
