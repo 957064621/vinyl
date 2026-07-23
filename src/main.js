@@ -451,7 +451,8 @@ startCriticalAssetGate({
 
         const toggleAudioState = async (play, options = {}) => {
             const { skipMotion = false, stopDuration = 800 } = options;
-            if (play === isAudioPlaying) return;
+            const controllerStatus = audioController.getState().status;
+            if (play ? controllerStatus === 'playing' : !['loading', 'playing'].includes(controllerStatus)) return;
 
             cancelVolumeFade();
             suppressPlaybackMotion = skipMotion;
@@ -471,6 +472,11 @@ startCriticalAssetGate({
                     }
                 }
 
+                if (controllerStatus === 'loading') {
+                    audioController.pause();
+                    return true;
+                }
+
                 await stopAndFadeOutAudio(stopDuration, { disableControl: false });
                 return true;
             } finally {
@@ -480,7 +486,8 @@ startCriticalAssetGate({
 
         playerToggleBtn.addEventListener('click', () => {
             if (isTrackSwitching) return;
-            void toggleAudioState(audioController.getState().status !== 'playing');
+            const { status } = audioController.getState();
+            void toggleAudioState(status !== 'playing' && status !== 'loading');
         });
 
         const seekFromPointer = (event) => {

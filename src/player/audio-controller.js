@@ -53,7 +53,7 @@ export function createAudioController({
         setStatus('error', new Error(`Audio failed: ${track?.title || 'unknown'}`));
     };
     const onPlay = () => {
-        if (status !== 'loading') setStatus('playing');
+        if (status === 'playing') updatePositionState();
     };
     const onPause = () => {
         if (status !== 'error') setStatus('paused');
@@ -223,6 +223,7 @@ export function createAudioController({
         pause() {
             playGeneration += 1;
             audio.pause();
+            if (status !== 'error' && status !== 'paused') setStatus('paused');
         },
         async retry() {
             if (!track?.musicOssUrl) throw new Error('No audio track is loaded');

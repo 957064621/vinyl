@@ -117,6 +117,65 @@ test('stale play from a previous source cannot pause or overwrite the new source
   assert.equal(states.at(-1).track.title, '新歌');
 });
 
+test('late play event after explicit pause cannot leave a pending attempt loading or publish playing', async () => {
+  const audio = new FakeAudio();
+  const pendingAttempt = createDeferred();
+  audio.play = () => pendingAttempt.promise;
+  audio.pause = () => { audio.pauseCalls += 1; };
+  const states = [];
+  const controller = createAudioController({ audio, onStateChange: (state) => states.push(state.status) });
+  await controller.load({ title: '媚人', musicOssUrl: 'https://example.test/meiren.mp3' });
+
+  const pendingPlay = controller.play();
+  controller.pause();
+  assert.equal(states.at(-1), 'paused');
+
+  audio.emit('play');
+  assert.equal(states.at(-1), 'paused');
+  pendingAttempt.resolve();
+  assert.equal(await pendingPlay, false);
+  assert.equal(states.at(-1), 'paused');
+});
+
+test('late play event after source replacement cannot publish playing', async () => {
+  const audio = new FakeAudio();
+  const oldAttempt = createDeferred();
+  audio.play = () => oldAttempt.promise;
+  const states = [];
+  const controller = createAudioController({ audio, onStateChange: (state) => states.push(state) });
+  await controller.load({ title: '旧歌', musicOssUrl: 'https://example.test/old.mp3' });
+
+  const pendingOldPlay = controller.play();
+  await controller.load({ title: '新歌', musicOssUrl: 'https://example.test/new.mp3' });
+  audio.emit('play');
+
+  assert.equal(states.at(-1).status, 'ready');
+  assert.equal(states.at(-1).track.title, '新歌');
+  oldAttempt.resolve();
+  assert.equal(await pendingOldPlay, false);
+  assert.equal(states.at(-1).status, 'ready');
+});
+
+test('late play event and explicit pause cannot hide a recoverable media error', async () => {
+  const audio = new FakeAudio();
+  const pendingAttempt = createDeferred();
+  audio.play = () => pendingAttempt.promise;
+  const states = [];
+  const controller = createAudioController({ audio, onStateChange: (state) => states.push(state) });
+  await controller.load({ title: '媚人', musicOssUrl: 'https://example.test/meiren.mp3' });
+
+  const pendingPlay = controller.play();
+  audio.emit('error');
+  assert.equal(states.at(-1).status, 'error');
+
+  audio.emit('play');
+  controller.pause();
+  assert.equal(states.at(-1).status, 'error');
+  pendingAttempt.resolve();
+  assert.equal(await pendingPlay, false);
+  assert.equal(states.at(-1).status, 'error');
+});
+
 test('seeks by a clamped fraction', async () => {
   const audio = new FakeAudio();
   const controller = createAudioController({ audio });
@@ -199,6 +258,20 @@ test('cancels playback tweens before resetting rejected playback visuals', () =>
   assert.ok(resetSource.indexOf('rateTween.cancel();') > 0);
   assert.ok(resetSource.indexOf('tonearmTween.cancel();') < resetSource.indexOf("turntable.classList.remove('is-playing');"));
   assert.ok(resetSource.indexOf('rateTween.cancel();') < resetSource.indexOf('spinAnimation.playbackRate = 0;'));
+});
+
+test('player and Media Session pause commands invalidate a loading controller attempt', () => {
+  const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+  const toggleStart = mainSource.indexOf('const toggleAudioState = async (play, options = {}) => {');
+  const toggleEnd = mainSource.indexOf("\n        playerToggleBtn.addEventListener('click'", toggleStart);
+  const toggleSource = mainSource.slice(toggleStart, toggleEnd);
+  const clickEnd = mainSource.indexOf('\n        });', toggleEnd) + '\n        });'.length;
+  const clickSource = mainSource.slice(toggleEnd, clickEnd);
+
+  assert.notEqual(toggleStart, -1);
+  assert.match(toggleSource, /controllerStatus === 'loading'/);
+  assert.match(toggleSource, /audioController\.pause\(\)/);
+  assert.match(clickSource, /status !== 'playing' && status !== 'loading'/);
 });
 
 test('destroy removes every media element listener', async () => {
