@@ -75,9 +75,7 @@
     <div class="loading-screen" id="loadingScreen" data-state="loading">
         <div class="loading-intake">
             <div class="loading-controls">
-                <div class="loading-intake-head">
-                    <output id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
-                </div>
+                <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
                 <div class="loading-status">
                     <p class="loading-copy" id="loadingCopy">影像读取中</p>
                     <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
@@ -97,7 +95,6 @@
                     <span class="loading-light-core"></span>
                     <span class="loading-light-edge is-cool"></span>
                 </div>
-                <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
             </div>
         </div>
     </div>

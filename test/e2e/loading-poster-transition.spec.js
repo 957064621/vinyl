@@ -302,7 +302,7 @@ const getLightOracleClip = (page) => page.evaluate(() => {
   const blockers = [
     ...document.querySelectorAll(
       '.loading-poster-stack, #loadingParticles, #loadingProgress, #loadingCopy, '
-      + '#loadingRetry, .loading-progress-rail'
+      + '#loadingRetry'
     )
   ].filter((element) => intersects(element.getBoundingClientRect()))
     .map((element) => element.id || element.className);

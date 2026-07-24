@@ -93,6 +93,18 @@
             padding: 0;
         }
 
+        .sr-only {
+            position: absolute !important;
+            width: 1px !important;
+            height: 1px !important;
+            padding: 0 !important;
+            margin: -1px !important;
+            overflow: hidden !important;
+            clip: rect(0, 0, 0, 0) !important;
+            white-space: nowrap !important;
+            border: 0 !important;
+        }
+
         html {
             width: 100%;
             height: 100%;
@@ -192,7 +204,6 @@
         }
 
         .loading-screen {
-            --loading-progress: 0;
             --loading-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
             --loading-handoff-ease: cubic-bezier(0.42, 0, 0.58, 1);
             --loading-light-ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -234,17 +245,6 @@
             flex-direction: column;
             justify-content: space-between;
             pointer-events: none;
-        }
-
-        .loading-intake-head {
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            color: rgba(237, 245, 255, 0.82);
-            font-family: "SFMono-Regular", Consolas, monospace;
-            font-size: 11px;
-            line-height: 1.4;
-            letter-spacing: 0;
         }
 
         .loading-stage {
@@ -461,25 +461,6 @@
 
         .loading-screen.is-final-resolving .loading-light-edge.is-cool {
             animation: loading-final-cool var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both;
-        }
-
-        .loading-progress-rail {
-            position: absolute;
-            right: 0;
-            bottom: 0;
-            left: 0;
-            z-index: 5;
-            height: 1px;
-            overflow: hidden;
-            background: rgba(205, 229, 255, 0.18);
-        }
-
-        .loading-progress-rail span {
-            display: block;
-            width: calc(var(--loading-progress) * 20%);
-            height: 100%;
-            background: #edf7ff;
-            transition: width 180ms var(--loading-motion-ease);
         }
 
         .loading-status {

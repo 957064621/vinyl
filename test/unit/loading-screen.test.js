@@ -15,9 +15,7 @@ const createFixture = () => new JSDOM(`
   <div class="loading-screen" id="loadingScreen" data-state="loading">
     <div class="loading-intake">
       <div class="loading-controls">
-        <div class="loading-intake-head">
-          <output id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
-        </div>
+        <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
         <p class="loading-copy" id="loadingCopy">影像读取中</p>
         <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
       </div>
@@ -31,7 +29,6 @@ const createFixture = () => new JSDOM(`
         </div>
         <canvas class="loading-particles" id="loadingParticles"></canvas>
         <div class="loading-light-slit" id="loadingLightSlit"></div>
-        <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
       </div>
     </div>
   </div>
@@ -136,7 +133,7 @@ const createTimerHarness = () => {
 
 const createGateFixture = () => new JSDOM(`
   <div class="loading-screen" id="loadingScreen" data-state="loading">
-    <output id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
+    <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
     <div data-loading-slot="archive-01"></div>
     <div data-loading-slot="archive-02"></div>
     <div data-loading-slot="archive-03"></div>
@@ -144,7 +141,6 @@ const createGateFixture = () => new JSDOM(`
     <div data-loading-slot="archive-05"></div>
     <canvas id="loadingParticles"></canvas>
     <div id="loadingLightSlit"></div>
-    <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
     <button id="loadingRetry" type="button" hidden>重新载入</button>
     <p id="loadingCopy">影像读取中</p>
   </div>
@@ -825,9 +821,10 @@ test('application markup starts as one inert root outside the loading screen', (
   assert.equal(loadingScreen.querySelectorAll('button').length, 1);
   assert.equal(loadingScreen.querySelectorAll('img').length, 0);
   assert.equal(loadingScreen.querySelector('[src]'), null);
+  assert.equal(document.querySelectorAll('#loadingProgress.sr-only').length, 1);
+  assert.equal(document.querySelector('.loading-progress-rail'), null);
   assert.equal(loadingScreen.querySelector('#loadingProgress').getAttribute('aria-live'), 'polite');
   assert.equal(loadingScreen.querySelector('#loadingProgress').getAttribute('aria-atomic'), 'true');
-  assert.equal(loadingScreen.querySelector('.loading-progress-rail').getAttribute('aria-hidden'), 'true');
 
   const criticalStyle = document.querySelector('style').textContent;
   assert.match(criticalStyle, /\.loading-screen\s*\{[^}]*box-sizing:\s*border-box/s);
@@ -1052,7 +1049,6 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /loading-final-core[\s\S]*opacity:\s*0\.52/);
   assert.match(loadingBlock, /loading-final-warm[\s\S]*opacity:\s*0\.22/);
   assert.match(loadingBlock, /loading-final-cool[\s\S]*opacity:\s*0\.20/);
-  assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms var\(--loading-motion-ease\)/s);
   assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s var\(--loading-motion-ease\)/s);
   assert.deepEqual(loadingBlock.match(/transition:[^;]*linear;/g), [
     'transition: opacity 120ms linear;',
