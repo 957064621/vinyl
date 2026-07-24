@@ -25,6 +25,7 @@ export function createMotionController({
 
   let active = null;
   let latestRequestId = 0;
+  let decorativeVisibilityEpoch = 0;
   let disposed = false;
   let documentVisible = true;
 
@@ -45,22 +46,28 @@ export function createMotionController({
     }
 
     const requestId = ++latestRequestId;
+    const visibilityEpoch = decorativeVisibilityEpoch;
     const previous = active;
     previous?.controller.abort(`superseded by ${name}`);
 
     return (async () => {
       if (previous) await previous.settled;
-      if (disposed || (!documentVisible && !allowWhenHidden) || requestId !== latestRequestId) {
+      if (
+        disposed ||
+        requestId !== latestRequestId ||
+        (!allowWhenHidden && (
+          !documentVisible ||
+          visibilityEpoch !== decorativeVisibilityEpoch
+        ))
+      ) {
         return { status: 'cancelled', name };
       }
 
       const controller = new AbortController();
       const record = { name, controller, allowWhenHidden, settled: null };
-      active = record;
-      publishActivity(record, true);
-
-      record.settled = (async () => {
+      record.settled = Promise.resolve().then(async () => {
         try {
+          if (controller.signal.aborted) return { status: 'cancelled', name };
           await task({ signal: controller.signal, profile, tokens });
           return {
             status: controller.signal.aborted ? 'cancelled' : 'completed',
@@ -76,7 +83,10 @@ export function createMotionController({
             publishActivity(record, false);
           }
         }
-      })();
+      });
+
+      active = record;
+      publishActivity(record, true);
 
       return record.settled;
     })();
@@ -105,7 +115,7 @@ export function createMotionController({
     setDocumentVisible(visible) {
       documentVisible = Boolean(visible);
       if (!documentVisible) {
-        latestRequestId += 1;
+        decorativeVisibilityEpoch += 1;
         if (!active?.allowWhenHidden) active?.controller.abort('document hidden');
       }
       transitions.setDocumentVisible?.(visible);

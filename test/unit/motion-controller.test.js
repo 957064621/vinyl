@@ -55,6 +55,7 @@ test('runs one transition at a time and settles the interrupted promise', async 
   };
   const motion = createMotionController({ profile: 'compact', transitions });
   const draw = motion.draw(3);
+  await Promise.resolve();
   const open = motion.openOverlay('playlist');
   assert.deepEqual(await draw, { status: 'cancelled', name: 'draw' });
   assert.deepEqual(await open, { status: 'completed', name: 'open:playlist' });
@@ -79,6 +80,7 @@ test('only the latest request starts in a triple-request race', async () => {
   };
   const motion = createMotionController({ profile: 'full', transitions });
   const first = motion.draw(1);
+  await Promise.resolve();
   const second = motion.openOverlay('lyrics');
   const third = motion.closeOverlay('playlist');
   firstCleanup.resolve();
@@ -117,10 +119,12 @@ test('cancel and dispose both settle active work', async () => {
   });
 
   const draw = motion.draw(0);
+  await Promise.resolve();
   await motion.cancel('manual');
   assert.deepEqual(await draw, { status: 'cancelled', name: 'draw' });
 
   const open = motion.openOverlay('lyrics');
+  await Promise.resolve();
   await motion.dispose();
   assert.deepEqual(await open, { status: 'cancelled', name: 'open:lyrics' });
   assert.deepEqual(events, ['manual', 'disposed', 'disposed']);
@@ -176,6 +180,46 @@ test('allows semantic headless track changes while the document is hidden', asyn
   assert.deepEqual(events, [[4, true]]);
 });
 
+test('starts a queued headless switch after decorative cleanup during backgrounding', async () => {
+  const cleanup = createDeferred();
+  const events = [];
+  const motion = createMotionController({
+    profile: 'compact',
+    transitions: {
+      draw: ({ signal }) => new Promise((resolve) => {
+        events.push('draw:start');
+        signal.addEventListener('abort', async () => {
+          events.push('draw:abort');
+          await cleanup.promise;
+          events.push('draw:cleanup');
+          resolve();
+        }, { once: true });
+      }),
+      switchTrack: async ({ targetIndex, headless }) => {
+        events.push(`switch:${targetIndex}:${headless}`);
+      }
+    }
+  });
+
+  const draw = motion.draw(0);
+  await Promise.resolve();
+  const headlessSwitch = motion.switchTrack(4, { headless: true });
+  motion.setDocumentVisible(false);
+  cleanup.resolve();
+
+  assert.deepEqual(await draw, { status: 'cancelled', name: 'draw' });
+  assert.deepEqual(
+    await headlessSwitch,
+    { status: 'completed', name: 'switch-track' }
+  );
+  assert.deepEqual(events, [
+    'draw:start',
+    'draw:abort',
+    'draw:cleanup',
+    'switch:4:true'
+  ]);
+});
+
 test('does not allow caller options to replace controller-owned switch context', async () => {
   let received;
   const motion = createMotionController({
@@ -208,6 +252,39 @@ test('activity callback failures cannot strand motion ownership', async () => {
 
   assert.deepEqual(await motion.draw(0), { status: 'completed', name: 'draw' });
   assert.equal(motion.isActive(), false);
+});
+
+test('settles a synchronously superseded record before starting the reentrant command', async () => {
+  const events = [];
+  let reentrant;
+  let startedReentrant = false;
+  let motion;
+  motion = createMotionController({
+    profile: 'full',
+    transitions: {
+      draw: async () => { events.push('draw:task'); },
+      openOverlay: async ({ kind }) => { events.push(`open:${kind}`); }
+    },
+    onActivityChange: ({ active, name }) => {
+      events.push(`activity:${active ? 'start' : 'end'}:${name}`);
+      if (active && name === 'draw' && !startedReentrant) {
+        startedReentrant = true;
+        reentrant = motion.openOverlay('lyrics');
+      }
+    }
+  });
+
+  const draw = motion.draw(0);
+
+  assert.deepEqual(await draw, { status: 'cancelled', name: 'draw' });
+  assert.deepEqual(await reentrant, { status: 'completed', name: 'open:lyrics' });
+  assert.deepEqual(events, [
+    'activity:start:draw',
+    'activity:end:null',
+    'activity:start:open:lyrics',
+    'open:lyrics',
+    'activity:end:null'
+  ]);
 });
 
 test('settles an aborted numeric tween', async () => {
@@ -308,7 +385,9 @@ const makeTransitionFakes = ({
   playError = null,
   loadError = null,
   blockMove = null,
-  pendingPlay = null
+  pendingPlay = null,
+  loadResult = undefined,
+  playResult = undefined
 } = {}) => {
   const events = [];
   const normalizedTrack = {
@@ -347,11 +426,13 @@ const makeTransitionFakes = ({
     load: async (track) => {
       events.push(['load', track]);
       if (loadError) throw loadError;
+      return loadResult;
     },
     play: async (options) => {
       events.push(['play', options]);
       if (playError) throw playError;
       if (pendingPlay) return pendingPlay.promise;
+      return playResult;
     }
   };
   const selectTrack = async (index, options) => {
@@ -435,6 +516,60 @@ test('a load rejection resets the turntable and remains recoverable by the calle
 
   assert.equal(fakes.events.at(-1)[0], 'reset');
 });
+
+test('a live false load resets and aborts before the final draw label', async () => {
+  const fakes = makeTransitionFakes({ loadResult: false });
+  const transitions = createAppTransitions(fakes);
+  const signal = new AbortController().signal;
+
+  await assert.rejects(transitions.draw({
+    signal,
+    targetIndex: 3,
+    profile: 'compact',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
+  }), /Audio load did not complete/);
+
+  assert.equal(signal.aborted, false);
+  assert.equal(fakes.events.at(-1)[0], 'reset');
+  assert.equal(fakes.events.some(([name, label]) => name === 'label' && label === '再次抽取'), false);
+});
+
+test('a live false play resets and aborts before the final draw label', async () => {
+  const fakes = makeTransitionFakes({ playResult: false });
+  const transitions = createAppTransitions(fakes);
+  const signal = new AbortController().signal;
+
+  await assert.rejects(transitions.draw({
+    signal,
+    targetIndex: 3,
+    profile: 'compact',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
+  }), /Audio playback did not start/);
+
+  assert.equal(signal.aborted, false);
+  assert.equal(fakes.events.at(-1)[0], 'reset');
+  assert.equal(fakes.events.some(([name, label]) => name === 'label' && label === '再次抽取'), false);
+});
+
+for (const [operation, options, expectedError] of [
+  ['load', { loadResult: false }, /Audio load did not complete/],
+  ['play', { playResult: false }, /Audio playback did not start/]
+]) {
+  test(`a live false ${operation} aborts a track switch before overlay restore`, async () => {
+    const fakes = makeTransitionFakes(options);
+    const transitions = createAppTransitions(fakes);
+
+    await assert.rejects(transitions.switchTrack({
+      signal: new AbortController().signal,
+      targetIndex: 3,
+      profile: 'compact',
+      tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
+    }), expectedError);
+
+    assert.equal(fakes.events.at(-1)[0], 'reset');
+    assert.equal(fakes.events.some(([name]) => name === 'restore'), false);
+  });
+}
 
 test('an interrupted pending play resets the turntable before its transition settles', async () => {
   const pendingPlay = createDeferred();

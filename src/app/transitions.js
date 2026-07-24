@@ -22,7 +22,8 @@ export function createAppTransitions({
     try {
       const track = await selectTrack(targetIndex, { signal });
       assertActive(signal);
-      await audio.load(track);
+      const loaded = await audio.load(track);
+      if (loaded === false) throw new Error('Audio load did not complete');
       assertActive(signal);
       return track;
     } catch (error) {
@@ -34,11 +35,10 @@ export function createAppTransitions({
   const playSelectedTrack = async (signal, tokens) => {
     try {
       const played = await audio.play({ signal });
-      if (played === false) {
-        await resetAfterPlaybackError(signal, tokens);
-      }
+      if (played === false) throw new Error('Audio playback did not start');
     } catch (error) {
       await resetAfterPlaybackError(signal, tokens);
+      assertActive(signal);
       throw error;
     }
   };
