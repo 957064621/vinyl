@@ -60,6 +60,14 @@ Replace the layout and player composition wholesale. This creates maximum visual
 - `full` supports the complete choreography, `compact` shortens distances and removes expensive compositing, and `reduce` uses direct state changes or short fades.
 - Page visibility pauses decorative work. Hidden overlays run no animation.
 
+## Draw Button Light Loop
+
+- Adapt the supplied Glowing Shadow reference into one restrained perimeter-light pass around the existing draw button. Preserve the button's current dimensions, pill geometry, label viewport, and command hierarchy.
+- Use projector white, cold silver, archive red, and the current cover accent. Do not reproduce the reference's rainbow hue cycle, large blurred halo, pulsing box shadow, or viewport-sized glow calculations.
+- In the `full` profile, each loop has one non-linear travelling pass followed by a visible quiet interval. The loop runs only while the command is idle and interactive; `data-busy`, disabled, hidden, and overlay-transition states pause it.
+- `compact` keeps a static low-opacity perimeter highlight, and `reduce` removes the loop entirely. The effect must animate only transform and opacity and must not create mobile long tasks over `50ms`.
+- Hover, focus-visible, and active states remain legible without depending on the loop. Button text contrast and the existing tactile press response remain intact.
+
 ## Lyrics And Playlist
 
 - Lyrics read as projected type in open space, not a card inside a card. Keep author-provided semantic line breaks unchanged.
@@ -84,7 +92,7 @@ Replace the layout and player composition wholesale. This creates maximum visual
 
 ## Verification
 
-- Unit tests cover profile selection, exclusive ownership, cancellation settlement, interrupted draw/switch behavior, metadata updates, and visible-loading-chrome removal.
+- Unit tests cover profile selection, exclusive ownership, cancellation settlement, interrupted draw/switch behavior, metadata updates, visible-loading-chrome removal, and draw-button loop gating.
 - Existing unit, audit, build, and browser suites remain passing.
 - Browser QA covers initial player, draw-to-lyrics, play/pause, seek, lyrics close/open, playlist open, mode switch, track selection, retry state, rapid interruption, desktop, mobile, and reduced motion.
 - Capture loading, idle player, active player, lyric overlay, and playlist screenshots. Compare layout, typography, palette, light direction, image treatment, control geometry, responsive behavior, and visible copy against this specification and the prior approved archive specifications.
