@@ -1405,11 +1405,19 @@
             opacity: 0;
         }
 
-        @supports (background: conic-gradient(from 0deg, transparent, white)) {
+        @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (animation-timeline: scroll()) {
             .btn-sheen::before {
                 animation:
                     btn-perimeter-orbit-full 7200ms cubic-bezier(0.4, 0, 0.2, 1) infinite,
                     btn-perimeter-fade-full 7200ms linear infinite;
+            }
+
+            @media (hover: none) and (pointer: coarse) {
+                .btn-sheen::before {
+                    animation:
+                        btn-perimeter-orbit-compact 9600ms cubic-bezier(0.4, 0, 0.2, 1) infinite,
+                        btn-perimeter-fade-compact 9600ms linear infinite;
+                }
             }
         }
 
@@ -1431,14 +1439,6 @@
         @keyframes btn-perimeter-fade-compact {
             0%, 12.5%, 100% { opacity: 0; }
             6.25% { opacity: 0.58; }
-        }
-
-        @media (hover: none) and (pointer: coarse) {
-            .btn-sheen::before {
-                animation:
-                    btn-perimeter-orbit-compact 9600ms cubic-bezier(0.4, 0, 0.2, 1) infinite,
-                    btn-perimeter-fade-compact 9600ms linear infinite;
-            }
         }
 
         .play-btn[data-busy] .btn-sheen::before,

@@ -2,20 +2,26 @@ import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
 
-const LOCKED_STYLE = Object.freeze({
+const PROFILES = Object.freeze({
   desktop: {
     width: '136px',
     height: '48px',
     fontSize: '15px',
     letterSpacing: '1.35px',
-    islandWidth: '438px'
+    islandWidth: '438px',
+    duration: 7200,
+    orbit: 'btn-perimeter-orbit-full',
+    fade: 'btn-perimeter-fade-full'
   },
   mobile: {
     width: '106px',
     height: '46px',
     fontSize: '13px',
     letterSpacing: '1.17px',
-    islandWidth: '306px'
+    islandWidth: '306px',
+    duration: 9600,
+    orbit: 'btn-perimeter-orbit-compact',
+    fade: 'btn-perimeter-fade-compact'
   }
 });
 const LOCKED_SHARED_STYLE = Object.freeze({
@@ -35,34 +41,156 @@ const DETERMINISTIC_COVER = Buffer.from(`
   </svg>
 `);
 
-const installCovers = async (page) => {
+const installCovers = async (page, { hold = false } = {}) => {
   const paths = new Set(CRITICAL_IMAGE_MANIFEST.map(({ source }) => new URL(source).pathname));
+  let release;
+  const held = hold ? new Promise((resolve) => { release = resolve; }) : Promise.resolve();
   await page.route('**/*', async (route) => {
     if (route.request().resourceType() !== 'image') return route.continue();
     const pathname = new URL(route.request().url()).pathname;
     if (!paths.has(pathname)) return route.abort('blockedbyclient');
+    await held;
     return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: DETERMINISTIC_COVER });
   });
+  return release;
 };
 
-const getMetrics = (page) => page.locator('#playButton').evaluate((button) => {
+const waitForApp = async (page) => {
+  await installCovers(page);
+  await page.goto('./');
+  await expect(page.locator('#loadingScreen')).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
+};
+
+const getSummaryMetrics = (page) => page.locator('#playButton').evaluate((button) => {
   const style = getComputedStyle(button);
-  const before = getComputedStyle(button, '::before');
-  const after = getComputedStyle(button, '::after');
   const island = getComputedStyle(document.querySelector('#dynamicIsland'));
   const rect = button.getBoundingClientRect();
-  const label = document.querySelector('#btnLabelViewport').getBoundingClientRect();
   return {
-    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-    label: { x: label.x, y: label.y, width: label.width, height: label.height },
+    rect: { width: rect.width, height: rect.height },
     style: Object.fromEntries([
       'width', 'height', 'borderRadius', 'padding', 'margin', 'fontFamily', 'fontSize',
       'fontWeight', 'letterSpacing', 'backgroundImage', 'backgroundColor',
       'backdropFilter', 'border', 'boxShadow', 'transform'
     ].map((property) => [property, style[property]])),
-    before: Object.fromEntries(['backgroundImage', 'opacity', 'transform'].map((property) => [property, before[property]])),
-    after: Object.fromEntries(['backgroundImage', 'opacity', 'transform'].map((property) => [property, after[property]])),
-    island: Object.fromEntries(['width', 'height', 'minHeight', 'transform'].map((property) => [property, island[property]]))
+    island: Object.fromEntries(['width', 'height', 'minHeight'].map((property) => [property, island[property]]))
+  };
+});
+
+const getCompleteLock = (page) => page.locator('#playButton').evaluate((button) => {
+  const serialize = (style) => Object.fromEntries(Array.from(style, (property) => [
+    property,
+    style.getPropertyValue(property)
+  ]));
+  const rect = (node) => {
+    const box = node.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  };
+  const island = document.querySelector('#dynamicIsland');
+  const labelViewport = document.querySelector('#btnLabelViewport');
+  const label = document.querySelector('#btnText');
+  const sheen = document.querySelector('.btn-sheen');
+  return {
+    rects: {
+      button: rect(button),
+      island: rect(island),
+      labelViewport: rect(labelViewport),
+      label: rect(label)
+    },
+    button: serialize(getComputedStyle(button)),
+    buttonBefore: serialize(getComputedStyle(button, '::before')),
+    buttonAfter: serialize(getComputedStyle(button, '::after')),
+    island: serialize(getComputedStyle(island)),
+    islandBefore: serialize(getComputedStyle(island, '::before')),
+    islandAfter: serialize(getComputedStyle(island, '::after')),
+    labelViewport: serialize(getComputedStyle(labelViewport)),
+    label: serialize(getComputedStyle(label)),
+    existingSheenAfter: serialize(getComputedStyle(sheen, '::after'))
+  };
+});
+
+const installStateFixture = (page) => page.evaluate(async () => {
+  const freeze = document.createElement('style');
+  freeze.id = 'flow-state-freeze';
+  freeze.textContent = `
+    *, *::before, *::after {
+      animation-play-state: paused !important;
+      transition-duration: 0s !important;
+      transition-delay: 0s !important;
+    }
+  `;
+  const baseline = document.createElement('style');
+  baseline.id = 'flow-baseline-disable';
+  baseline.textContent = '.btn-sheen::before { animation: none !important; opacity: 0 !important; }';
+  document.head.append(freeze, baseline);
+  const existingAnimations = document.getAnimations();
+  for (const animation of existingAnimations) animation.pause();
+  await Promise.all(existingAnimations.map((animation) => animation.ready));
+  await new Promise(requestAnimationFrame);
+});
+
+const setState = async (page, state) => {
+  await page.mouse.move(0, 0);
+  await page.mouse.up();
+  await page.evaluate((next) => {
+    document.body.classList.remove('has-lyric-overlay', 'has-playlist-overlay');
+    document.querySelector('#dynamicIsland').classList.remove('is-split', 'is-opening', 'is-collapsing');
+    document.querySelector('#playButton').removeAttribute('data-busy');
+    document.querySelector('[data-flow-loading-fixture]')?.remove();
+    if (next === 'busy') document.querySelector('#playButton').setAttribute('data-busy', '');
+    if (next === 'lyric-overlay') document.body.classList.add('has-lyric-overlay');
+    if (next === 'playlist-overlay') document.body.classList.add('has-playlist-overlay');
+    if (next === 'split') document.querySelector('#dynamicIsland').classList.add('is-split');
+    if (next === 'collapsing') document.querySelector('#dynamicIsland').classList.add('is-collapsing');
+    if (next === 'loading') {
+      const loading = document.createElement('div');
+      loading.setAttribute('data-flow-loading-fixture', '');
+      loading.id = 'loadingScreen';
+      document.querySelector('#appRoot').before(loading);
+    }
+  }, state);
+  if (state === 'hover') await page.locator('#playButton').hover();
+  if (state === 'active') {
+    await page.locator('#playButton').hover();
+    await page.mouse.down();
+  }
+  await page.waitForTimeout(20);
+};
+
+const setControlledPeak = (page, peakAt) => page.locator('.btn-sheen').evaluate(async (node, time) => {
+  document.querySelector('#flow-baseline-disable')?.remove();
+  const animations = node.getAnimations({ subtree: true })
+    .filter(({ animationName }) => animationName.startsWith('btn-perimeter-'));
+  await Promise.all(animations.map((animation) => animation.ready));
+  for (const animation of animations) {
+    if (animation.animationName.startsWith('btn-perimeter-')) animation.currentTime = time;
+  }
+  await new Promise(requestAnimationFrame);
+}, peakAt);
+
+const restoreBaseline = (page) => page.evaluate(() => {
+  if (document.querySelector('#flow-baseline-disable')) return;
+  const baseline = document.createElement('style');
+  baseline.id = 'flow-baseline-disable';
+  baseline.textContent = '.btn-sheen::before { animation: none !important; opacity: 0 !important; }';
+  document.head.append(baseline);
+});
+
+const getFlowState = (page) => page.locator('.btn-sheen').evaluate((node) => {
+  const pseudo = getComputedStyle(node, '::before');
+  return {
+    angle: Number.parseFloat(pseudo.getPropertyValue('--btn-flow-angle')),
+    opacity: Number.parseFloat(pseudo.opacity),
+    animations: node.getAnimations({ subtree: true })
+      .filter(({ animationName }) => animationName.startsWith('btn-perimeter-'))
+      .map(({ animationName, currentTime, effect, playState, playbackRate }) => ({
+        animationName,
+        currentTime,
+        duration: effect.getTiming().duration,
+        easing: effect.getKeyframes()[0]?.easing,
+        playState,
+        playbackRate
+      }))
   };
 });
 
@@ -74,139 +202,201 @@ const decodeScreenshot = async (page, buffer) => page.evaluate(async (base64) =>
   canvas.height = bitmap.height;
   const context = canvas.getContext('2d', { willReadFrequently: true });
   context.drawImage(bitmap, 0, 0);
-  return { width: bitmap.width, height: bitmap.height, pixels: [...context.getImageData(0, 0, bitmap.width, bitmap.height).data] };
+  return {
+    width: bitmap.width,
+    height: bitmap.height,
+    pixels: [...context.getImageData(0, 0, bitmap.width, bitmap.height).data]
+  };
 }, buffer.toString('base64'));
 
-const measureDelta = (before, after) => {
+const getPixelGeometry = (page) => page.locator('#playButton').evaluate((button) => {
+  const buttonRect = button.getBoundingClientRect();
+  const labelRect = document.querySelector('#btnLabelViewport').getBoundingClientRect();
+  return {
+    left: buttonRect.left,
+    top: buttonRect.top,
+    devicePixelRatio,
+    width: buttonRect.width,
+    height: buttonRect.height,
+    label: {
+      left: labelRect.left - buttonRect.left,
+      top: labelRect.top - buttonRect.top,
+      right: labelRect.right - buttonRect.left,
+      bottom: labelRect.bottom - buttonRect.top
+    }
+  };
+});
+
+const measurePillDelta = (before, after, geometry) => {
   expect(after.width).toBe(before.width);
   expect(after.height).toBe(before.height);
-  const sums = { center: [0, 0, 0], perimeter: [0, 0, 0] };
-  const counts = { center: 0, perimeter: 0 };
-  for (let y = 0; y < before.height; y += 1) {
-    for (let x = 0; x < before.width; x += 1) {
-      const index = (y * before.width + x) * 4;
-      const center = x >= before.width * 0.15 && x < before.width * 0.85
-        && y >= before.height * 0.15 && y < before.height * 0.85;
-      const perimeter = x < 3 || x >= before.width - 3 || y < 3 || y >= before.height - 3;
-      if (!center && !perimeter) continue;
-      const bucket = center ? 'center' : 'perimeter';
-      for (let channel = 0; channel < 3; channel += 1) {
-        sums[bucket][channel] += Math.abs(after.pixels[index + channel] - before.pixels[index + channel]);
-      }
-      counts[bucket] += 1;
+  const buckets = Object.fromEntries(['perimeter', 'interior', 'center', 'label'].map((name) => [name, {
+    sum: [0, 0, 0], max: [0, 0, 0], count: 0, changed: 0
+  }]));
+  const radius = geometry.height / 2;
+  const add = (name, index) => {
+    const bucket = buckets[name];
+    let changed = false;
+    for (let channel = 0; channel < 3; channel += 1) {
+      const delta = Math.abs(after.pixels[index + channel] - before.pixels[index + channel]) / 255;
+      bucket.sum[channel] += delta;
+      bucket.max[channel] = Math.max(bucket.max[channel], delta);
+      changed ||= delta > (1 / 255);
+    }
+    bucket.count += 1;
+    if (changed) bucket.changed += 1;
+  };
+  for (let py = 0; py < before.height; py += 1) {
+    for (let px = 0; px < before.width; px += 1) {
+      const x = Math.floor(geometry.left) + px + 0.5 - geometry.left;
+      const y = Math.floor(geometry.top) + py + 0.5 - geometry.top;
+      const qx = Math.abs(x - geometry.width / 2) - (geometry.width / 2 - radius);
+      const qy = Math.abs(y - geometry.height / 2);
+      const signedDistance = Math.hypot(Math.max(qx, 0), Math.max(qy, 0))
+        + Math.min(Math.max(qx, qy), 0)
+        - radius;
+      if (signedDistance > 0) continue;
+      const index = (py * before.width + px) * 4;
+      const onPerimeter = signedDistance >= -2;
+      add(onPerimeter ? 'perimeter' : 'interior', index);
+      if (x >= geometry.width * 0.15 && x < geometry.width * 0.85
+        && y >= geometry.height * 0.15 && y < geometry.height * 0.85) add('center', index);
+      if (x >= geometry.label.left && x < geometry.label.right
+        && y >= geometry.label.top && y < geometry.label.bottom) add('label', index);
     }
   }
-  return {
-    center: sums.center.map((sum) => sum / counts.center),
-    perimeter: sums.perimeter.map((sum) => sum / counts.perimeter)
-  };
+  return Object.fromEntries(Object.entries(buckets).map(([name, bucket]) => [name, {
+    average: bucket.sum.map((sum) => sum / bucket.count),
+    max: bucket.max,
+    changedRatio: bucket.changed / bucket.count,
+    count: bucket.count
+  }]));
 };
 
-const waitForApp = async (page) => {
-  await installCovers(page);
-  await page.goto('./');
-  await expect(page.locator('#loadingScreen')).toHaveCount(0, { timeout: 12_000 });
-  await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
+const assertPixelConcentration = (delta) => {
+  expect(delta.center.average.every((value) => value < (4 / 255))).toBe(true);
+  expect(delta.interior.average.every((value) => value < (1 / 255))).toBe(true);
+  expect(delta.interior.max.every((value) => value < (64 / 255))).toBe(true);
+  expect(delta.interior.changedRatio).toBeLessThan(0.01);
+  expect(delta.label.average.every((value) => value < (0.5 / 255))).toBe(true);
+  expect(delta.label.max.every((value) => value < (4 / 255))).toBe(true);
+  expect(delta.label.changedRatio).toBeLessThan(0.001);
+  const perimeterEnergy = delta.perimeter.average.reduce((sum, value) => sum + value, 0);
+  const interiorEnergy = delta.interior.average.reduce((sum, value) => sum + value, 0);
+  expect(perimeterEnergy).toBeGreaterThan(Math.max(5 * interiorEnergy, 0.0005));
+  expect(delta.perimeter.changedRatio).toBeGreaterThan(Math.max(2 * delta.interior.changedRatio, 0.01));
+};
+
+const cleanRestart = async (page) => {
+  await page.locator('#playButton').evaluate((button) => button.setAttribute('data-busy', ''));
+  await expect.poll(() => getFlowState(page)).toMatchObject({ opacity: 0, animations: [] });
+  await page.waitForTimeout(50);
+  return page.locator('#playButton').evaluate(async (button) => {
+    button.removeAttribute('data-busy');
+    await new Promise(requestAnimationFrame);
+    const orbit = button.querySelector('.btn-sheen').getAnimations({ subtree: true })
+      .find(({ animationName }) => animationName.startsWith('btn-perimeter-orbit-'));
+    if (orbit) await orbit.ready;
+    return performance.now() - (Number(orbit?.currentTime) || 0);
+  });
 };
 
 test.use({ video: 'on' });
 
-test('perimeter flow preserves geometry and concentrates controlled peak pixel change', async ({ page }, testInfo) => {
+test('same-state baseline locks every existing button surface and required control state', async ({ page }, testInfo) => {
   await waitForApp(page);
   await page.waitForTimeout(1_000);
-  const profile = testInfo.project.name.startsWith('mobile') ? 'mobile' : 'desktop';
-  const locked = LOCKED_STYLE[profile];
-  const button = page.locator('#playButton');
-  const flow = page.locator('.btn-sheen');
-
-  const metrics = await getMetrics(page);
-  expect(metrics.style).toMatchObject({
+  await expect(page.locator('#playButton')).not.toHaveClass(/is-text-swapping/, { timeout: 5_000 });
+  const profileName = testInfo.project.name.startsWith('mobile') ? 'mobile' : 'desktop';
+  const profile = PROFILES[profileName];
+  const summary = await getSummaryMetrics(page);
+  expect(summary.style).toMatchObject({
     ...LOCKED_SHARED_STYLE,
-    width: locked.width,
-    height: locked.height,
-    fontSize: locked.fontSize,
-    letterSpacing: locked.letterSpacing
+    width: profile.width,
+    height: profile.height,
+    fontSize: profile.fontSize,
+    letterSpacing: profile.letterSpacing
   });
-  expect(metrics.style.backgroundImage).toMatch(/^radial-gradient\(circle at 35% 0(?:px|%)/);
-  expect(metrics.style.boxShadow).toContain('rgba(0, 0, 0, 0.35) 0px 16px 32px');
-  expect(metrics.before).toMatchObject({ opacity: '0.62', transform: 'matrix(1, 0, 0, 1, 0, 0)' });
-  expect(metrics.after).toMatchObject({ opacity: '0', transform: 'matrix(0.92, 0, 0, 0.92, 0, 0)' });
-  expect(metrics.island).toMatchObject({ width: locked.islandWidth, height: '48px', minHeight: '48px' });
-  expect(metrics.rect.width).toBeCloseTo(Number.parseFloat(locked.width), 0);
-  expect(metrics.rect.height).toBeCloseTo(Number.parseFloat(locked.height), 0);
+  expect(summary.island).toMatchObject({ width: profile.islandWidth, height: '48px', minHeight: '48px' });
+  await installStateFixture(page);
 
-  if (testInfo.project.name === 'mobile-reduce') {
-    const reduced = await flow.evaluate((node) => {
-      const style = getComputedStyle(node, '::before');
-      return { animationName: style.animationName, opacity: style.opacity };
-    });
-    expect(reduced).toEqual({ animationName: 'none', opacity: '0' });
-    await button.screenshot({ path: testInfo.outputPath('button-reduced-motion.png') });
-    return;
+  const baselines = {};
+  for (const state of [
+    'idle', 'hover', 'active', 'busy', 'lyric-overlay', 'playlist-overlay',
+    'split', 'collapsing', 'loading'
+  ]) {
+    await setState(page, state);
+    const baseline = await getCompleteLock(page);
+    baselines[state] = baseline;
+    await setControlledPeak(page, profileName === 'mobile' ? 600 : 600);
+    const enabled = await getCompleteLock(page);
+    expect(enabled, `${state} complete computed-style lock`).toEqual(baseline);
+
+    const flow = await getFlowState(page);
+    const stopped = ['busy', 'lyric-overlay', 'playlist-overlay', 'loading'].includes(state)
+      || testInfo.project.name === 'mobile-reduce';
+    if (stopped) {
+      expect(flow).toMatchObject({ opacity: 0, animations: [] });
+    } else {
+      expect(flow.animations.map(({ animationName }) => animationName)).toEqual([profile.orbit, profile.fade]);
+    }
+    await restoreBaseline(page);
   }
-
-  const duration = profile === 'mobile' ? 9600 : 7200;
-  const peakAt = profile === 'mobile' ? duration / 16 : duration / 12;
-  const animation = await flow.evaluate((node) => {
-    const animations = node.getAnimations({ subtree: true });
-    for (const candidate of animations) candidate.pause();
-    return animations.map(({ animationName, effect }) => ({
-      animationName,
-      duration: effect.getTiming().duration
-    }));
-  });
-  expect(animation).toEqual(expect.arrayContaining([
-    expect.objectContaining({ duration })
-  ]));
-
-  await flow.evaluate((node) => {
-    for (const animation of node.getAnimations({ subtree: true })) animation.currentTime = 0;
-  });
-  const idle = await button.screenshot({ path: testInfo.outputPath('button-idle.png') });
-  await flow.evaluate((node, time) => {
-    for (const animation of node.getAnimations({ subtree: true })) animation.currentTime = time;
-  }, peakAt);
-  const peak = await button.screenshot({ path: testInfo.outputPath('button-natural-peak.png') });
-  const peakMetrics = await getMetrics(page);
-  expect(peakMetrics.style).toEqual(metrics.style);
-  expect(peakMetrics.before).toEqual(metrics.before);
-  expect(peakMetrics.after).toEqual(metrics.after);
-  expect(peakMetrics.island).toEqual(metrics.island);
-  expect(peakMetrics.rect).toEqual(metrics.rect);
-  expect(peakMetrics.label).toEqual(metrics.label);
-  const delta = measureDelta(await decodeScreenshot(page, idle), await decodeScreenshot(page, peak));
-  expect(delta.center.every((value) => value < 4)).toBe(true);
-  expect(Math.max(...delta.perimeter)).toBeGreaterThan(Math.max(...delta.center));
-  await writeFile(testInfo.outputPath('pixel-metrics.json'), JSON.stringify({ profile, delta }, null, 2));
-
-  for (const state of ['busy', 'overlay']) {
-    await page.evaluate((nextState) => {
-      const buttonNode = document.querySelector('#playButton');
-      buttonNode.toggleAttribute('data-busy', nextState === 'busy');
-      document.body.classList.toggle('has-lyric-overlay', nextState === 'overlay');
-    }, state);
-    const stopped = await flow.evaluate((node) => {
-      const style = getComputedStyle(node, '::before');
-      return { animationName: style.animationName, opacity: style.opacity };
-    });
-    expect(stopped).toEqual({ animationName: 'none', opacity: '0' });
-    const stateMetrics = await getMetrics(page);
-    expect(stateMetrics.style).toEqual(metrics.style);
-    expect(stateMetrics.before).toEqual(metrics.before);
-    expect(stateMetrics.after).toEqual(metrics.after);
-    expect(stateMetrics.island).toEqual(metrics.island);
-    expect(stateMetrics.rect).toEqual(metrics.rect);
-    expect(stateMetrics.label).toEqual(metrics.label);
-    await page.evaluate(() => {
-      document.querySelector('#playButton').removeAttribute('data-busy');
-      document.body.classList.remove('has-lyric-overlay');
-    });
+  if (profileName === 'desktop') {
+    expect(baselines.hover.button['background-image']).not.toBe(baselines.idle.button['background-image']);
+    expect(baselines.hover.button['box-shadow']).not.toBe(baselines.idle.button['box-shadow']);
+    expect(baselines.active.button.transform).not.toBe(baselines.idle.button.transform);
   }
 });
 
-test('desktop and 390x844 evidence records one natural unpaused orbit', async ({ browser }, testInfo) => {
+test('controlled peak is confined to the signed-distance outer 2px pill mask', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile-reduce');
+  await waitForApp(page);
+  await page.waitForTimeout(1_000);
+  const profileName = testInfo.project.name === 'mobile-chromium' ? 'mobile' : 'desktop';
+  await installStateFixture(page);
+  await setState(page, 'idle');
+  const button = page.locator('#playButton');
+  const geometry = await getPixelGeometry(page);
+  const idle = await button.screenshot({ path: testInfo.outputPath('button-controlled-idle.png'), scale: 'css' });
+  await setControlledPeak(page, 600);
+  const controlledState = await getFlowState(page);
+  expect(controlledState.animations.map(({ animationName }) => animationName)).toEqual([
+    PROFILES[profileName].orbit,
+    PROFILES[profileName].fade
+  ]);
+  for (const animation of controlledState.animations) {
+    expect(animation.currentTime).toBeCloseTo(600, 0);
+    expect(animation.playState).toBe('paused');
+  }
+  expect(Number.isFinite(controlledState.angle)).toBe(true);
+  expect(controlledState.opacity).toBeGreaterThan(profileName === 'mobile' ? 0.54 : 0.68);
+  const peak = await button.screenshot({ path: testInfo.outputPath('button-controlled-peak.png'), scale: 'css' });
+  const idlePixels = await decodeScreenshot(page, idle);
+  const peakPixels = await decodeScreenshot(page, peak);
+  const delta = measurePillDelta(idlePixels, peakPixels, geometry);
+  await writeFile(testInfo.outputPath('controlled-pixel-metrics.json'), JSON.stringify({
+    profile: profileName,
+    geometry,
+    screenshot: { width: idlePixels.width, height: idlePixels.height },
+    delta
+  }, null, 2));
+  assertPixelConcentration(delta);
+});
+
+test('loading stage has no perimeter pseudo animation before critical resources resolve', async ({ page }) => {
+  const release = await installCovers(page, { hold: true });
+  await page.goto('./', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#loadingScreen')).toHaveCount(1);
+  await expect(page.locator('#appRoot')).toHaveAttribute('inert', '');
+  expect(await getFlowState(page)).toMatchObject({ opacity: 0, animations: [] });
+  release();
+});
+
+test('desktop and 390x844 record exact natural orbit, fade, idle, and pixel evidence', async ({ browser }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile-reduce');
   const mobile = testInfo.project.name === 'mobile-chromium';
+  const profile = PROFILES[mobile ? 'mobile' : 'desktop'];
   const viewport = mobile ? { width: 390, height: 844 } : { width: 1280, height: 720 };
   const context = await browser.newContext({
     viewport,
@@ -218,47 +408,119 @@ test('desktop and 390x844 evidence records one natural unpaused orbit', async ({
   const page = await context.newPage();
   const video = page.video();
   await waitForApp(page);
-  const flowState = await page.locator('.btn-sheen').evaluate((node) => ({
-    viewport: [innerWidth, innerHeight],
-    compact: matchMedia('(hover: none) and (pointer: coarse)').matches,
-    animations: node.getAnimations({ subtree: true }).map(({ playState, playbackRate }) => ({ playState, playbackRate }))
-  }));
-  expect(flowState.animations.length).toBeGreaterThanOrEqual(2);
-  expect(flowState.animations.every(({ playState, playbackRate }) => playState === 'running' && playbackRate === 1)).toBe(true);
-  expect(flowState.viewport).toEqual([viewport.width, viewport.height]);
-  expect(flowState.compact).toBe(mobile);
-  await page.waitForTimeout(1_350);
-  const finalState = await page.locator('.btn-sheen').evaluate((node) => node.getAnimations({ subtree: true }).map(
-    ({ playState, playbackRate }) => ({ playState, playbackRate })
-  ));
-  expect(finalState.every(({ playState, playbackRate }) => playState === 'running' && playbackRate === 1)).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath('natural-orbit-end.png') });
+  await page.waitForTimeout(1_500);
+  expect(await page.evaluate(() => [innerWidth, innerHeight])).toEqual([viewport.width, viewport.height]);
+
+  const button = page.locator('#playButton');
+  const geometry = await getPixelGeometry(page);
+  const startedAt = await cleanRestart(page);
+  const samples = [];
+  let idle;
+  let peak;
+  for (const target of [0, 300, 600, 900, 1200, 1500]) {
+    await page.waitForFunction(({ start, elapsed }) => performance.now() - start >= elapsed, {
+      start: startedAt,
+      elapsed: target
+    });
+    samples.push({ target, ...(await getFlowState(page)) });
+    if (target === 0) idle = await button.screenshot({ path: testInfo.outputPath('natural-idle.png'), scale: 'css' });
+    if (target === 600) peak = await button.screenshot({ path: testInfo.outputPath('natural-peak.png'), scale: 'css' });
+  }
+
+  const expectedAnimations = [
+    {
+      animationName: profile.orbit,
+      duration: profile.duration,
+      easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+      playState: 'running',
+      playbackRate: 1
+    },
+    {
+      animationName: profile.fade,
+      duration: profile.duration,
+      easing: 'linear',
+      playState: 'running',
+      playbackRate: 1
+    }
+  ];
+  for (const sample of samples) expect(sample.animations).toMatchObject(expectedAnimations);
+  const orbitAngles = samples.slice(0, 5).map(({ angle }) => angle);
+  expect(orbitAngles[0]).toBeLessThan(20);
+  for (let index = 1; index < orbitAngles.length; index += 1) {
+    const minimumProgress = index === orbitAngles.length - 1 ? 2 : 15;
+    expect(orbitAngles[index]).toBeGreaterThan(orbitAngles[index - 1] + minimumProgress);
+  }
+  expect(orbitAngles.at(-1)).toBeGreaterThan(350);
+  expect(samples[0].opacity).toBeLessThan(0.08);
+  expect(samples[2].opacity).toBeGreaterThan(mobile ? 0.45 : 0.58);
+  expect(samples[4].opacity).toBeLessThan(0.08);
+  expect(samples[5].opacity).toBe(0);
+  expect(samples[5].angle).toBeGreaterThan(350);
+
+  const delta = measurePillDelta(
+    await decodeScreenshot(page, idle),
+    await decodeScreenshot(page, peak),
+    geometry
+  );
+  assertPixelConcentration(delta);
+  await writeFile(testInfo.outputPath('natural-flow-metrics.json'), JSON.stringify({
+    profile: mobile ? 'mobile' : 'desktop', viewport, expectedAnimations, samples, delta
+  }, null, 2));
   await context.close();
   await video.saveAs(testInfo.outputPath(mobile ? 'mobile-390x844-natural.webm' : 'desktop-natural.webm'));
 });
 
-test('Pixel 5 runs two compact cycles without attributable long tasks', async ({ page }, testInfo) => {
+test('Pixel 5 keeps both compact animations running for 19.2s with zero long tasks', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-chromium');
   await page.addInitScript(() => {
     window.__buttonLongTasks = [];
+    window.__buttonFlowSamples = [];
     new PerformanceObserver((list) => {
       window.__buttonLongTasks.push(...list.getEntries().map(({ startTime, duration }) => ({ startTime, duration })));
     }).observe({ type: 'longtask', buffered: true });
   });
   await waitForApp(page);
-  const startedAt = await page.evaluate(() => performance.now());
+  await page.waitForTimeout(1_000);
+  const startedAt = await cleanRestart(page);
+  await page.evaluate(() => {
+    const node = document.querySelector('.btn-sheen');
+    window.__buttonFlowTimer = setInterval(() => {
+      window.__buttonFlowSamples.push({
+        at: performance.now(),
+        animations: node.getAnimations({ subtree: true })
+          .filter(({ animationName }) => animationName.startsWith('btn-perimeter-'))
+          .map(({ animationName, effect, playState, playbackRate }) => ({
+            animationName,
+            duration: effect.getTiming().duration,
+            playState,
+            playbackRate
+          }))
+      });
+    }, 200);
+  });
   await page.waitForTimeout(19_200);
-  const { attributable, viewport } = await page.evaluate((start) => ({
-    viewport: [innerWidth, innerHeight],
-    attributable: window.__buttonLongTasks.filter(
-      ({ startTime, duration }) => startTime >= start && duration > 50
-    )
-  }), startedAt);
-  expect(attributable).toEqual([]);
-  await writeFile(testInfo.outputPath('long-task-metrics.json'), JSON.stringify({
-    viewport,
+  const metrics = await page.evaluate((start) => {
+    clearInterval(window.__buttonFlowTimer);
+    return {
+      viewport: [innerWidth, innerHeight],
+      longTasks: window.__buttonLongTasks.filter(({ startTime, duration }) => startTime >= start && duration > 50),
+      samples: window.__buttonFlowSamples.filter(({ at }) => at >= start)
+    };
+  }, startedAt);
+  expect(metrics.viewport).toEqual([393, 727]);
+  expect(metrics.samples.length).toBeGreaterThanOrEqual(90);
+  for (const sample of metrics.samples) {
+    expect(sample.animations).toEqual([
+      { animationName: 'btn-perimeter-orbit-compact', duration: 9600, playState: 'running', playbackRate: 1 },
+      { animationName: 'btn-perimeter-fade-compact', duration: 9600, playState: 'running', playbackRate: 1 }
+    ]);
+  }
+  expect(metrics.longTasks).toEqual([]);
+  await writeFile(testInfo.outputPath('pixel5-long-task-metrics.json'), JSON.stringify({
+    viewport: metrics.viewport,
     observedMs: 19_200,
+    sampleCount: metrics.samples.length,
     thresholdMs: 50,
-    attributable
+    longTasks: metrics.longTasks
   }, null, 2));
 });

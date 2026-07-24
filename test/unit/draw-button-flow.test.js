@@ -12,6 +12,19 @@ const ruleBody = (selector) => {
   return match[1];
 };
 
+const capabilityGateBody = () => {
+  const start = css.indexOf('@supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (animation-timeline: scroll())');
+  assert.notEqual(start, -1, 'missing conservative mask + registered-angle capability gate');
+  const open = css.indexOf('{', start);
+  let depth = 0;
+  for (let index = open; index < css.length; index += 1) {
+    if (css[index] === '{') depth += 1;
+    if (css[index] === '}') depth -= 1;
+    if (depth === 0) return css.slice(open + 1, index);
+  }
+  assert.fail('unterminated perimeter capability gate');
+};
+
 test('draw button perimeter flow is a masked one-pixel cool-light trace', () => {
   const flow = ruleBody('.btn-sheen::before');
 
@@ -36,13 +49,18 @@ test('draw button perimeter flow is a masked one-pixel cool-light trace', () => 
 });
 
 test('full and compact flow profiles keep a 1200ms orbit and bounded peaks', () => {
-  assert.match(css, /btn-perimeter-orbit-full\s+7200ms\s+cubic-bezier\(0\.4,\s*0,\s*0\.2,\s*1\)\s+infinite/);
-  assert.match(css, /btn-perimeter-fade-full\s+7200ms\s+linear\s+infinite/);
+  const fallback = ruleBody('.btn-sheen::before');
+  const capabilityGate = capabilityGateBody();
+
+  assert.match(fallback, /opacity:\s*0/);
+  assert.doesNotMatch(fallback, /animation\s*:/);
+  assert.match(capabilityGate, /btn-perimeter-orbit-full\s+7200ms\s+cubic-bezier\(0\.4,\s*0,\s*0\.2,\s*1\)\s+infinite/);
+  assert.match(capabilityGate, /btn-perimeter-fade-full\s+7200ms\s+linear\s+infinite/);
   assert.match(css, /@keyframes btn-perimeter-orbit-full\s*\{[\s\S]*?16\.667%,\s*100%\s*\{\s*--btn-flow-angle:\s*1turn/);
   assert.match(css, /@keyframes btn-perimeter-fade-full\s*\{[\s\S]*?8\.333%\s*\{\s*opacity:\s*0\.72/);
 
-  assert.match(css, /btn-perimeter-orbit-compact\s+9600ms\s+cubic-bezier\(0\.4,\s*0,\s*0\.2,\s*1\)\s+infinite/);
-  assert.match(css, /btn-perimeter-fade-compact\s+9600ms\s+linear\s+infinite/);
+  assert.match(capabilityGate, /@media\s*\(hover:\s*none\)\s*and\s*\(pointer:\s*coarse\)[\s\S]*btn-perimeter-orbit-compact\s+9600ms\s+cubic-bezier\(0\.4,\s*0,\s*0\.2,\s*1\)\s+infinite/);
+  assert.match(capabilityGate, /btn-perimeter-fade-compact\s+9600ms\s+linear\s+infinite/);
   assert.match(css, /@keyframes btn-perimeter-orbit-compact\s*\{[\s\S]*?12\.5%,\s*100%\s*\{\s*--btn-flow-angle:\s*1turn/);
   assert.match(css, /@keyframes btn-perimeter-fade-compact\s*\{[\s\S]*?6\.25%\s*\{\s*opacity:\s*0\.58/);
 });
