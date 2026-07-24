@@ -279,17 +279,33 @@ test('publishes a non-playing state before invoking the ended callback', async (
   assert.deepEqual(observations, [{ status: 'paused', playbackState: 'paused' }]);
 });
 
-test('cancels playback tweens before resetting rejected playback visuals', () => {
+test('cancels the turntable motion owner before resetting rejected playback visuals', () => {
   const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
   const resetStart = mainSource.indexOf('const resetRejectedPlaybackVisual = () => {');
   const resetEnd = mainSource.indexOf('\n        };', resetStart);
   const resetSource = mainSource.slice(resetStart, resetEnd);
 
   assert.notEqual(resetStart, -1);
-  assert.ok(resetSource.indexOf('tonearmTween.cancel();') > 0);
-  assert.ok(resetSource.indexOf('rateTween.cancel();') > 0);
-  assert.ok(resetSource.indexOf('tonearmTween.cancel();') < resetSource.indexOf("turntable.classList.remove('is-playing');"));
-  assert.ok(resetSource.indexOf('rateTween.cancel();') < resetSource.indexOf('spinAnimation.playbackRate = 0;'));
+  assert.ok(resetSource.indexOf('cancelTurntableMotion();') > 0);
+  assert.ok(resetSource.indexOf('cancelTurntableMotion();') < resetSource.indexOf("turntable.classList.remove('is-playing');"));
+  assert.ok(resetSource.indexOf('cancelTurntableMotion();') < resetSource.indexOf('spinAnimation.playbackRate = 0;'));
+});
+
+test('direct playback inputs yield the central motion owner before acting', () => {
+  const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+  const directStart = mainSource.indexOf('const runDirectPlaybackCommand = async');
+  const directEnd = mainSource.indexOf('\n\n        const closeLyricOverlay', directStart);
+  const directSource = mainSource.slice(directStart, directEnd);
+  const playerStart = mainSource.indexOf("playerToggleBtn.addEventListener('click'");
+  const retryStart = mainSource.indexOf("audioRetry.addEventListener('click'");
+  const mediaStart = mainSource.indexOf('audioController.bindMediaActions({');
+
+  assert.notEqual(directStart, -1);
+  assert.match(directSource, /await motion\.cancel\(reason\)/);
+  assert.match(directSource, /cancelTurntableMotion\(\)/);
+  assert.match(mainSource.slice(playerStart, playerStart + 320), /runDirectPlaybackCommand/);
+  assert.match(mainSource.slice(retryStart, retryStart + 320), /runDirectPlaybackCommand/);
+  assert.match(mainSource.slice(mediaStart, mediaStart + 900), /runDirectPlaybackCommand/);
 });
 
 test('player and Media Session pause commands invalidate a loading controller attempt', () => {

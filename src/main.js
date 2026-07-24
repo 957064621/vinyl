@@ -13,11 +13,17 @@ import {
     getPlaylistViewportItems
 } from './ui/playlist.js';
 import { createAudioController } from './player/audio-controller.js';
+import {
+    animateWithCleanup,
+    createMotionController,
+    detectMotionProfile,
+    tweenWithCleanup
+} from './motion/motion-controller.js';
+import { createAppTransitions } from './app/transitions.js';
 
+const motionProfile = detectMotionProfile();
 startCriticalAssetGate({
-    motionProfile: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-        ? 'reduce'
-        : 'compact'
+    motionProfile
 });
 
         const turntable = document.getElementById('turntable');
@@ -54,7 +60,6 @@ startCriticalAssetGate({
         const playlistCloseBtn = document.getElementById('playlistCloseBtn');
 
         let isDrawing = false;
-        let isOverlayClosing = false;
         let lyricAnimations = [];
         let playlistAnimations = [];
         let hasShownDismissHint = false;
@@ -92,12 +97,12 @@ startCriticalAssetGate({
         audioEl.setAttribute('webkit-playsinline', '');
         let isAudioPlaying = false;
         let volumeFadeFrame = null;
+        let cancelActiveVolumeFade = null;
         let isSeeking = false;
         let timeUpdateRAF = null;
         let suppressPlaybackMotion = false;
         let isTrackSwitching = false;
         let isHandlingTrackEnd = false;
-        let buttonTextTransitionId = 0;
 
         const setPlayButtonBusy = (busy) => {
             playButton.disabled = false;
@@ -263,6 +268,8 @@ startCriticalAssetGate({
                 cancelAnimationFrame(volumeFadeFrame);
                 volumeFadeFrame = null;
             }
+            cancelActiveVolumeFade?.();
+            cancelActiveVolumeFade = null;
         };
 
         const stopAndFadeOutAudio = async (duration = 800, options = {}) => {
@@ -280,8 +287,18 @@ startCriticalAssetGate({
             playerToggleBtn.classList.toggle('is-disabled', disableControl);
 
             return new Promise((resolve) => {
+                let settled = false;
+                const cleanup = () => {
+                    if (volumeFadeFrame) {
+                        cancelAnimationFrame(volumeFadeFrame);
+                        volumeFadeFrame = null;
+                    }
+                    if (cancelActiveVolumeFade === cancel) cancelActiveVolumeFade = null;
+                };
                 const finishStop = () => {
-                    cancelVolumeFade();
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
                     isAudioPlaying = false;
                     audioController.pause();
                     audioEl.playbackRate = 1;
@@ -290,6 +307,13 @@ startCriticalAssetGate({
                     setPlayerToggleState(false);
                     resolve();
                 };
+                const cancel = () => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    resolve();
+                };
+                cancelActiveVolumeFade = cancel;
 
                 if (duration <= 0) {
                     finishStop();
@@ -356,9 +380,14 @@ startCriticalAssetGate({
             }
         };
 
-        const resetRejectedPlaybackVisual = () => {
+        const cancelTurntableMotion = () => {
             tonearmTween.cancel();
             rateTween.cancel();
+            cancelVolumeFade();
+        };
+
+        const resetRejectedPlaybackVisual = () => {
+            cancelTurntableMotion();
             turntable.classList.remove('is-playing');
             spinAnimation.pause();
             sheenAnimation.pause();
@@ -485,9 +514,11 @@ startCriticalAssetGate({
         };
 
         playerToggleBtn.addEventListener('click', () => {
-            if (isTrackSwitching) return;
             const { status } = audioController.getState();
-            void toggleAudioState(status !== 'playing' && status !== 'loading');
+            void runDirectPlaybackCommand(
+                'player toggle',
+                () => toggleAudioState(status !== 'playing' && status !== 'loading')
+            );
         });
 
         const seekFromPointer = (event) => {
@@ -523,7 +554,7 @@ startCriticalAssetGate({
         audioRetry.addEventListener('click', async () => {
             audioRetry.disabled = true;
             try {
-                await audioController.retry();
+                await runDirectPlaybackCommand('audio retry', () => audioController.retry());
             } catch {
                 // The controller republishes the recoverable error for the status command.
             } finally {
@@ -550,40 +581,6 @@ startCriticalAssetGate({
                 copyToast.classList.remove('is-visible');
             }, 2500);
         };
-
-        const updateButtonText = async (newText) => {
-            if (btnTextEl.innerText === newText) return;
-
-            if (prefersReducedMotion) {
-                btnTextEl.innerText = newText;
-                return;
-            }
-
-            const transitionId = ++buttonTextTransitionId;
-            const currentText = btnTextEl.innerText;
-            const ghostText = document.createElement('span');
-            const labelViewport = btnTextEl.parentElement;
-
-            playButton.querySelectorAll('.btn-text-ghost').forEach((node) => node.remove());
-            btnTextEl.classList.remove('is-blur-out', 'is-blur-in');
-            playButton.classList.remove('is-text-swapping');
-
-            ghostText.className = 'btn-text-ghost is-blur-in';
-            ghostText.textContent = newText;
-            btnTextEl.innerText = currentText;
-            btnTextEl.classList.add('is-blur-out');
-            playButton.classList.add('is-text-swapping');
-            labelViewport.appendChild(ghostText);
-
-            await wait(420);
-            if (transitionId !== buttonTextTransitionId) return;
-            btnTextEl.innerText = newText;
-            btnTextEl.classList.remove('is-blur-out', 'is-blur-in');
-            ghostText.remove();
-            playButton.classList.remove('is-text-swapping');
-        };
-
-        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
         const createShuffledDrawQueue = (avoidIndex = -1) => {
             const indices = lyricsPool.map((_, index) => index);
@@ -718,41 +715,33 @@ startCriticalAssetGate({
         const easeOutQuart = t => 1 - Math.pow(1 - t, 4);
 
         const createTweenRunner = () => {
-            let frameId = null;
+            let activeController = null;
 
-            const cancel = () => {
-                if (frameId) cancelAnimationFrame(frameId);
-                frameId = null;
+            const cancel = (reason = 'superseded') => {
+                activeController?.abort(reason);
             };
 
-            const run = ({ from, to, duration, easing, render }) => new Promise((resolve) => {
+            const run = ({ from, to, duration, easing, render, signal }) => {
                 cancel();
+                const controller = new AbortController();
+                activeController = controller;
+                const abortFromParent = () => controller.abort(signal.reason);
+                signal?.addEventListener('abort', abortFromParent, { once: true });
 
-                if (prefersReducedMotion || duration <= 0 || Math.abs(to - from) < 0.001) {
-                    render(to);
-                    resolve();
-                    return;
-                }
+                if (signal?.aborted) abortFromParent();
 
-                let startTime = null;
-                const frame = (now) => {
-                    if (!startTime) startTime = now;
-                    const progress = Math.min(Math.max((now - startTime) / duration, 0), 1);
-                    const current = from + (to - from) * easing(progress);
-                    render(current);
-
-                    if (progress < 1) {
-                        frameId = requestAnimationFrame(frame);
-                        return;
-                    }
-
-                    frameId = null;
-                    render(to);
-                    resolve();
-                };
-
-                frameId = requestAnimationFrame(frame);
-            });
+                return tweenWithCleanup({
+                    from,
+                    to,
+                    duration: prefersReducedMotion || Math.abs(to - from) < 0.001 ? 0 : duration,
+                    easing,
+                    render,
+                    signal: controller.signal
+                }).finally(() => {
+                    signal?.removeEventListener('abort', abortFromParent);
+                    if (activeController === controller) activeController = null;
+                });
+            };
 
             return { run, cancel };
         };
@@ -769,15 +758,16 @@ startCriticalAssetGate({
         const tonearmTween = createTweenRunner();
         const rateTween = createTweenRunner();
 
-        const animateTonearm = ({ from, to, duration, easing }) => tonearmTween.run({
+        const animateTonearm = ({ from, to, duration, easing, signal }) => tonearmTween.run({
             from,
             to,
             duration,
             easing,
-            render: setTonearmAngle
+            render: setTonearmAngle,
+            signal
         });
 
-        const animateRate = ({ from, to, duration, easing }) => rateTween.run({
+        const animateRate = ({ from, to, duration, easing, signal }) => rateTween.run({
             from,
             to,
             duration,
@@ -785,7 +775,8 @@ startCriticalAssetGate({
             render: (rate) => {
                 spinAnimation.playbackRate = rate;
                 updateSheenByRate(rate);
-            }
+            },
+            signal
         });
 
         const setFloatingButtonsVisible = (visible) => {
@@ -1055,27 +1046,33 @@ startCriticalAssetGate({
             });
         };
 
-        const setAudioSourceByIndex = async (index) => {
+        const createAudioTrackByIndex = (index) => {
             const song = lyricsPool[index];
+            if (!song) throw new RangeError(`Unknown track index: ${index}`);
             const artworkSrc = toInlineCoverProxySrc(getCoverSrcByLyricIndex(index));
+
+            return {
+                ...song,
+                title: stripSongMarks(song.song),
+                musicOssUrl: song.musicOssUrl,
+                artwork: [{
+                    src: artworkSrc,
+                    sizes: '512x512',
+                    type: getArtworkType(artworkSrc)
+                }]
+            };
+        };
+
+        const setAudioSourceByIndex = async (index) => {
             playerTime.innerText = '0:00';
             trackFill.style.transform = 'translate3d(-100%, 0, 0)';
 
             try {
-                return await audioController.load({
-                    ...song,
-                    title: stripSongMarks(song.song),
-                    musicOssUrl: song.musicOssUrl,
-                    artwork: [{
-                        src: artworkSrc,
-                        sizes: '512x512',
-                        type: getArtworkType(artworkSrc)
-                    }]
-                });
+                return await audioController.load(createAudioTrackByIndex(index));
             } catch (error) {
                 console.warn('[vinyl] Missing playable audio URL.', {
-                    song: song.song,
-                    musicOssUrl: song.musicOssUrl,
+                    song: lyricsPool[index]?.song,
+                    musicOssUrl: lyricsPool[index]?.musicOssUrl,
                     message: error.message
                 });
                 return false;
@@ -1086,89 +1083,9 @@ startCriticalAssetGate({
         const PLAYLIST_CONTENT_ENTER_START_TRANSFORM = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) + 24px))';
 
         const switchToTrackWithTransition = async (targetIndex, options = {}) => {
-            const { stopDuration = 360 } = options;
-            if (isTrackSwitching) return;
             if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= lyricsPool.length) return;
-
-            isTrackSwitching = true;
-            document.body.classList.add('is-track-transitioning');
-            isDrawing = true;
-            setPlayButtonBusy(true);
-            setFloatingButtonsVisible(false);
-
-            try {
-                const cleanupTasks = [];
-                const wasLyricVisible = resultArea.classList.contains('is-visible');
-                const wasPlaylistVisible = playlistArea.classList.contains('is-visible');
-                const shouldOpenLyricAfterSwitch = wasLyricVisible || wasPlaylistVisible;
-                const hadSplitState = dynamicIsland.classList.contains('is-split');
-
-                if (wasLyricVisible) cleanupTasks.push(morphResultOut());
-                if (wasPlaylistVisible) cleanupTasks.push(morphPlaylistOut());
-
-                if (cleanupTasks.length) {
-                    await Promise.all(cleanupTasks);
-                }
-
-                if (wasLyricVisible) resetResultVisual();
-                if (wasPlaylistVisible) resetPlaylistVisual();
-
-                const armFrom = getCurrentArmAngle();
-                const rateFrom = spinAnimation.playbackRate || 0;
-                const bridgeRate = Math.max(1.85, rateFrom + 0.92);
-
-                turntable.classList.add('is-playing');
-                spinAnimation.play();
-                sheenAnimation.play();
-
-                await Promise.all([
-                    animateTonearm({
-                        from: armFrom,
-                        to: ARM_REST_ANGLE,
-                        duration: 760,
-                        easing: easeInOutCubic
-                    }),
-                    animateRate({
-                        from: rateFrom,
-                        to: bridgeRate,
-                        duration: 900,
-                        easing: easeInOutSine
-                    }),
-                    stopAndFadeOutAudio(stopDuration)
-                ]);
-
-                await updateCurrentLyric(targetIndex);
-                await setAudioSourceByIndex(targetIndex);
-
-                await Promise.all([
-                    animateTonearm({
-                        from: ARM_REST_ANGLE,
-                        to: ARM_PLAY_ANGLE,
-                        duration: 980,
-                        easing: easeInOutCubic
-                    }),
-                    animateRate({
-                        from: bridgeRate,
-                        to: 0.68,
-                        duration: 1180,
-                        easing: easeOutQuart
-                    })
-                ]);
-
-                if (shouldOpenLyricAfterSwitch) {
-                    animateLyricIn();
-                } else {
-                    setControlSplit(hadSplitState);
-                    setFloatingButtonsVisible(true);
-                }
-                await toggleAudioState(true, { skipMotion: true });
-                await updateButtonText('再次抽取');
-            } finally {
-                document.body.classList.remove('is-track-transitioning');
-                setPlayButtonBusy(false);
-                isDrawing = false;
-                isTrackSwitching = false;
-            }
+            cancelTurntableMotion();
+            return runMotionCommand(() => motion.switchTrack(targetIndex, { ...options, headless: false }));
         };
 
         const playlist = createPlaylist({
@@ -1186,7 +1103,7 @@ startCriticalAssetGate({
                 };
             },
             onSelect: createPlaylistSelectionGuard({
-                isLocked: () => isDrawing || isTrackSwitching,
+                isLocked: () => false,
                 onSelect: (index) => switchToTrackWithTransition(index, { stopDuration: 320 })
             })
         });
@@ -1194,35 +1111,13 @@ startCriticalAssetGate({
         const updatePlaylistActiveTrack = (index) => playlist.setActive(index);
 
         const switchToTrackHeadless = async (targetIndex) => {
-            if (isTrackSwitching) return;
             if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= lyricsPool.length) return;
-
-            isTrackSwitching = true;
-            document.body.classList.add('is-track-transitioning');
-
-            try {
-                await updateCurrentLyric(targetIndex);
-
-                if (resultArea.classList.contains('is-visible')) {
-                    revealLyricContentImmediately();
-                }
-
-                await setAudioSourceByIndex(targetIndex);
-                await toggleAudioState(true, { skipMotion: true });
-
-                if (document.visibilityState === 'visible') {
-                    setFloatingButtonsVisible(true);
-                }
-
-                await updateButtonText('再次抽取');
-            } finally {
-                document.body.classList.remove('is-track-transitioning');
-                isTrackSwitching = false;
-            }
+            cancelTurntableMotion();
+            return runMotionCommand(() => motion.switchTrack(targetIndex, { headless: true }));
         };
 
         const handleTrackEnded = async () => {
-            if (isHandlingTrackEnd || isTrackSwitching || currentLyricIndex === -1) return;
+            if (isHandlingTrackEnd || currentLyricIndex === -1) return;
 
             isHandlingTrackEnd = true;
             isAudioPlaying = false;
@@ -1254,23 +1149,30 @@ startCriticalAssetGate({
         };
 
         audioController.bindMediaActions({
-            playTrack: () => toggleAudioState(true, { skipMotion: shouldUseHeadlessTrackSwitch() }),
-            pauseTrack: () => toggleAudioState(false, {
+            playTrack: () => runDirectPlaybackCommand(
+                'media session play',
+                () => toggleAudioState(true, { skipMotion: shouldUseHeadlessTrackSwitch() })
+            ),
+            pauseTrack: () => runDirectPlaybackCommand('media session pause', () => toggleAudioState(false, {
                 skipMotion: true,
                 stopDuration: shouldUseHeadlessTrackSwitch() ? 0 : 220
-            }),
+            })),
             nextTrack: () => {
                 if (currentLyricIndex !== -1) jumpToMediaTrack(pickNextAutoLyricIndex());
             },
             previousTrack: () => {
                 if (currentLyricIndex !== -1) jumpToMediaTrack(pickPreviousLyricIndex());
             },
-            stopTrack: () => toggleAudioState(false, { skipMotion: true, stopDuration: 0 })
+            stopTrack: () => runDirectPlaybackCommand(
+                'media session stop',
+                () => toggleAudioState(false, { skipMotion: true, stopDuration: 0 })
+            )
         });
 
         updatePlaybackModeUI();
 
         document.addEventListener('visibilitychange', () => {
+            motion.setDocumentVisible(!document.hidden);
             if (document.visibilityState !== 'visible' || currentLyricIndex === -1) return;
 
             if (resultArea.classList.contains('is-visible')) {
@@ -1524,56 +1426,302 @@ startCriticalAssetGate({
             return fadeOutAnimation.finished || Promise.resolve();
         };
 
-        const closeLyricOverlay = async () => {
-            if (isOverlayClosing || !resultArea.classList.contains('is-visible')) return;
+        const runOverlayAnimation = (element, keyframes, options, signal) => animateWithCleanup(
+            element,
+            keyframes,
+            { ...options, fill: 'forwards' },
+            signal,
+            safeAnimate
+        );
 
-            const ownsInteractionLock = !isDrawing;
-            isOverlayClosing = true;
-            if (ownsInteractionLock) {
-                isDrawing = true;
-                setPlayButtonBusy(true);
-            }
+        let lastOverlaySnapshot = null;
+        const snapshotOverlays = () => ({
+            lyrics: resultArea.classList.contains('is-visible'),
+            playlist: playlistArea.classList.contains('is-visible'),
+            split: dynamicIsland.classList.contains('is-split')
+        });
 
-            try {
-                const textUpdatePromise = updateButtonText('再次抽取');
-                await morphResultOut();
-                resetResultVisual();
-                await textUpdatePromise;
-                setFloatingButtonsVisible(true);
-            } finally {
-                if (ownsInteractionLock) {
-                    setPlayButtonBusy(false);
-                    isDrawing = false;
+        const overlays = {
+            async open(kind, { signal, duration, profile }) {
+                if (kind === 'playlist') {
+                    playlist.ensureRendered();
+                    playlist.setActive(currentLyricIndex);
+                    scrollPlaylistToCurrentTrack('auto');
                 }
-                isOverlayClosing = false;
+
+                const isLyrics = kind === 'lyrics';
+                const element = isLyrics ? resultArea : playlistArea;
+                const content = isLyrics ? lyricEl : playlistContent;
+                element.classList.add('is-visible');
+                document.body.classList.toggle('has-lyric-overlay', isLyrics);
+                document.body.classList.toggle('has-playlist-overlay', !isLyrics);
+                if (isLyrics && !hasShownDismissHint) {
+                    resultArea.classList.add('show-dismiss-hint');
+                    hasShownDismissHint = true;
+                }
+                if (!isLyrics && !hasShownPlaylistHint) {
+                    playlistArea.classList.add('show-dismiss-hint');
+                    hasShownPlaylistHint = true;
+                }
+                setControlSplit(true);
+                setOverlayControlsVisible(false);
+
+                const primaryEasing = 'cubic-bezier(0.22, 1, 0.36, 1)';
+                if (isLyrics) {
+                    const lineDelay = profile === 'full' ? 16 : 0;
+                    await Promise.all([
+                        runOverlayAnimation(element, [
+                            { opacity: 0, transform: 'translateY(8px)' },
+                            { opacity: 1, transform: 'translateY(0)' }
+                        ], { duration, easing: primaryEasing }, signal),
+                        runOverlayAnimation(content, [
+                            { opacity: 0, transform: 'translateY(16px) scale(0.995)' },
+                            { opacity: 1, transform: 'translateY(0) scale(1)' }
+                        ], { duration, easing: primaryEasing }, signal),
+                        runOverlayAnimation(songEl, [
+                            { opacity: 0, transform: 'translateY(12px)' },
+                            { opacity: 1, transform: 'translateY(0)' }
+                        ], { duration, delay: Math.min(150, duration / 2), easing: primaryEasing }, signal),
+                        ...Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => runOverlayAnimation(line, [
+                            { opacity: 0, transform: 'translateY(14px) scale(0.99)' },
+                            { opacity: 1, transform: 'translateY(0) scale(1)' }
+                        ], {
+                            duration,
+                            delay: Math.min(duration, 100 + index * lineDelay),
+                            easing: primaryEasing
+                        }, signal))
+                    ]);
+                } else {
+                    const cardDuration = profile === 'full' ? duration : 0;
+                    await Promise.all([
+                        runOverlayAnimation(element, [
+                            { opacity: 0, transform: 'translateY(8px)' },
+                            { opacity: 1, transform: 'translateY(0)' }
+                        ], { duration: cardDuration, easing: primaryEasing }, signal),
+                        runOverlayAnimation(content, [
+                            { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
+                            { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
+                        ], { duration, easing: primaryEasing }, signal)
+                    ]);
+                }
+
+                if (!signal.aborted) setOverlayControlsVisible(isLyrics);
+            },
+
+            async close(kind, { signal, duration }) {
+                const isLyrics = kind === 'lyrics';
+                const element = isLyrics ? resultArea : playlistArea;
+                if (!element.classList.contains('is-visible')) return;
+
+                const content = isLyrics ? lyricEl : playlistContent;
+                const closeButton = isLyrics ? lyricCloseBtn : playlistCloseBtn;
+                await Promise.all([
+                    runOverlayAnimation(element, [
+                        { opacity: 1, transform: 'translateY(0)' },
+                        { opacity: 0, transform: 'translateY(-8px)' }
+                    ], { duration, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal),
+                    runOverlayAnimation(content, [
+                        { opacity: 1, transform: 'translateY(0)' },
+                        { opacity: 0, transform: 'translateY(-8px)' }
+                    ], { duration: Math.min(duration, 280), easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal),
+                    runOverlayAnimation(closeButton, [
+                        { opacity: 1, transform: 'translateZ(0) scale(1)' },
+                        { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)' }
+                    ], { duration: Math.min(duration, 240), easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal)
+                ]);
+                if (signal.aborted) return;
+
+                if (isLyrics) resetResultVisual();
+                else resetPlaylistVisual();
+                if (resultArea.classList.contains('is-visible')) setOverlayControlsVisible(true);
+                else setFloatingButtonsVisible(true);
+            },
+
+            async closeAll({ signal, duration, profile }) {
+                const snapshot = snapshotOverlays();
+                lastOverlaySnapshot = snapshot;
+                await Promise.all([
+                    this.close('lyrics', { signal, duration, profile }),
+                    this.close('playlist', { signal, duration, profile })
+                ]);
+                return snapshot;
+            },
+
+            async refresh({ signal, duration, profile }) {
+                const snapshot = lastOverlaySnapshot;
+                if (snapshot?.playlist) {
+                    playlist.setActive(currentLyricIndex);
+                    scrollPlaylistToCurrentTrack('auto');
+                }
+                if (signal.aborted) return;
+                const element = snapshot?.playlist ? playlistContent : lyricEl;
+                await runOverlayAnimation(element, [
+                    { opacity: 0.55, transform: 'translateY(4px)' },
+                    { opacity: 1, transform: 'translateY(0)' }
+                ], {
+                    duration: Math.min(duration, profile === 'reduce' ? 0 : 180),
+                    easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+                }, signal);
+            },
+
+            async restoreAfterTrackSwitch(snapshot, { signal, duration, profile }) {
+                if (snapshot?.playlist) {
+                    await this.open('playlist', { signal, duration, profile });
+                    return;
+                }
+                if (snapshot?.lyrics) {
+                    await this.open('lyrics', { signal, duration, profile });
+                    return;
+                }
+                setControlSplit(Boolean(snapshot?.split));
+                if (!signal.aborted && document.visibilityState === 'visible') {
+                    setFloatingButtonsVisible(true);
+                }
+            },
+
+            setDocumentVisible() {},
+            dispose() {
+                lyricAnimations.forEach((animation) => animation.cancel());
+                playlistAnimations.forEach((animation) => animation.cancel());
+                lyricAnimations = [];
+                playlistAnimations = [];
             }
         };
 
-        const closePlaylistOverlay = async () => {
-            if (isOverlayClosing || !playlistArea.classList.contains('is-visible')) return;
-
-            const ownsInteractionLock = !isDrawing;
-            isOverlayClosing = true;
-            if (ownsInteractionLock) {
-                isDrawing = true;
-                setPlayButtonBusy(true);
+        const controls = {
+            async setLabel(label, { signal, duration }) {
+                if (btnTextEl.innerText === label) return;
+                const labelDuration = Math.floor(duration / 2);
+                await runOverlayAnimation(btnTextEl, [
+                    { opacity: 1, transform: 'translateY(0)' },
+                    { opacity: 0, transform: 'translateY(-4px)' }
+                ], { duration: labelDuration, easing: 'ease-out' }, signal);
+                if (signal.aborted) return;
+                btnTextEl.innerText = label;
+                await runOverlayAnimation(btnTextEl, [
+                    { opacity: 0, transform: 'translateY(4px)' },
+                    { opacity: 1, transform: 'translateY(0)' }
+                ], { duration: labelDuration, easing: 'ease-out' }, signal);
             }
+        };
 
-            try {
-                await morphPlaylistOut();
-                resetPlaylistVisual();
-                if (resultArea.classList.contains('is-visible')) {
-                    setOverlayControlsVisible(true);
+        const turntableController = {
+            readState() {
+                return { arm: getCurrentArmAngle(), rate: spinAnimation.playbackRate || 0 };
+            },
+            moveArmTo(target, { signal, duration, from = getCurrentArmAngle() }) {
+                return animateTonearm({
+                    from,
+                    to: target === 'play' ? ARM_PLAY_ANGLE : ARM_REST_ANGLE,
+                    duration,
+                    easing: easeInOutCubic,
+                    signal
+                });
+            },
+            async rampRateTo(targetRate, { signal, duration, from = spinAnimation.playbackRate || 0 }) {
+                if (targetRate > 0) this.setSpinning(true);
+                const result = await animateRate({
+                    from,
+                    to: targetRate,
+                    duration,
+                    easing: easeInOutCubic,
+                    signal
+                });
+                if (targetRate <= 0 && result.status === 'completed') this.setSpinning(false);
+                return result;
+            },
+            setSpinning(active) {
+                turntable.classList.toggle('is-playing', active);
+                if (active) {
+                    spinAnimation.play();
+                    sheenAnimation.play();
                 } else {
-                    setFloatingButtonsVisible(true);
+                    spinAnimation.pause();
+                    sheenAnimation.pause();
                 }
-            } finally {
-                if (ownsInteractionLock) {
-                    setPlayButtonBusy(false);
-                    isDrawing = false;
+            },
+            async resetAfterPlaybackError() {
+                resetRejectedPlaybackVisual();
+            },
+            setDocumentVisible(visible) {
+                if (!visible) {
+                    spinAnimation.pause();
+                    sheenAnimation.pause();
+                } else if (audioController.getState().status === 'playing') {
+                    spinAnimation.play();
+                    sheenAnimation.play();
                 }
-                isOverlayClosing = false;
+            },
+            dispose() {
+                cancelTurntableMotion();
+                spinAnimation.cancel();
+                sheenAnimation.cancel();
             }
+        };
+
+        const selectTrack = async (index, { signal } = {}) => {
+            if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
+            const track = createAudioTrackByIndex(index);
+            playerTime.innerText = '0:00';
+            trackFill.style.transform = 'translate3d(-100%, 0, 0)';
+            updateCurrentLyric(index);
+            if (resultArea.classList.contains('is-visible')) revealLyricContentImmediately();
+            return track;
+        };
+
+        const motionAudio = {
+            pause() {
+                cancelVolumeFade();
+                audioController.pause();
+            },
+            load: (track) => audioController.load(track),
+            play: ({ signal }) => {
+                if (canSetMediaVolume) audioEl.volume = 1;
+                return audioController.play({ signal });
+            }
+        };
+
+        document.documentElement.dataset.motionProfile = motionProfile;
+        const motion = createMotionController({
+            profile: motionProfile,
+            transitions: createAppTransitions({
+                turntable: turntableController,
+                overlays,
+                controls,
+                audio: motionAudio,
+                selectTrack
+            }),
+            onActivityChange: ({ active, name }) => {
+                isDrawing = active && (name === 'draw' || name === 'switch-track');
+                isTrackSwitching = active && name === 'switch-track';
+                document.body.classList.toggle('is-track-transitioning', isTrackSwitching);
+                setPlayButtonBusy(isDrawing);
+            }
+        });
+
+        const runMotionCommand = async (command) => {
+            try {
+                return await command();
+            } catch (error) {
+                console.warn('[vinyl] Motion command failed.', { message: error?.message });
+                return { status: 'cancelled' };
+            }
+        };
+
+        const runDirectPlaybackCommand = async (reason, command) => {
+            await motion.cancel(reason);
+            cancelTurntableMotion();
+            return command();
+        };
+
+        const closeLyricOverlay = async () => {
+            if (!resultArea.classList.contains('is-visible')) return;
+            return runMotionCommand(() => motion.closeOverlay('lyrics'));
+        };
+
+        const closePlaylistOverlay = async () => {
+            if (!playlistArea.classList.contains('is-visible')) return;
+            return runMotionCommand(() => motion.closeOverlay('playlist'));
         };
 
         resultArea.addEventListener('click', async (event) => {
@@ -1612,18 +1760,13 @@ startCriticalAssetGate({
         });
 
         lyricToggleBtn.addEventListener('click', () => {
-            if (isDrawing || currentLyricIndex === -1) return;
-            setFloatingButtonsVisible(false);
-            animateLyricIn();
+            if (currentLyricIndex === -1) return;
+            void runMotionCommand(() => motion.openOverlay('lyrics'));
         });
 
         playlistToggleBtn.addEventListener('click', () => {
-            if (isDrawing || currentLyricIndex === -1) return;
-            playlist.ensureRendered();
-            playlist.setActive(currentLyricIndex);
-            scrollPlaylistToCurrentTrack('auto');
-            setFloatingButtonsVisible(false);
-            animatePlaylistIn();
+            if (currentLyricIndex === -1) return;
+            void runMotionCommand(() => motion.openOverlay('playlist'));
         });
 
         if (playlistModeSwitch) {
@@ -1633,121 +1776,9 @@ startCriticalAssetGate({
         }
 
         playButton.addEventListener('click', async () => {
-            if (isDrawing) return;
-            isDrawing = true;
-            setPlayButtonBusy(true);
-
-            const shouldDelayLoadingText = dynamicIsland.classList.contains('is-split');
             setFloatingButtonsVisible(false);
             setControlSplit(false);
-
-            const textUpdateDelay = shouldDelayLoadingText && !prefersReducedMotion ? 260 : 0;
-            const textUpdatePromise = wait(textUpdateDelay).then(() => updateButtonText('读取中'));
-
-            let initialArmAngle = ARM_REST_ANGLE;
-            let initialRate = 0;
-            
-            const cleanupTasks = [];
-
-            if (resultArea.classList.contains('is-visible')) {
-                cleanupTasks.push(morphResultOut());
-            }
-
-            if (playlistArea.classList.contains('is-visible')) {
-                cleanupTasks.push(morphPlaylistOut());
-            }
-
-            if (isAudioPlaying) {
-                cleanupTasks.push(stopAndFadeOutAudio(500));
-            }
-
-            await Promise.all(cleanupTasks);
-
-            // 无论上一步干了什么，抽卡启步的状态必须与前一毫秒屏幕上真实呈现的数值无缝对接，不能使用之前存好的死数据，否则导致割裂与突兀
-            initialRate = spinAnimation.playbackRate || 0;
-            const currentArmAngleStr = getComputedStyle(tonearm).getPropertyValue('--arm-angle');
-            initialArmAngle = parseFloat(currentArmAngleStr) || ARM_REST_ANGLE;
-
-            resetResultVisual();
-            resetPlaylistVisual();
-            turntable.classList.add('is-playing');
-
-            // 保证 play() 瞬间的关联数值严格等于 initialRate，避免光效跳变。
-            updateSheenByRate(initialRate);
-            spinAnimation.playbackRate = initialRate;
-
-            spinAnimation.play();
-            sheenAnimation.play();
-
-            // 点击即加速到最高。
-            const maxRate = 5.2;
-
-            await Promise.all([
-                textUpdatePromise,
-                animateTonearm({
-                    from: initialArmAngle,
-                    to: ARM_REST_ANGLE, 
-                    duration: 1100,
-                    easing: easeInOutCubic
-                }),
-                animateRate({
-                    from: initialRate,
-                    to: maxRate,
-                    duration: 1400,
-                    easing: easeInOutSine
-                })
-            ]);
-
-            await wait(prefersReducedMotion ? 0 : 1200);
-
-            const randomIndex = pickRandomLyricIndex(currentLyricIndex);
-            await updateCurrentLyric(randomIndex);
-
-            await toggleAudioState(false, { skipMotion: true, stopDuration: 260 });
-            await setAudioSourceByIndex(randomIndex);
-            
-            // 错开显示歌词和按钮的变形时机
-            await Promise.all([
-                animateTonearm({
-                    from: ARM_REST_ANGLE,
-                    to: ARM_PLAY_ANGLE, 
-                    duration: 1820,
-                    easing: easeInOutCubic
-                }),
-                animateRate({
-                    from: maxRate,
-                    to: 0.68,
-                    duration: 1820,
-                    easing: easeInOutCubic
-                })
-            ]);
-
-            // 唱针停止后再出现歌词层。
-            animateLyricIn({ showOverlayControls: false });
-            await toggleAudioState(true, { skipMotion: true });
-
-            // 让文字在歌词展开时再变，避免时间上同步过于机械。
-            await wait(prefersReducedMotion ? 0 : 180);
-            await updateButtonText('再次抽取');
-
-            if (!isAudioPlaying) {
-                await Promise.all([
-                    animateTonearm({
-                        from: ARM_PLAY_ANGLE,
-                        to: ARM_REST_ANGLE,
-                        duration: 760,
-                        easing: easeInOutCubic
-                    }),
-                    animateTurntableToTargetRate({
-                        targetRate: 0,
-                        duration: 980,
-                        easing: easeOutQuart
-                    })
-                ]);
-            }
-            isDrawing = false;
-            setPlayButtonBusy(false);
-            if (resultArea.classList.contains('is-visible')) {
-                setOverlayControlsVisible(true);
-            }
+            cancelTurntableMotion();
+            const targetIndex = pickRandomLyricIndex(currentLyricIndex);
+            await runMotionCommand(() => motion.draw(targetIndex));
         });
