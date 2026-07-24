@@ -20,6 +20,7 @@ import {
     tweenWithCleanup
 } from './motion/motion-controller.js';
 import { createAppTransitions } from './app/transitions.js';
+import { createArchiveMetadata } from './ui/archive-metadata.js';
 
 const motionProfile = detectMotionProfile();
 startCriticalAssetGate({
@@ -111,6 +112,13 @@ startCriticalAssetGate({
         };
 
         setPlayButtonBusy(false);
+
+        const updateArchiveMetadata = createArchiveMetadata({
+            documentRef: document,
+            tracks: lyricsPool
+        });
+
+        updateArchiveMetadata(-1, 'idle');
 
         const setPlayerToggleState = (playing) => {
             playerToggleBtn.classList.toggle('is-playing', playing);
@@ -405,6 +413,7 @@ startCriticalAssetGate({
             audioRetry.disabled = status === 'loading';
             dynamicIsland.setAttribute('aria-busy', String(status === 'loading'));
             document.body.dataset.audioState = status;
+            updateArchiveMetadata(currentLyricIndex, status);
 
             if (status === 'playing') {
                 const wasPlaying = isAudioPlaying;
@@ -1028,6 +1037,7 @@ startCriticalAssetGate({
             lyricEl.innerHTML = renderLyricLinesHTML(result.text);
             songEl.textContent = `—— ${result.song}`;
             currentLyricIndex = index;
+            updateArchiveMetadata(index, audioController.getState().status);
             void applyCoverVisual(index);
             consumeLyricIndexFromQueue(index);
             updatePlaylistActiveTrack(index);

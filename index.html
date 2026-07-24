@@ -7,8 +7,8 @@
     <meta name="color-scheme" content="dark">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="歌词抽取机">
-    <title>万兽之王 - 专属黑胶盲盒</title>
+    <meta name="apple-mobile-web-app-title" content="光影档案馆">
+    <title>光影档案馆</title>
     <link rel="manifest" href="./manifest.webmanifest">
     <style>
         html,
@@ -101,10 +101,10 @@
 
     <div class="app-root" id="appRoot" inert aria-hidden="true">
     <main class="app-shell" id="appShell">
-        <div class="header">
-            <h1>歌词抽取机</h1>
-            <p>按下按钮Yuko为你抽取专属歌词</p>
-        </div>
+        <header class="header">
+            <h1>光影档案馆</h1>
+            <p>按下按钮，为你抽取一段专属歌词</p>
+        </header>
 
         <div class="vinyl-wrapper">
             <div class="turntable" id="turntable">
@@ -124,6 +124,13 @@
                 <div class="vinyl-highlight" aria-hidden="true"></div>
             </div>
         </div>
+
+        <dl class="archive-track-meta" id="archiveTrackMeta" aria-live="polite">
+            <div><dt>编号</dt><dd id="archiveTrackNumber">--</dd></div>
+            <div><dt>发行</dt><dd id="archiveRelease">未抽取</dd></div>
+            <div><dt>来源</dt><dd id="archiveSource">档案库</dd></div>
+            <div><dt>状态</dt><dd id="archivePlaybackState">待机</dd></div>
+        </dl>
 
         <div class="dynamic-island" id="dynamicIsland">
             <button class="playlist-toggle-btn" id="playlistToggleBtn" type="button" aria-label="打开播放列表" title="播放列表">
