@@ -13,8 +13,8 @@ const ruleBody = (selector) => {
 };
 
 const capabilityGateBody = () => {
-  const start = css.indexOf('@supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (animation-timeline: scroll())');
-  assert.notEqual(start, -1, 'missing conservative mask + registered-angle capability gate');
+  const start = css.indexOf('@supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (background: conic-gradient(from 0deg, transparent, white))');
+  assert.notEqual(start, -1, 'missing direct mask + conic-gradient capability gate');
   const open = css.indexOf('{', start);
   let depth = 0;
   for (let index = open; index < css.length; index += 1) {
@@ -29,6 +29,10 @@ test('draw button perimeter flow is a masked one-pixel cool-light trace', () => 
   const flow = ruleBody('.btn-sheen::before');
 
   assert.match(css, /@property\s+--btn-flow-angle\s*\{[\s\S]*?syntax:\s*"<angle>"/);
+  assert.match(css, /@property\s+--btn-flow-full-cycle\s*\{[\s\S]*?syntax:\s*"<time>"[\s\S]*?initial-value:\s*7200ms/);
+  assert.match(css, /@property\s+--btn-flow-compact-cycle\s*\{[\s\S]*?syntax:\s*"<time>"[\s\S]*?initial-value:\s*9600ms/);
+  assert.match(flow, /--btn-flow-full-cycle:\s*unsupported/);
+  assert.match(flow, /--btn-flow-compact-cycle:\s*unsupported/);
   assert.match(flow, /content:\s*""/);
   assert.match(flow, /position:\s*absolute/);
   assert.match(flow, /inset:\s*0/);
@@ -54,13 +58,13 @@ test('full and compact flow profiles keep a 1200ms orbit and bounded peaks', () 
 
   assert.match(fallback, /opacity:\s*0/);
   assert.doesNotMatch(fallback, /animation\s*:/);
-  assert.match(capabilityGate, /btn-perimeter-orbit-full\s+7200ms\s+cubic-bezier\(0\.4,\s*0,\s*0\.2,\s*1\)\s+infinite/);
-  assert.match(capabilityGate, /btn-perimeter-fade-full\s+7200ms\s+linear\s+infinite/);
+  assert.match(capabilityGate, /btn-perimeter-orbit-full\s+var\(--btn-flow-full-cycle\)\s+cubic-bezier\(0\.4,\s*0,\s*0\.2,\s*1\)\s+infinite/);
+  assert.match(capabilityGate, /btn-perimeter-fade-full\s+var\(--btn-flow-full-cycle\)\s+linear\s+infinite/);
   assert.match(css, /@keyframes btn-perimeter-orbit-full\s*\{[\s\S]*?16\.667%,\s*100%\s*\{\s*--btn-flow-angle:\s*1turn/);
   assert.match(css, /@keyframes btn-perimeter-fade-full\s*\{[\s\S]*?8\.333%\s*\{\s*opacity:\s*0\.72/);
 
-  assert.match(capabilityGate, /@media\s*\(hover:\s*none\)\s*and\s*\(pointer:\s*coarse\)[\s\S]*btn-perimeter-orbit-compact\s+9600ms\s+cubic-bezier\(0\.4,\s*0,\s*0\.2,\s*1\)\s+infinite/);
-  assert.match(capabilityGate, /btn-perimeter-fade-compact\s+9600ms\s+linear\s+infinite/);
+  assert.match(capabilityGate, /@media\s*\(hover:\s*none\)\s*and\s*\(pointer:\s*coarse\)[\s\S]*btn-perimeter-orbit-compact\s+var\(--btn-flow-compact-cycle\)\s+cubic-bezier\(0\.4,\s*0,\s*0\.2,\s*1\)\s+infinite/);
+  assert.match(capabilityGate, /btn-perimeter-fade-compact\s+var\(--btn-flow-compact-cycle\)\s+linear\s+infinite/);
   assert.match(css, /@keyframes btn-perimeter-orbit-compact\s*\{[\s\S]*?12\.5%,\s*100%\s*\{\s*--btn-flow-angle:\s*1turn/);
   assert.match(css, /@keyframes btn-perimeter-fade-compact\s*\{[\s\S]*?6\.25%\s*\{\s*opacity:\s*0\.58/);
 });

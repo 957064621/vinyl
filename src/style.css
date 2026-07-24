@@ -76,6 +76,16 @@
             inherits: false;
             initial-value: 0deg;
         }
+        @property --btn-flow-full-cycle {
+            syntax: "<time>";
+            inherits: false;
+            initial-value: 7200ms;
+        }
+        @property --btn-flow-compact-cycle {
+            syntax: "<time>";
+            inherits: false;
+            initial-value: 9600ms;
+        }
 
         * {
             box-sizing: border-box;
@@ -1382,6 +1392,8 @@
         }
 
         .btn-sheen::before {
+            --btn-flow-full-cycle: unsupported;
+            --btn-flow-compact-cycle: unsupported;
             content: "";
             position: absolute;
             inset: 0;
@@ -1405,18 +1417,18 @@
             opacity: 0;
         }
 
-        @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (animation-timeline: scroll()) {
+        @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (background: conic-gradient(from 0deg, transparent, white)) {
             .btn-sheen::before {
                 animation:
-                    btn-perimeter-orbit-full 7200ms cubic-bezier(0.4, 0, 0.2, 1) infinite,
-                    btn-perimeter-fade-full 7200ms linear infinite;
+                    btn-perimeter-orbit-full var(--btn-flow-full-cycle) cubic-bezier(0.4, 0, 0.2, 1) infinite,
+                    btn-perimeter-fade-full var(--btn-flow-full-cycle) linear infinite;
             }
 
             @media (hover: none) and (pointer: coarse) {
                 .btn-sheen::before {
                     animation:
-                        btn-perimeter-orbit-compact 9600ms cubic-bezier(0.4, 0, 0.2, 1) infinite,
-                        btn-perimeter-fade-compact 9600ms linear infinite;
+                        btn-perimeter-orbit-compact var(--btn-flow-compact-cycle) cubic-bezier(0.4, 0, 0.2, 1) infinite,
+                        btn-perimeter-fade-compact var(--btn-flow-compact-cycle) linear infinite;
                 }
             }
         }

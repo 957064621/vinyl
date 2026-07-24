@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
 
@@ -33,6 +34,49 @@ const LOCKED_SHARED_STYLE = Object.freeze({
   backgroundColor: 'rgba(12, 18, 29, 0.44)',
   backdropFilter: 'blur(12px) saturate(1.36)',
   border: '1px solid rgba(224, 239, 255, 0.18)'
+});
+const PRE_FLOW_LOCK_PROPERTIES = Object.freeze({
+  button: ['width', 'height', 'border-radius', 'padding', 'margin', 'font-family', 'font-size', 'font-weight', 'letter-spacing', 'background-image', 'background-color', 'backdrop-filter', 'border', 'box-shadow', 'transform'],
+  surface: ['content', 'inset', 'border-radius', 'background-image', 'background-color', 'opacity', 'transform', 'filter', 'box-shadow'],
+  island: ['width', 'height', 'min-height', 'grid-template-columns', 'background-image', 'background-color', 'backdrop-filter', 'border', 'box-shadow', 'transform'],
+  labelViewport: ['width', 'height', 'overflow', 'transform'],
+  label: ['font-family', 'font-size', 'font-weight', 'letter-spacing', 'color', 'opacity', 'filter', 'transform'],
+  sheen: ['content', 'inset', 'border-radius', 'background-image', 'opacity', 'transform', 'filter', 'animation-name', 'animation-duration', 'animation-timing-function']
+});
+const PRE_FLOW_GOLDEN_SHA256 = Object.freeze({
+  desktop: Object.freeze({
+    idle: '1153c3af18eb8abab6e9b7231af2219fe5a33b9407b8ab68716e4c431a526158',
+    hover: '5f992bb63ac9a46beb26c076df90aa1832dc27930cd50a332e7e3317ffcf570c',
+    active: '7c7f135cf33a5dd3ed58a94c92453de2e6cfba0c0e8cb992ad3ea9e14fd7f96f',
+    busy: '1153c3af18eb8abab6e9b7231af2219fe5a33b9407b8ab68716e4c431a526158',
+    'lyric-overlay': '1153c3af18eb8abab6e9b7231af2219fe5a33b9407b8ab68716e4c431a526158',
+    'playlist-overlay': '1153c3af18eb8abab6e9b7231af2219fe5a33b9407b8ab68716e4c431a526158',
+    split: '2b4646586dc21d587aa9a72a1fe2b7e81b883a07bc9859482c5c9285cfab4d06',
+    collapsing: '6cb374868712cda95546e914e0c4f959397efbc6aa3d88a212893b93e7481881',
+    loading: '1153c3af18eb8abab6e9b7231af2219fe5a33b9407b8ab68716e4c431a526158'
+  }),
+  mobile: Object.freeze({
+    idle: '3f2b1fa0213a332a9ffe954cb6b1487bd8d740a47ec40de13a210f7c7168f439',
+    hover: '3f2b1fa0213a332a9ffe954cb6b1487bd8d740a47ec40de13a210f7c7168f439',
+    active: 'ca903782aa28d9236f0ba8362a53b5866e7d9393b5acff60948ec9051a403192',
+    busy: '3f2b1fa0213a332a9ffe954cb6b1487bd8d740a47ec40de13a210f7c7168f439',
+    'lyric-overlay': '3f2b1fa0213a332a9ffe954cb6b1487bd8d740a47ec40de13a210f7c7168f439',
+    'playlist-overlay': '3f2b1fa0213a332a9ffe954cb6b1487bd8d740a47ec40de13a210f7c7168f439',
+    split: '3a3caf299a14e33dfa886256d61891a0ff25eea73d585b07c3bb483dceb0e689',
+    collapsing: 'ee42bb14cfa0064d63bc332df032f7a0f3e55fbbdb7bd3b07e21307176fbc9e1',
+    loading: '3f2b1fa0213a332a9ffe954cb6b1487bd8d740a47ec40de13a210f7c7168f439'
+  }),
+  reduce: Object.freeze({
+    idle: '07eb3a5f5158bdcd1e4ba4fdcd003c9dc85b485996af6d57f8c60269e1515036',
+    hover: '07eb3a5f5158bdcd1e4ba4fdcd003c9dc85b485996af6d57f8c60269e1515036',
+    active: '72f3e07e5125af7a6d33993965c8f103078b3babc2948ac45aa7e8bc3824c952',
+    busy: '07eb3a5f5158bdcd1e4ba4fdcd003c9dc85b485996af6d57f8c60269e1515036',
+    'lyric-overlay': '07eb3a5f5158bdcd1e4ba4fdcd003c9dc85b485996af6d57f8c60269e1515036',
+    'playlist-overlay': '07eb3a5f5158bdcd1e4ba4fdcd003c9dc85b485996af6d57f8c60269e1515036',
+    split: 'c0222000b5bcfe699bbd5da14d9e42e04fd2da791ad1c351d9a9e57abf72c794',
+    collapsing: '07eb3a5f5158bdcd1e4ba4fdcd003c9dc85b485996af6d57f8c60269e1515036',
+    loading: '07eb3a5f5158bdcd1e4ba4fdcd003c9dc85b485996af6d57f8c60269e1515036'
+  })
 });
 const DETERMINISTIC_COVER = Buffer.from(`
   <svg xmlns="http://www.w3.org/2000/svg" width="600" height="800">
@@ -109,6 +153,38 @@ const getCompleteLock = (page) => page.locator('#playButton').evaluate((button) 
   };
 });
 
+const getPreFlowGoldenLock = (page) => page.locator('#playButton').evaluate((button, propertyGroups) => {
+  const take = (style, keys) => Object.fromEntries(keys.map((key) => [key, style.getPropertyValue(key)]));
+  const rect = (node) => {
+    const value = node.getBoundingClientRect();
+    return Object.fromEntries(['x', 'y', 'width', 'height'].map((key) => [
+      key,
+      Math.round(value[key] * 100) / 100
+    ]));
+  };
+  const island = document.querySelector('#dynamicIsland');
+  const labelViewport = document.querySelector('#btnLabelViewport');
+  const label = document.querySelector('#btnText');
+  const sheen = document.querySelector('.btn-sheen');
+  return {
+    rects: {
+      button: rect(button),
+      island: rect(island),
+      labelViewport: rect(labelViewport),
+      label: rect(label)
+    },
+    button: take(getComputedStyle(button), propertyGroups.button),
+    buttonBefore: take(getComputedStyle(button, '::before'), propertyGroups.surface),
+    buttonAfter: take(getComputedStyle(button, '::after'), propertyGroups.surface),
+    island: take(getComputedStyle(island), propertyGroups.island),
+    islandBefore: take(getComputedStyle(island, '::before'), propertyGroups.surface),
+    islandAfter: take(getComputedStyle(island, '::after'), propertyGroups.surface),
+    labelViewport: take(getComputedStyle(labelViewport), propertyGroups.labelViewport),
+    label: take(getComputedStyle(label), propertyGroups.label),
+    existingSheenAfter: take(getComputedStyle(sheen, '::after'), propertyGroups.sheen)
+  };
+}, PRE_FLOW_LOCK_PROPERTIES);
+
 const installStateFixture = (page) => page.evaluate(async () => {
   const freeze = document.createElement('style');
   freeze.id = 'flow-state-freeze';
@@ -126,6 +202,7 @@ const installStateFixture = (page) => page.evaluate(async () => {
   const existingAnimations = document.getAnimations();
   for (const animation of existingAnimations) animation.pause();
   await Promise.all(existingAnimations.map((animation) => animation.ready));
+  for (const animation of existingAnimations) animation.currentTime = 0;
   await new Promise(requestAnimationFrame);
 });
 
@@ -305,9 +382,10 @@ test.use({ video: 'on' });
 
 test('same-state baseline locks every existing button surface and required control state', async ({ page }, testInfo) => {
   await waitForApp(page);
-  await page.waitForTimeout(1_000);
+  await page.waitForTimeout(1_500);
   await expect(page.locator('#playButton')).not.toHaveClass(/is-text-swapping/, { timeout: 5_000 });
   const profileName = testInfo.project.name.startsWith('mobile') ? 'mobile' : 'desktop';
+  const goldenProfileName = testInfo.project.name === 'mobile-reduce' ? 'reduce' : profileName;
   const profile = PROFILES[profileName];
   const summary = await getSummaryMetrics(page);
   expect(summary.style).toMatchObject({
@@ -326,6 +404,11 @@ test('same-state baseline locks every existing button surface and required contr
     'split', 'collapsing', 'loading'
   ]) {
     await setState(page, state);
+    const preFlowLock = await getPreFlowGoldenLock(page);
+    await writeFile(testInfo.outputPath(`pre-flow-${state}.json`), `${JSON.stringify(preFlowLock, null, 2)}\n`);
+    const preFlowDigest = createHash('sha256').update(JSON.stringify(preFlowLock)).digest('hex');
+    expect(preFlowDigest, `${state} must match the persisted 600107c pre-flow golden`)
+      .toBe(PRE_FLOW_GOLDEN_SHA256[goldenProfileName][state]);
     const baseline = await getCompleteLock(page);
     baselines[state] = baseline;
     await setControlledPeak(page, profileName === 'mobile' ? 600 : 600);
@@ -346,6 +429,14 @@ test('same-state baseline locks every existing button surface and required contr
     expect(baselines.hover.button['background-image']).not.toBe(baselines.idle.button['background-image']);
     expect(baselines.hover.button['box-shadow']).not.toBe(baselines.idle.button['box-shadow']);
     expect(baselines.active.button.transform).not.toBe(baselines.idle.button.transform);
+  }
+  if (testInfo.project.name === 'mobile-reduce') {
+    await setState(page, 'idle');
+    expect(await getFlowState(page)).toMatchObject({ opacity: 0, animations: [] });
+    await page.locator('#playButton').screenshot({
+      path: testInfo.outputPath('button-reduced-motion.png'),
+      scale: 'css'
+    });
   }
 });
 
@@ -391,6 +482,43 @@ test('loading stage has no perimeter pseudo animation before critical resources 
   await expect(page.locator('#appRoot')).toHaveAttribute('inert', '');
   expect(await getFlowState(page)).toMatchObject({ opacity: 0, animations: [] });
   release();
+});
+
+test('unregistered cycle sentinel keeps the capable-browser fallback transparent', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await page.setContent(`
+    <style>
+      #registrationProbe::before {
+        --unregistered-cycle: unsupported;
+        content: "";
+        opacity: 0;
+      }
+      @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (background: conic-gradient(from 0deg, transparent, white)) {
+        #registrationProbe::before {
+          animation:
+            registration-probe-orbit var(--unregistered-cycle) linear infinite,
+            registration-probe-fade var(--unregistered-cycle) linear infinite;
+        }
+      }
+      @keyframes registration-probe-orbit { to { transform: translateX(1px); } }
+      @keyframes registration-probe-fade { to { opacity: 1; } }
+    </style>
+    <div id="registrationProbe"></div>
+  `);
+  const fallback = await page.locator('#registrationProbe').evaluate((probe) => ({
+    hasMask: CSS.supports('-webkit-mask-composite', 'xor') || CSS.supports('mask-composite', 'exclude'),
+    hasConicGradient: CSS.supports('background', 'conic-gradient(from 0deg, transparent, white)'),
+    animationName: getComputedStyle(probe, '::before').animationName,
+    opacity: Number.parseFloat(getComputedStyle(probe, '::before').opacity),
+    animations: probe.getAnimations({ subtree: true }).map(({ animationName }) => animationName)
+  }));
+  expect(fallback).toEqual({
+    hasMask: true,
+    hasConicGradient: true,
+    animationName: 'none',
+    opacity: 0,
+    animations: []
+  });
 });
 
 test('desktop and 390x844 record exact natural orbit, fade, idle, and pixel evidence', async ({ browser }, testInfo) => {
