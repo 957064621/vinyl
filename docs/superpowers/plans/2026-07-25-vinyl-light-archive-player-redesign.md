@@ -303,7 +303,7 @@ npm run verify
 git diff --check
 ```
 
-Expected: PASS with no layout regressions in the established draw-button geometry tests.
+Expected: PASS with no draw-button size, radius, padding, alignment, or interaction-state regressions. Update the prior typography assertion from `letter-spacing: 0.09em` to `letter-spacing: 0`; this current page-wide typography rule intentionally supersedes that one older local constraint.
 
 - [ ] **Step 7: Commit the visual system**
 
