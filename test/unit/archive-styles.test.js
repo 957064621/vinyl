@@ -58,6 +58,24 @@ const transitionProperties = (declaration) => {
     .map((match) => match[1]);
 };
 
+const activeRuleTransitions = (source) => {
+  const rules = [...source.matchAll(/(^|\n)\s*([^{}]+:active[^{}]*)\{([^{}]*)\}/g)];
+
+  return rules.flatMap((match) => {
+    const selector = match[2].trim();
+    const body = match[3];
+    const values = [...body.matchAll(/\btransition\s*:\s*([\s\S]*?);/g)]
+      .map((transition) => transition[1]);
+    const properties = values.flatMap(transitionProperties);
+    const transitionPropertyValues = [...body.matchAll(/\btransition-property\s*:\s*([\s\S]*?);/g)]
+      .flatMap((transition) => transition[1].trim().replace(/\s*!important\b/g, '').split(/\s*,\s*/));
+
+    return properties.length || transitionPropertyValues.length
+      ? [{ selector, properties: [...properties, ...transitionPropertyValues] }]
+      : [];
+  });
+};
+
 test('archive palette and typography use the fixed neutral system', () => {
   const root = blockBody(css, ':root {');
   const expectedTokens = {
@@ -164,6 +182,30 @@ test('terminal interaction and error states use the archive palette with compact
     .map((match) => Number(match[1]));
   assert.ok(fixedRadii.length > 0, 'expected terminal fixed-radius rules');
   assert.ok(fixedRadii.every((radius) => radius <= 8), `terminal panel/tile radius exceeds 8px: ${fixedRadii.join(', ')}`);
+});
+
+test('active states transition only composited properties', () => {
+  const terminalActiveRules = [
+    '.play-btn:active',
+    '.player-ctrl-btn:active',
+    '.lyric-toggle-btn.is-visible:active,\n        .playlist-toggle-btn.is-visible:active,\n        .result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active,\n        .playlist-mode-switch:active,\n        .audio-status .audio-retry:not(:disabled):active'
+  ];
+
+  for (const selector of terminalActiveRules) {
+    const rule = archiveRuleBody(selector);
+    const properties = [...rule.matchAll(/\btransition\s*:\s*([\s\S]*?);/g)]
+      .flatMap((match) => transitionProperties(match[1]));
+    assert.deepEqual(properties, ['transform', 'opacity'], `${selector} must explicitly transition only transform and opacity`);
+  }
+
+  const activeTransitions = activeRuleTransitions(css);
+  assert.ok(activeTransitions.length > 0, 'expected active-state transition declarations');
+  for (const { selector, properties } of activeTransitions) {
+    assert.ok(
+      properties.every((property) => ['transform', 'opacity', 'none'].includes(property)),
+      `${selector} transitions forbidden active-state properties: ${properties.join(', ')}`
+    );
+  }
 });
 
 test('archive transitions are composited and reduce states are instant', () => {
