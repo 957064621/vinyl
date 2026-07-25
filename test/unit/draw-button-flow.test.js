@@ -26,6 +26,19 @@ const keyframeBody = (name) => {
   assert.fail(`unterminated keyframe: ${name}`);
 };
 
+const capabilityGateBody = () => {
+  const start = css.indexOf('@supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (background: conic-gradient(from 0deg, transparent, white))');
+  assert.notEqual(start, -1, 'missing mask + conic-gradient capability gate');
+  const open = css.indexOf('{', start);
+  let depth = 0;
+  for (let index = open; index < css.length; index += 1) {
+    if (css[index] === '{') depth += 1;
+    if (css[index] === '}') depth -= 1;
+    if (depth === 0) return css.slice(open + 1, index);
+  }
+  assert.fail('unterminated capability gate');
+};
+
 test('draw button perimeter light preserves the locked pill geometry', () => {
   const perimeter = ruleBody('.btn-sheen::before');
   const sheen = ruleBody('.btn-sheen');
@@ -89,8 +102,11 @@ test('full idle state has one synchronized transform and opacity light pass', ()
 });
 
 test('compact is static, reduced is absent, and unavailable states restart from zero', () => {
-  assert.match(css, /@supports[\s\S]*?html\[data-motion-profile="compact"\]\s+\.btn-sheen::before\s*\{[\s\S]*?animation:\s*none[\s\S]*?opacity:\s*0\.19/);
-  assert.match(css, /html\[data-motion-profile="compact"\]\s+\.play-btn::after\s*\{[\s\S]*?animation:\s*none[\s\S]*?opacity:\s*0\.06/);
+  const capabilityGate = capabilityGateBody();
+  assert.match(capabilityGate, /html\[data-motion-profile="compact"\]\s+\.btn-sheen::before\s*\{[\s\S]*?animation:\s*none[\s\S]*?opacity:\s*0\.19/);
+  assert.match(capabilityGate, /html\[data-motion-profile="compact"\]\s+\.play-btn::after\s*\{[\s\S]*?animation:\s*none[\s\S]*?opacity:\s*0\.06/);
+  const afterCapabilityGate = css.slice(css.indexOf(capabilityGate) + capabilityGate.length);
+  assert.doesNotMatch(afterCapabilityGate, /html\[data-motion-profile="compact"\]\s+\.play-btn::after/);
   assert.match(css, /html\[data-motion-profile="reduce"\]\s+\.btn-sheen::before[\s\S]*?animation:\s*none\s*!important[\s\S]*?opacity:\s*0\s*!important/);
   assert.match(css, /html\[data-motion-profile="reduce"\]\s+\.play-btn::after[\s\S]*?animation:\s*none\s*!important[\s\S]*?opacity:\s*0\s*!important/);
 

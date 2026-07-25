@@ -1409,15 +1409,21 @@
                 animation: btn-perimeter-pass var(--btn-light-cycle) cubic-bezier(0.32, 0.72, 0, 1) infinite;
             }
 
+            html[data-motion-profile="full"] .play-btn:not([data-busy]):not(:disabled)::after {
+                animation: btn-halo-pulse var(--btn-light-cycle) cubic-bezier(0.32, 0.72, 0, 1) infinite;
+            }
+
             html[data-motion-profile="compact"] .btn-sheen::before {
                 animation: none;
                 opacity: 0.19;
                 transform: translate3d(-50%, -50%, 0) rotate(0turn);
             }
-        }
 
-        html[data-motion-profile="full"] .play-btn:not([data-busy]):not(:disabled)::after {
-            animation: btn-halo-pulse var(--btn-light-cycle) cubic-bezier(0.32, 0.72, 0, 1) infinite;
+            html[data-motion-profile="compact"] .play-btn::after {
+                animation: none;
+                opacity: 0.06;
+                transform: scale(0.96);
+            }
         }
 
         .play-btn[data-busy] .btn-sheen::before,
@@ -1438,12 +1444,6 @@
         .dynamic-island.is-collapsing .play-btn::after {
             animation: none !important;
             opacity: 0 !important;
-        }
-
-        html[data-motion-profile="compact"] .play-btn::after {
-            animation: none;
-            opacity: 0.06;
-            transform: scale(0.96);
         }
 
         html[data-motion-profile="reduce"] .btn-sheen::before,

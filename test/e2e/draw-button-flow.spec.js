@@ -88,6 +88,45 @@ const setPhase = (page, time) => page.evaluate(async (currentTime) => {
   await new Promise(requestAnimationFrame);
 }, time);
 
+const restartLightAtPhaseZero = async (page, gate) => {
+  await setBlockedState(page, 'idle');
+  await page.locator('#playButton').evaluate(() => new Promise(requestAnimationFrame));
+  const restarted = await lightState(page);
+  expect(restarted, `${gate} release restarts both layers`).toMatchObject({
+    perimeter: { animationName: 'btn-perimeter-pass' },
+    halo: { animationName: 'btn-halo-pulse' }
+  });
+  expect(restarted.animations).toHaveLength(2);
+  expect(restarted.animations.every(({ currentTime }) => currentTime < 100), `${gate} release starts near phase zero`).toBe(true);
+};
+
+const sampleFrameGaps = (page, label) => page.evaluate(async (sampleLabel) => {
+  const probe = window.__buttonLightProbe;
+  const flush = () => probe.entries.push(...probe.observer.takeRecords().map(({ startTime, duration }) => ({ startTime, duration })));
+  probe.entries.length = 0;
+  const stamps = await new Promise((resolve) => {
+    const values = [];
+    const sample = (now) => {
+      values.push(now);
+      if (values.length === 49) resolve(values);
+      else requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  flush();
+  const gaps = stamps.slice(1).map((time, index) => time - stamps[index]);
+  return {
+    label: sampleLabel,
+    frameCount: gaps.length,
+    maxFrameGap: Math.max(...gaps),
+    longTasks: probe.entries.splice(0),
+    animations: [
+      getComputedStyle(document.querySelector('.btn-sheen'), '::before').animationName,
+      getComputedStyle(document.querySelector('#playButton'), '::after').animationName
+    ].filter((name) => name !== 'none')
+  };
+}, label);
+
 const decodeScreenshot = async (page, buffer) => page.evaluate(async (base64) => {
   const response = await fetch(`data:image/png;base64,${base64}`);
   const bitmap = await createImageBitmap(await response.blob());
@@ -151,10 +190,8 @@ test('full desktop synchronizes one perimeter pass and one halo pulse', async ({
       halo: { opacity: 0, animationName: 'none' },
       animations: []
     });
+    await restartLightAtPhaseZero(page, blocked);
   }
-  await setBlockedState(page, 'idle');
-  await expect.poll(() => lightState(page)).toMatchObject({ perimeter: { animationName: 'btn-perimeter-pass' }, halo: { animationName: 'btn-halo-pulse' } });
-  expect((await lightState(page)).animations.every(({ currentTime }) => currentTime < 100)).toBe(true);
 });
 
 test('compact is static and reduced motion has no decorative light', async ({ page }, testInfo) => {
@@ -185,9 +222,16 @@ test('button geometry, label, press, focus, and perimeter concentration remain l
     const viewport = document.querySelector('#btnLabelViewport').getBoundingClientRect();
     const viewportStyle = getComputedStyle(document.querySelector('#btnLabelViewport'));
     const labelStyle = getComputedStyle(label);
-    return { rect: rect.toJSON(), label: { text: label.textContent, fontSize: labelStyle.fontSize, whiteSpace: labelStyle.whiteSpace, rect: label.getBoundingClientRect().toJSON(), viewport: viewport.toJSON(), viewportOverflow: viewportStyle.overflow }, transform: getComputedStyle(node).transform };
+    const buttonStyle = getComputedStyle(node);
+    return {
+      rect: rect.toJSON(),
+      button: Object.fromEntries(['borderRadius', 'padding', 'display', 'justifyContent', 'alignItems'].map((property) => [property, buttonStyle[property]])),
+      label: { text: label.textContent, fontSize: labelStyle.fontSize, whiteSpace: labelStyle.whiteSpace, rect: label.getBoundingClientRect().toJSON(), viewport: viewport.toJSON(), viewportOverflow: viewportStyle.overflow },
+      transform: buttonStyle.transform
+    };
   });
   expect({ width: idle.rect.width, height: idle.rect.height }).toEqual({ width: expected.width, height: expected.height });
+  expect(idle.button).toMatchObject({ borderRadius: '999px', padding: '0px', display: 'flex', justifyContent: 'center', alignItems: 'center' });
   expect(idle.label.text.trim()).not.toBe('');
   expect(idle.label.fontSize).toBe(expected.label);
   expect(idle.label.whiteSpace).toBe('nowrap');
@@ -195,7 +239,13 @@ test('button geometry, label, press, focus, and perimeter concentration remain l
   expect(idle.label.viewport.width).toBeGreaterThan(0);
   expect(idle.label.viewport.width).toBeLessThanOrEqual(idle.rect.width);
   expect(idle.label.viewport.x).toBeGreaterThanOrEqual(idle.rect.x);
+  expect(idle.label.viewport.y).toBeGreaterThanOrEqual(idle.rect.y);
   expect(idle.label.viewport.right).toBeLessThanOrEqual(idle.rect.right);
+  expect(idle.label.viewport.bottom).toBeLessThanOrEqual(idle.rect.bottom);
+  expect(idle.label.rect.x).toBeGreaterThanOrEqual(idle.label.viewport.x);
+  expect(idle.label.rect.y).toBeGreaterThanOrEqual(idle.label.viewport.y);
+  expect(idle.label.rect.right).toBeLessThanOrEqual(idle.label.viewport.right);
+  expect(idle.label.rect.bottom).toBeLessThanOrEqual(idle.label.viewport.bottom);
   await button.focus();
   await expect(button).toBeFocused();
   await expect(button).toHaveCSS('outline-style', 'solid');
@@ -235,22 +285,45 @@ test('loading does not start decorative light before critical resources resolve'
 test('static compact light adds no mobile long task over 50ms', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-chromium');
   await page.addInitScript(() => {
-    window.__buttonLightTasks = [];
-    new PerformanceObserver((list) => window.__buttonLightTasks.push(...list.getEntries().map(({ startTime, duration }) => ({ startTime, duration })))).observe({ type: 'longtask', buffered: true });
+    const supported = Boolean(window.PerformanceObserver?.supportedEntryTypes?.includes('longtask'));
+    window.__buttonLightProbe = { supported, entries: [], observer: null };
+    if (!supported) return;
+    window.__buttonLightProbe.observer = new PerformanceObserver((list) => {
+      window.__buttonLightProbe.entries.push(...list.getEntries().map(({ startTime, duration }) => ({ startTime, duration })));
+    });
+    window.__buttonLightProbe.observer.observe({ type: 'longtask', buffered: true });
   });
   await waitForApp(page);
-  const started = await page.evaluate(() => performance.now());
-  await page.waitForTimeout(2_400);
-  const metrics = await page.evaluate((start) => ({
-    viewport: [innerWidth, innerHeight],
-    animations: [
-      getComputedStyle(document.querySelector('.btn-sheen'), '::before').animationName,
-      getComputedStyle(document.querySelector('#playButton'), '::after').animationName
-    ].filter((name) => name !== 'none'),
-    longTasks: window.__buttonLightTasks.filter(({ startTime, duration }) => startTime >= start && duration > 50)
-  }), started);
-  expect(metrics.viewport).toEqual([393, 727]);
-  expect(metrics.animations).toEqual([]);
-  expect(metrics.longTasks).toEqual([]);
-  await writeFile(testInfo.outputPath('compact-light-performance.json'), `${JSON.stringify(metrics, null, 2)}\n`);
+  await page.waitForTimeout(750);
+  expect(await page.evaluate(() => window.__buttonLightProbe.supported)).toBe(true);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(() => {
+    const endsAt = performance.now() + 70;
+    while (performance.now() < endsAt) {}
+    resolve();
+  }, 0)));
+  await page.waitForTimeout(100);
+  const positiveControl = await page.evaluate(() => {
+    const probe = window.__buttonLightProbe;
+    probe.entries.push(...probe.observer.takeRecords().map(({ startTime, duration }) => ({ startTime, duration })));
+    const entries = probe.entries.splice(0);
+    return entries;
+  });
+  expect(positiveControl.some(({ duration }) => duration > 50)).toBe(true);
+
+  await page.evaluate(() => document.documentElement.setAttribute('data-document-hidden', ''));
+  const hiddenBaseline = await sampleFrameGaps(page, 'gated-hidden');
+  await page.evaluate(() => document.documentElement.removeAttribute('data-document-hidden'));
+  const compactVisible = await sampleFrameGaps(page, 'compact-visible');
+  expect(hiddenBaseline.animations).toEqual([]);
+  expect(compactVisible.animations).toEqual([]);
+  expect(hiddenBaseline.longTasks.filter(({ duration }) => duration > 50)).toEqual([]);
+  expect(compactVisible.longTasks.filter(({ duration }) => duration > 50)).toEqual([]);
+  expect(compactVisible.frameCount).toBe(48);
+  expect(compactVisible.maxFrameGap).toBeLessThanOrEqual(Math.max(hiddenBaseline.maxFrameGap + 33, 100));
+  await writeFile(testInfo.outputPath('compact-light-performance.json'), `${JSON.stringify({
+    viewport: await page.evaluate(() => [innerWidth, innerHeight]),
+    positiveControl,
+    hiddenBaseline,
+    compactVisible
+  }, null, 2)}\n`);
 });
