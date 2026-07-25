@@ -100,11 +100,11 @@ const transitionProperties = (declaration) => {
 };
 
 const activeRuleTransitions = (source) => {
-  const rules = [...source.matchAll(/(^|\n)\s*([^{}]+:active[^{}]*)\{([^{}]*)\}/gi)];
+  const rules = [...source.matchAll(/(?:(?<![\s\S])|(?<=[{}]))\s*([^{}]+:active[^{}]*)\{([^{}]*)\}/gi)];
 
   return rules.flatMap((match) => {
-    const selector = match[2].trim();
-    const body = match[3];
+    const selector = match[1].trim();
+    const body = match[2];
     const values = [...body.matchAll(/\btransition\s*:\s*([\s\S]*?);/gi)]
       .map((transition) => transition[1]);
     const shorthandProperties = values.map(transitionProperties);
@@ -233,7 +233,14 @@ test('terminal interaction and error states use the archive palette with compact
   assert.match(audioRetry, /color:\s*var\(--archive-projector\)/);
   assert.match(hover, /\.audio-status \.audio-retry:not\(:disabled\):hover\s*\{[\s\S]*border-color:\s*var\(--archive-projector\)/);
   assert.match(archiveCss, /\.audio-status \.audio-retry:focus-visible\s*\{[\s\S]*outline:\s*2px solid var\(--archive-projector\)/);
-  assert.match(archiveCss, /\.result-area\.is-visible \.overlay-close-btn:active,[\s\S]*\.audio-status \.audio-retry:not\(:disabled\):active\s*\{[\s\S]*background:\s*var\(--archive-void\)/);
+  assert.match(
+    archiveRuleBody('.lyric-toggle-btn.is-visible:active,\n        .playlist-toggle-btn.is-visible:active,\n        .playlist-mode-switch:active,\n        .audio-status .audio-retry:not(:disabled):active'),
+    /background:\s*var\(--archive-void\)/
+  );
+  assert.match(
+    archiveRuleBody('.result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active'),
+    /background:\s*var\(--archive-void\)/
+  );
   assert.doesNotMatch(archiveCss, /rgba\(255,\s*151,\s*135/);
   assert.match(groupCover, /border-radius:\s*6px/);
 
@@ -247,7 +254,8 @@ test('active states transition only composited properties', () => {
   const terminalActiveRules = [
     '.play-btn:active',
     '.player-ctrl-btn:active',
-    '.lyric-toggle-btn.is-visible:active,\n        .playlist-toggle-btn.is-visible:active,\n        .result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active,\n        .playlist-mode-switch:active,\n        .audio-status .audio-retry:not(:disabled):active'
+    '.lyric-toggle-btn.is-visible:active,\n        .playlist-toggle-btn.is-visible:active,\n        .playlist-mode-switch:active,\n        .audio-status .audio-retry:not(:disabled):active',
+    '.result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active'
   ];
 
   for (const selector of terminalActiveRules) {
@@ -263,6 +271,12 @@ test('active states transition only composited properties', () => {
     'the base overlay-close press transition must retain its 100ms continuity curve and zero delay'
   );
 
+  assert.match(
+    archiveRuleBody('.result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active'),
+    /transition:\s*transform\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*opacity\s+0\.1s\s+var\(--continuity-ease\)\s+0s;/,
+    'the terminal visible overlay-close rule must win the cascade with the restored 100ms continuity timing'
+  );
+
   assert.deepEqual(
     transitionProperties('transform 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms linear(0, 0.5 50%, 1)'),
     ['transform', 'opacity'],
@@ -272,6 +286,7 @@ test('active states transition only composited properties', () => {
   for (const [description, stylesheet] of [
     ['reordered shorthand', '.reordered:active { transition: background ease 180ms; }'],
     ['uppercase shorthand and active selector', '.uppercase:ACTIVE { TRANSITION: background 180ms; }'],
+    ['compact forbidden rule', 'a {} .compact:AcTiVe { transition: background 180ms; }'],
     ['opaque shorthand', '.opaque:active { transition: var(--active-transition); }'],
     ['forbidden longhand', '.longhand:active { transition: transform 180ms; transition-duration: 180ms; }'],
     ['uppercase transition-property', '.property:ACTIVE { TRANSITION-PROPERTY: background; }']
