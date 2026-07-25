@@ -206,7 +206,8 @@
             display: grid;
             place-items: center;
             width: 100vw;
-            height: 100lvh;
+            height: 100vh;
+            height: 100dvh;
             padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
             overflow: hidden;
             background: #070a12;
@@ -361,7 +362,8 @@
             left: 50%;
             z-index: 4;
             width: 100vw;
-            height: 100lvh;
+            height: 100vh;
+            height: 100dvh;
             opacity: 0;
             pointer-events: none;
             transform: translate3d(-50%, -50%, 0);
@@ -1550,7 +1552,8 @@
             top: 0;
             left: 0;
             width: 100vw;
-            height: 100lvh;
+            height: 100vh;
+            height: 100dvh;
             text-align: center;
             display: flex;
             flex-direction: column;
@@ -1584,7 +1587,8 @@
             top: 0;
             left: 0;
             width: 100vw;
-            height: 100lvh;
+            height: 100vh;
+            height: 100dvh;
             text-align: center;
             display: flex;
             flex-direction: column;
@@ -3287,12 +3291,6 @@
             transition: opacity 0.72s var(--continuity-ease), transform 0.72s var(--continuity-ease);
         }
 
-        .header,
-        .vinyl-wrapper,
-        .dynamic-island {
-            transition: opacity 0.32s var(--continuity-ease);
-        }
-
         body.has-lyric-overlay .header,
         body.has-lyric-overlay .vinyl-wrapper,
         body.has-playlist-overlay .header,
@@ -3308,6 +3306,7 @@
             max-width: 230px;
             margin: 0;
             text-align: left;
+            transition: transform 0.32s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
         }
 
         .header::after {
@@ -3340,6 +3339,7 @@
             width: min(100%, 380px);
             margin: 0;
             perspective: none;
+            transition: transform 0.32s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
         }
 
         .vinyl-wrapper::before,
@@ -3377,7 +3377,7 @@
                 0 18px 32px rgba(0, 0, 0, 0.48),
                 0 34px 56px rgba(0, 0, 0, 0.34),
                 inset 0 0 0 1px color-mix(in srgb, var(--archive-silver) 18%, transparent);
-            transition: transform 0.52s var(--continuity-ease), box-shadow 0.52s var(--continuity-ease);
+            transition: transform 0.52s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
         }
 
         .vinyl-grooves {
@@ -3416,6 +3416,7 @@
         .tonearm-dock {
             background: linear-gradient(160deg, var(--archive-slate), var(--archive-void));
             box-shadow: 0 7px 14px rgba(0, 0, 0, 0.42), inset 0 0 0 1px color-mix(in srgb, var(--archive-silver) 16%, transparent);
+            transition: opacity 0.32s var(--continuity-ease);
         }
 
         .archive-track-meta {
@@ -3463,6 +3464,7 @@
             justify-self: center;
             width: min(100%, calc(var(--play-width) + var(--player-slot) + var(--player-gap)));
             margin: 0;
+            transition: transform 0.32s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
         }
 
         .dynamic-island::before,
@@ -3479,7 +3481,7 @@
             box-shadow:
                 0 12px 22px rgba(0, 0, 0, 0.28),
                 inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 10%, transparent);
-            transition: transform 0.42s var(--continuity-ease), background 0.32s var(--continuity-ease), border-color 0.32s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
+            transition: transform 0.42s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
         }
 
         .play-btn::before {
@@ -3490,7 +3492,7 @@
 
         .dynamic-island.is-opening .play-btn,
         .dynamic-island.is-collapsing .play-btn {
-            transition: transform 0.42s var(--continuity-ease), background 0.32s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
+            transition: transform 0.42s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
         }
 
         .dynamic-island.is-opening .play-btn::before,
@@ -3505,17 +3507,56 @@
         }
 
         @media (hover: hover) and (pointer: fine) {
-            .play-btn:hover {
+            .play-btn:hover,
+            .lyric-toggle-btn.is-visible:hover,
+            .playlist-toggle-btn.is-visible:hover,
+            .result-area.is-visible .overlay-close-btn:hover,
+            .playlist-area.is-visible .overlay-close-btn:hover,
+            .playlist-mode-switch:hover {
                 background: var(--archive-slate);
                 border-color: color-mix(in srgb, var(--archive-projector) 46%, transparent);
                 box-shadow:
                     0 14px 24px rgba(0, 0, 0, 0.32),
                     inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 16%, transparent);
             }
+
+            .player-ctrl-btn:hover {
+                background: var(--archive-projector);
+                border-color: var(--archive-projector);
+                color: var(--archive-void);
+                box-shadow: 0 7px 14px rgba(0, 0, 0, 0.3);
+                transform: translateY(-1px) scale(1.02);
+            }
+
+            .audio-status .audio-retry:not(:disabled):hover {
+                background: var(--archive-slate);
+                border-color: var(--archive-projector);
+                color: var(--archive-projector);
+                box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
+            }
         }
 
         .play-btn:active {
             background: var(--archive-void);
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
+        }
+
+        .player-ctrl-btn:active {
+            background: var(--archive-silver);
+            border-color: var(--archive-silver);
+            color: var(--archive-void);
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
+            transform: scale(0.94);
+        }
+
+        .lyric-toggle-btn.is-visible:active,
+        .playlist-toggle-btn.is-visible:active,
+        .result-area.is-visible .overlay-close-btn:active,
+        .playlist-area.is-visible .overlay-close-btn:active,
+        .playlist-mode-switch:active,
+        .audio-status .audio-retry:not(:disabled):active {
+            background: var(--archive-void);
+            border-color: color-mix(in srgb, var(--archive-silver) 52%, transparent);
             box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
         }
 
@@ -3542,16 +3583,23 @@
             border-color: var(--archive-projector);
             color: var(--archive-void);
             box-shadow: 0 5px 12px rgba(0, 0, 0, 0.26);
+            transition: transform 0.18s var(--continuity-ease), opacity 0.18s var(--continuity-ease);
+        }
+
+        .player-ctrl-btn svg {
+            transition: transform 0.18s var(--continuity-ease), opacity 0.18s var(--continuity-ease);
         }
 
         .player-track-bg {
             background: var(--archive-void);
             box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.46), 0 0 0 1px color-mix(in srgb, var(--archive-silver) 16%, transparent);
+            transition: none;
         }
 
         .player-track-fill {
             background: linear-gradient(90deg, var(--archive-projector), var(--archive-silver));
             box-shadow: none;
+            transition: transform 0.2s linear;
         }
 
         .lyric-toggle-btn,
@@ -3561,6 +3609,8 @@
             border-color: color-mix(in srgb, var(--archive-silver) 32%, transparent);
             color: var(--archive-projector);
             box-shadow: 0 9px 18px rgba(0, 0, 0, 0.3);
+            filter: none;
+            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
         }
 
         .lyric-toggle-btn::before,
@@ -3569,6 +3619,53 @@
         .playlist-toggle-btn.is-visible::before {
             display: none;
             animation: none;
+        }
+
+        .playlist-mode-switch {
+            background: var(--archive-graphite);
+            border-color: color-mix(in srgb, var(--archive-silver) 28%, transparent);
+            color: var(--archive-projector);
+            box-shadow: 0 8px 14px rgba(0, 0, 0, 0.28);
+            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
+        }
+
+        .mode-icon {
+            color: var(--archive-silver);
+        }
+
+        .audio-status {
+            border-color: color-mix(in srgb, var(--archive-red) 56%, transparent);
+            border-left-color: var(--archive-red);
+            border-radius: 6px;
+            background: var(--archive-graphite);
+            color: var(--archive-projector);
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.32);
+        }
+
+        .audio-retry {
+            border-color: color-mix(in srgb, var(--archive-silver) 42%, transparent);
+            border-radius: 6px;
+            background: var(--archive-slate);
+            color: var(--archive-projector);
+            box-shadow: none;
+            transition: transform 0.16s var(--continuity-ease), opacity 0.16s var(--continuity-ease);
+        }
+
+        .audio-retry:disabled {
+            background: var(--archive-graphite);
+            border-color: color-mix(in srgb, var(--archive-silver) 24%, transparent);
+            color: var(--archive-silver);
+        }
+
+        .play-btn:focus-visible,
+        .player-ctrl-btn:focus-visible,
+        .lyric-toggle-btn:focus-visible,
+        .playlist-toggle-btn:focus-visible,
+        .overlay-close-btn:focus-visible,
+        .playlist-mode-switch:focus-visible,
+        .audio-status .audio-retry:focus-visible {
+            outline: 2px solid var(--archive-projector);
+            outline-offset: 3px;
         }
 
         .result-area,
@@ -3615,12 +3712,28 @@
             background: var(--archive-graphite);
             border-color: color-mix(in srgb, var(--archive-silver) 26%, transparent);
             box-shadow: 0 22px 44px rgba(0, 0, 0, 0.38);
+            filter: none;
+            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
+        }
+
+        body.is-track-transitioning .playlist-content {
+            filter: none;
+            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
+        }
+
+        .playlist-list {
+            filter: none;
+            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
         }
 
         .playlist-content::before {
             left: 14px;
             right: 14px;
             background: linear-gradient(90deg, var(--archive-red), transparent);
+        }
+
+        .playlist-group::before {
+            border-radius: 6px;
         }
 
         .playlist-title,
@@ -3642,6 +3755,7 @@
             border-radius: 4px;
             background: transparent;
             box-shadow: none;
+            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
         }
 
         .playlist-item.is-current {
@@ -3671,6 +3785,7 @@
             background: var(--archive-slate);
             color: var(--archive-projector);
             box-shadow: 0 12px 24px rgba(0, 0, 0, 0.34);
+            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
         }
 
         body.is-track-transitioning::before {
@@ -3706,6 +3821,41 @@
             filter: none;
             box-shadow: none;
             opacity: 0.12;
+        }
+
+        @media (min-width: 768px) and (max-width: 1023px) {
+            .app-shell {
+                width: min(100%, 860px);
+                grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+                grid-template-rows: auto auto auto;
+                grid-template-areas:
+                    "header stage"
+                    "meta stage"
+                    "controls stage";
+                column-gap: clamp(24px, 4vw, 40px);
+                row-gap: 18px;
+            }
+
+            .header,
+            .archive-track-meta,
+            .dynamic-island {
+                justify-self: start;
+            }
+
+            .archive-track-meta {
+                width: min(100%, 280px);
+                padding: 0;
+                border-top: 0;
+                border-left: 0;
+            }
+
+            .dynamic-island {
+                width: min(100%, 306px);
+            }
+
+            .vinyl-wrapper {
+                width: min(100%, 340px);
+            }
         }
 
         @media (max-width: 767px) {
@@ -3809,11 +3959,46 @@
             body::before,
             body::after {
                 animation: none !important;
-                filter: none;
-                box-shadow: none;
-                transform: none;
+                filter: none !important;
+                box-shadow: none !important;
+                transform: none !important;
             }
 
+            .header,
+            .vinyl-wrapper,
+            .turntable,
+            .vinyl-record,
+            .vinyl-cover,
+            .vinyl-highlight,
+            .tonearm,
+            .tonearm-dock,
+            .dynamic-island,
+            .play-btn,
+            .play-btn::before,
+            .btn-text,
+            .btn-text-ghost,
+            .player-pill,
+            .player-ctrl-btn,
+            .player-ctrl-btn svg,
+            .player-track-bg,
+            .player-track-fill,
+            .lyric-toggle-btn,
+            .playlist-toggle-btn,
+            .overlay-close-btn,
+            .audio-status,
+            .audio-retry,
+            .result-area,
+            .playlist-area,
+            .result-content,
+            .result-dismiss-hint,
+            .lyric-line,
+            .lyric-text,
+            .song-name,
+            .playlist-content,
+            .playlist-list,
+            .playlist-item,
+            .playlist-mode-switch,
+            .toast,
             .result-area::before,
             .result-area::after,
             .playlist-area::before,
@@ -3821,5 +4006,66 @@
             .vinyl-highlight,
             .dynamic-island.is-split .player-pill::after {
                 animation: none !important;
+                filter: none !important;
+                transition: none !important;
+                transition-delay: 0s !important;
             }
+
+            body.is-track-transitioning::before,
+            body.is-track-transitioning .turntable {
+                animation: none !important;
+                transform: none !important;
+            }
+        }
+
+        html[data-motion-profile="reduce"] .header,
+        html[data-motion-profile="reduce"] .vinyl-wrapper,
+        html[data-motion-profile="reduce"] .turntable,
+        html[data-motion-profile="reduce"] .vinyl-record,
+        html[data-motion-profile="reduce"] .vinyl-cover,
+        html[data-motion-profile="reduce"] .vinyl-highlight,
+        html[data-motion-profile="reduce"] .tonearm,
+        html[data-motion-profile="reduce"] .tonearm-dock,
+        html[data-motion-profile="reduce"] .dynamic-island,
+        html[data-motion-profile="reduce"] .play-btn,
+        html[data-motion-profile="reduce"] .play-btn::before,
+        html[data-motion-profile="reduce"] .btn-text,
+        html[data-motion-profile="reduce"] .btn-text-ghost,
+        html[data-motion-profile="reduce"] .player-pill,
+        html[data-motion-profile="reduce"] .player-ctrl-btn,
+        html[data-motion-profile="reduce"] .player-ctrl-btn svg,
+        html[data-motion-profile="reduce"] .player-track-bg,
+        html[data-motion-profile="reduce"] .player-track-fill,
+        html[data-motion-profile="reduce"] .lyric-toggle-btn,
+        html[data-motion-profile="reduce"] .playlist-toggle-btn,
+        html[data-motion-profile="reduce"] .overlay-close-btn,
+        html[data-motion-profile="reduce"] .audio-status,
+        html[data-motion-profile="reduce"] .audio-retry,
+        html[data-motion-profile="reduce"] .result-area,
+        html[data-motion-profile="reduce"] .playlist-area,
+        html[data-motion-profile="reduce"] .result-content,
+        html[data-motion-profile="reduce"] .result-dismiss-hint,
+        html[data-motion-profile="reduce"] .lyric-line,
+        html[data-motion-profile="reduce"] .lyric-text,
+        html[data-motion-profile="reduce"] .song-name,
+        html[data-motion-profile="reduce"] .playlist-content,
+        html[data-motion-profile="reduce"] .playlist-list,
+        html[data-motion-profile="reduce"] .playlist-item,
+        html[data-motion-profile="reduce"] .playlist-mode-switch,
+        html[data-motion-profile="reduce"] .toast,
+        html[data-motion-profile="reduce"] .result-area::before,
+        html[data-motion-profile="reduce"] .result-area::after,
+        html[data-motion-profile="reduce"] .playlist-area::before,
+        html[data-motion-profile="reduce"] .playlist-area::after,
+        html[data-motion-profile="reduce"] .dynamic-island.is-split .player-pill::after {
+            animation: none !important;
+            filter: none !important;
+            transition: none !important;
+            transition-delay: 0s !important;
+        }
+
+        html[data-motion-profile="reduce"] body.is-track-transitioning::before,
+        html[data-motion-profile="reduce"] body.is-track-transitioning .turntable {
+            animation: none !important;
+            transform: none !important;
         }
