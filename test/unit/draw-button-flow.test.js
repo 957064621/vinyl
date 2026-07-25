@@ -27,7 +27,10 @@ const capabilityGateBody = () => {
 
 test('draw button perimeter flow is a masked one-pixel cool-light trace', () => {
   const flow = ruleBody('.btn-sheen::before');
+  const button = css.match(/(?:^|\n)\s*\.play-btn\s*\{([^}]+)\}/)?.[1];
 
+  assert.ok(button, 'missing base .play-btn rule');
+  assert.match(button, /letter-spacing:\s*0/);
   assert.match(css, /@property\s+--btn-flow-angle\s*\{[\s\S]*?syntax:\s*"<angle>"/);
   assert.match(css, /@property\s+--btn-flow-full-cycle\s*\{[\s\S]*?syntax:\s*"<time>"[\s\S]*?initial-value:\s*7200ms/);
   assert.match(css, /@property\s+--btn-flow-compact-cycle\s*\{[\s\S]*?syntax:\s*"<time>"[\s\S]*?initial-value:\s*9600ms/);
