@@ -75,22 +75,6 @@
             inherits: true;
             initial-value: #151819;
         }
-        @property --btn-flow-angle {
-            syntax: "<angle>";
-            inherits: false;
-            initial-value: 0deg;
-        }
-        @property --btn-flow-full-cycle {
-            syntax: "<time>";
-            inherits: false;
-            initial-value: 7200ms;
-        }
-        @property --btn-flow-compact-cycle {
-            syntax: "<time>";
-            inherits: false;
-            initial-value: 9600ms;
-        }
-
         * {
             box-sizing: border-box;
             margin: 0;
@@ -1334,7 +1318,9 @@
             position: absolute;
             inset: -7px;
             border-radius: inherit;
-            background: radial-gradient(ellipse at center, rgba(203, 232, 255, 0.16), transparent 68%);
+            background: radial-gradient(ellipse at center, transparent 46%, rgba(241, 242, 238, 0.16) 74%, transparent 100%);
+            background: radial-gradient(ellipse at center, transparent 46%, color-mix(in srgb, var(--cover-accent) 16%, transparent) 74%, transparent 100%);
+            filter: blur(6px);
             opacity: 0;
             transform: scale(0.92);
             transition: opacity 0.52s var(--fluid-ease), transform 0.52s var(--fluid-ease);
@@ -1342,31 +1328,15 @@
             z-index: 0;
         }
 
-        /* 抽取按钮的玻璃扫光：大部分时间静止，每隔几秒短暂掠过一次，增加高级感 */
+        /* A fixed mask lets one restrained archive-light head travel around the pill. */
         .btn-sheen {
-            position: absolute;
-            inset: 0;
-            border-radius: inherit;
-            overflow: hidden;
-            z-index: 2;
-            pointer-events: none;
-        }
-
-        .btn-sheen::before {
-            --btn-flow-full-cycle: unsupported;
-            --btn-flow-compact-cycle: unsupported;
-            content: "";
             position: absolute;
             inset: 0;
             padding: 1px;
             border-radius: inherit;
-            background: conic-gradient(from var(--btn-flow-angle),
-                transparent 0deg 328deg,
-                color-mix(in srgb, var(--cover-b) 22%, transparent) 333deg,
-                color-mix(in srgb, var(--cover-a) 42%, transparent) 342deg,
-                rgba(238, 248, 255, 0.96) 350deg,
-                color-mix(in srgb, var(--cover-a) 24%, transparent) 356deg,
-                transparent 360deg);
+            overflow: hidden;
+            z-index: 2;
+            pointer-events: none;
             -webkit-mask:
                 linear-gradient(#000 0 0) content-box,
                 linear-gradient(#000 0 0);
@@ -1375,51 +1345,111 @@
                 linear-gradient(#000 0 0) content-box,
                 linear-gradient(#000 0 0);
             mask-composite: exclude;
+        }
+
+        .btn-sheen::before {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 300%;
+            aspect-ratio: 1;
+            border-radius: inherit;
+            background: conic-gradient(from 0turn,
+                transparent 0deg 328deg,
+                rgba(174, 182, 185, 0.32) 333deg,
+                rgba(241, 242, 238, 0.48) 342deg,
+                rgba(241, 242, 238, 0.96) 350deg,
+                rgba(164, 59, 66, 0.38) 355deg,
+                transparent 360deg);
+            background: conic-gradient(from 0turn,
+                transparent 0deg 328deg,
+                color-mix(in srgb, var(--archive-silver) 32%, transparent) 333deg,
+                color-mix(in srgb, var(--cover-accent) 48%, transparent) 342deg,
+                var(--archive-projector) 350deg,
+                color-mix(in srgb, var(--archive-red) 38%, transparent) 355deg,
+                color-mix(in srgb, var(--cover-accent) 20%, transparent) 358deg,
+                transparent 360deg);
             opacity: 0;
+            transform: translate3d(-50%, -50%, 0) rotate(0turn);
+        }
+
+        :root {
+            --btn-light-cycle: 7200ms;
+            --btn-light-active-window: 16.667%;
+        }
+
+        @keyframes btn-perimeter-pass {
+            0% {
+                opacity: 0;
+                transform: translate3d(-50%, -50%, 0) rotate(0turn);
+            }
+            8.333% {
+                opacity: 0.72;
+            }
+            16.667%, 100% {
+                opacity: 0;
+                transform: translate3d(-50%, -50%, 0) rotate(1turn);
+            }
+        }
+
+        @keyframes btn-halo-pulse {
+            0%, 16.667%, 100% {
+                opacity: 0;
+                transform: scale(0.92);
+            }
+            8.333% {
+                opacity: 0.04;
+                transform: scale(1);
+            }
         }
 
         @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) and (background: conic-gradient(from 0deg, transparent, white)) {
-            .btn-sheen::before {
-                animation:
-                    btn-perimeter-orbit-full var(--btn-flow-full-cycle) cubic-bezier(0.4, 0, 0.2, 1) infinite,
-                    btn-perimeter-fade-full var(--btn-flow-full-cycle) linear infinite;
+            html[data-motion-profile="full"] .play-btn:not([data-busy]):not(:disabled) .btn-sheen::before {
+                animation: btn-perimeter-pass var(--btn-light-cycle) cubic-bezier(0.32, 0.72, 0, 1) infinite;
             }
 
-            @media (hover: none) and (pointer: coarse) {
-                .btn-sheen::before {
-                    animation:
-                        btn-perimeter-orbit-compact var(--btn-flow-compact-cycle) cubic-bezier(0.4, 0, 0.2, 1) infinite,
-                        btn-perimeter-fade-compact var(--btn-flow-compact-cycle) linear infinite;
-                }
+            html[data-motion-profile="compact"] .btn-sheen::before {
+                animation: none;
+                opacity: 0.19;
+                transform: translate3d(-50%, -50%, 0) rotate(0turn);
             }
         }
 
-        @keyframes btn-perimeter-orbit-full {
-            0% { --btn-flow-angle: 0deg; }
-            16.667%, 100% { --btn-flow-angle: 1turn; }
-        }
-
-        @keyframes btn-perimeter-fade-full {
-            0%, 16.667%, 100% { opacity: 0; }
-            8.333% { opacity: 0.72; }
-        }
-
-        @keyframes btn-perimeter-orbit-compact {
-            0% { --btn-flow-angle: 0deg; }
-            12.5%, 100% { --btn-flow-angle: 1turn; }
-        }
-
-        @keyframes btn-perimeter-fade-compact {
-            0%, 12.5%, 100% { opacity: 0; }
-            6.25% { opacity: 0.58; }
+        html[data-motion-profile="full"] .play-btn:not([data-busy]):not(:disabled)::after {
+            animation: btn-halo-pulse var(--btn-light-cycle) cubic-bezier(0.32, 0.72, 0, 1) infinite;
         }
 
         .play-btn[data-busy] .btn-sheen::before,
+        .play-btn:disabled .btn-sheen::before,
+        html[data-document-hidden] .btn-sheen::before,
         body.has-lyric-overlay .btn-sheen::before,
         body.has-playlist-overlay .btn-sheen::before,
-        #loadingScreen ~ #appRoot .btn-sheen::before {
+        #loadingScreen ~ #appRoot .btn-sheen::before,
+        .dynamic-island.is-opening .btn-sheen::before,
+        .dynamic-island.is-collapsing .btn-sheen::before,
+        .play-btn[data-busy]::after,
+        .play-btn:disabled::after,
+        html[data-document-hidden] .play-btn::after,
+        body.has-lyric-overlay .play-btn::after,
+        body.has-playlist-overlay .play-btn::after,
+        #loadingScreen ~ #appRoot .play-btn::after,
+        .dynamic-island.is-opening .play-btn::after,
+        .dynamic-island.is-collapsing .play-btn::after {
+            animation: none !important;
+            opacity: 0 !important;
+        }
+
+        html[data-motion-profile="compact"] .play-btn::after {
             animation: none;
-            opacity: 0;
+            opacity: 0.06;
+            transform: scale(0.96);
+        }
+
+        html[data-motion-profile="reduce"] .btn-sheen::before,
+        html[data-motion-profile="reduce"] .play-btn::after {
+            animation: none !important;
+            opacity: 0 !important;
         }
 
         @media (hover: hover) and (pointer: fine) {
@@ -1436,10 +1466,6 @@
                 transition: transform 0.32s var(--control-slide-ease), background 0.46s var(--fluid-ease), box-shadow 0.46s var(--fluid-ease), opacity 0.4s ease;
             }
 
-            .play-btn:hover::after {
-                opacity: 1;
-                transform: scale(1);
-            }
         }
 
         .play-btn:active {
@@ -3468,7 +3494,6 @@
         }
 
         .dynamic-island::before,
-        .play-btn::after,
         .btn-sheen::after {
             display: none;
         }

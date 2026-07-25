@@ -1181,7 +1181,9 @@ startCriticalAssetGate({
 
         updatePlaybackModeUI();
 
+        document.documentElement.toggleAttribute('data-document-hidden', document.hidden);
         document.addEventListener('visibilitychange', () => {
+            document.documentElement.toggleAttribute('data-document-hidden', document.hidden);
             motion.setDocumentVisible(!document.hidden);
             if (document.visibilityState !== 'visible' || currentLyricIndex === -1) return;
 
