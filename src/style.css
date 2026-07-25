@@ -1705,7 +1705,7 @@
             background:
                 radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.05) 36%, transparent 66%),
                 rgba(8, 12, 22, 0.54);
-            transition: transform 0.1s ease, opacity 0.1s ease;
+            transition: transform 0.1s var(--continuity-ease) 0s, opacity 0.1s var(--continuity-ease) 0s;
         }
 
         .result-area.is-visible .overlay-close-btn:active,

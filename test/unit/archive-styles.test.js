@@ -70,23 +70,27 @@ const splitTopLevel = (value, separator) => {
   return values;
 };
 
+const normalizeCssIdentifier = (value) => value.trim().toLowerCase();
+
 const transitionProperties = (declaration) => {
-  const value = declaration.trim().replace(/\s*!important\b/g, '');
-  if (value === 'none') return ['none'];
+  const value = declaration.trim().replace(/\s*!important\b/gi, '');
+  if (normalizeCssIdentifier(value) === 'none') return ['none'];
 
   const transitions = splitTopLevel(value, ',');
   if (!transitions?.length) return null;
 
   const timingKeywords = new Set(['ease', 'ease-in', 'ease-out', 'ease-in-out', 'linear', 'step-start', 'step-end']);
   const behaviorKeywords = new Set(['normal', 'allow-discrete']);
-  const timingFunction = /^(?:cubic-bezier|steps|linear|var)\(.+\)$/;
-  const time = /^(?:0|[+-]?(?:\d*\.\d+|\d+\.?\d*)(?:ms|s))$/;
+  const timingFunction = /^(?:cubic-bezier|steps|linear|var)\(.+\)$/i;
+  const time = /^(?:0|[+-]?(?:\d*\.\d+|\d+\.?\d*)(?:ms|s))$/i;
 
   const properties = transitions.map((transition) => {
     const tokens = splitTopLevel(transition, ' ')?.filter(Boolean);
     if (!tokens?.length) return null;
 
-    const properties = tokens.filter((token) => !time.test(token) && !timingKeywords.has(token) && !behaviorKeywords.has(token) && !timingFunction.test(token));
+    const properties = tokens
+      .map(normalizeCssIdentifier)
+      .filter((token) => !time.test(token) && !timingKeywords.has(token) && !behaviorKeywords.has(token) && !timingFunction.test(token));
     return properties.length === 1 && ['transform', 'opacity', 'none'].includes(properties[0])
       ? properties[0]
       : null;
@@ -96,18 +100,18 @@ const transitionProperties = (declaration) => {
 };
 
 const activeRuleTransitions = (source) => {
-  const rules = [...source.matchAll(/(^|\n)\s*([^{}]+:active[^{}]*)\{([^{}]*)\}/g)];
+  const rules = [...source.matchAll(/(^|\n)\s*([^{}]+:active[^{}]*)\{([^{}]*)\}/gi)];
 
   return rules.flatMap((match) => {
     const selector = match[2].trim();
     const body = match[3];
-    const values = [...body.matchAll(/\btransition\s*:\s*([\s\S]*?);/g)]
+    const values = [...body.matchAll(/\btransition\s*:\s*([\s\S]*?);/gi)]
       .map((transition) => transition[1]);
     const shorthandProperties = values.map(transitionProperties);
-    const transitionPropertyValues = [...body.matchAll(/\btransition-property\s*:\s*([\s\S]*?);/g)]
-      .flatMap((transition) => transition[1].trim().replace(/\s*!important\b/g, '').split(/\s*,\s*/));
-    const forbiddenLonghands = [...body.matchAll(/\btransition-([a-z-]+)\s*:/g)]
-      .map((longhand) => longhand[1])
+    const transitionPropertyValues = [...body.matchAll(/\btransition-property\s*:\s*([\s\S]*?);/gi)]
+      .flatMap((transition) => transition[1].trim().replace(/\s*!important\b/gi, '').split(/\s*,\s*/).map(normalizeCssIdentifier));
+    const forbiddenLonghands = [...body.matchAll(/\btransition-([a-z-]+)\s*:/gi)]
+      .map((longhand) => normalizeCssIdentifier(longhand[1]))
       .filter((longhand) => longhand !== 'property');
     const properties = shorthandProperties.flat().concat(transitionPropertyValues);
 
@@ -253,6 +257,12 @@ test('active states transition only composited properties', () => {
     assert.deepEqual(properties, ['transform', 'opacity'], `${selector} must explicitly transition only transform and opacity`);
   }
 
+  assert.match(
+    sourceRuleBody('.overlay-close-btn:active'),
+    /transition:\s*transform\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*opacity\s+0\.1s\s+var\(--continuity-ease\)\s+0s;/,
+    'the base overlay-close press transition must retain its 100ms continuity curve and zero delay'
+  );
+
   assert.deepEqual(
     transitionProperties('transform 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms linear(0, 0.5 50%, 1)'),
     ['transform', 'opacity'],
@@ -261,8 +271,10 @@ test('active states transition only composited properties', () => {
 
   for (const [description, stylesheet] of [
     ['reordered shorthand', '.reordered:active { transition: background ease 180ms; }'],
+    ['uppercase shorthand and active selector', '.uppercase:ACTIVE { TRANSITION: background 180ms; }'],
     ['opaque shorthand', '.opaque:active { transition: var(--active-transition); }'],
-    ['forbidden longhand', '.longhand:active { transition: transform 180ms; transition-duration: 180ms; }']
+    ['forbidden longhand', '.longhand:active { transition: transform 180ms; transition-duration: 180ms; }'],
+    ['uppercase transition-property', '.property:ACTIVE { TRANSITION-PROPERTY: background; }']
   ]) {
     assert.throws(
       () => assertActiveTransitionsSafe(stylesheet),
