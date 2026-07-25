@@ -18,6 +18,9 @@ const rootManifest = JSON.parse(readFileSync(
   'utf8'
 ));
 const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+const songAttributionAssignments = [...mainSource.matchAll(
+  /songEl\.textContent\s*=\s*(`[^`]*`);/g
+)].map((match) => match[1]);
 
 test('uses archive void for shell metadata and ASCII song attribution', () => {
   const document = new JSDOM(html).window.document;
@@ -28,12 +31,29 @@ test('uses archive void for shell metadata and ASCII song attribution', () => {
   assert.match(firstPaintStyle, /\.loading-screen\s*\{[\s\S]*background:\s*#070808;/);
 
   for (const currentManifest of [manifest, rootManifest]) {
-    assert.equal(currentManifest.background_color, '#070808');
-    assert.equal(currentManifest.theme_color, '#070808');
+    assert.deepEqual(
+      {
+        name: currentManifest.name,
+        short_name: currentManifest.short_name,
+        start_url: currentManifest.start_url,
+        display: currentManifest.display,
+        orientation: currentManifest.orientation,
+        background_color: currentManifest.background_color,
+        theme_color: currentManifest.theme_color
+      },
+      {
+        name: '光影档案馆',
+        short_name: '光影档案馆',
+        start_url: './',
+        display: 'standalone',
+        orientation: 'portrait',
+        background_color: '#070808',
+        theme_color: '#070808'
+      }
+    );
   }
 
-  assert.match(mainSource, /songEl\.textContent\s*=\s*`- \$\{result\.song\}`;/);
-  assert.doesNotMatch(mainSource, /[—–]/);
+  assert.deepEqual(songAttributionAssignments, ['`- ${result.song}`']);
 });
 
 test('uses the archive identity without decorative header copy', () => {

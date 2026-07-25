@@ -166,6 +166,7 @@ test('archive palette and typography use the fixed neutral system', () => {
 test('uses the archive void token instead of the retired shell color', () => {
   assert.doesNotMatch(css, /#070a12/i);
   assert.match(sourceRuleBody('.loading-screen'), /background:\s*var\(--archive-void\)/);
+  assert.match(sourceRuleBody('.player-ctrl-btn'), /color:\s*var\(--archive-void\)/);
 });
 
 test('the viewport uses only two directional projector fields', () => {
