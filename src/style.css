@@ -1705,13 +1705,13 @@
             background:
                 radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.05) 36%, transparent 66%),
                 rgba(8, 12, 22, 0.54);
-            transition-duration: 0.1s;
+            transition: transform 0.1s ease, opacity 0.1s ease;
         }
 
         .result-area.is-visible .overlay-close-btn:active,
         .playlist-area.is-visible .overlay-close-btn:active {
             transform: translateY(1px) scale(0.97) translateZ(0);
-            transition-delay: 0s;
+            transition: transform 0.1s ease 0s, opacity 0.1s ease 0s;
         }
 
         .overlay-close-btn:focus-visible {

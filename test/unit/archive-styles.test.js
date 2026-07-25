@@ -50,12 +50,49 @@ const sourceRuleBody = (selector) => exactRuleBody(css, selector);
 const archiveRuleBody = (selector) => exactRuleBody(archiveCss, selector);
 const archiveMediaBody = (query) => blockBody(archiveCss, `@media ${query} {`);
 
+const splitTopLevel = (value, separator) => {
+  const values = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === '(') depth += 1;
+    if (value[index] === ')') depth -= 1;
+    if (depth < 0) return null;
+    if (depth === 0 && (separator === ' ' ? /\s/.test(value[index]) : value[index] === separator)) {
+      values.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  if (depth !== 0) return null;
+  values.push(value.slice(start).trim());
+  return values;
+};
+
 const transitionProperties = (declaration) => {
   const value = declaration.trim().replace(/\s*!important\b/g, '');
   if (value === 'none') return ['none'];
 
-  return [...value.matchAll(/(?:^|,)\s*([a-z-]+)\s+(?=(?:\d|var\())/g)]
-    .map((match) => match[1]);
+  const transitions = splitTopLevel(value, ',');
+  if (!transitions?.length) return null;
+
+  const timingKeywords = new Set(['ease', 'ease-in', 'ease-out', 'ease-in-out', 'linear', 'step-start', 'step-end']);
+  const behaviorKeywords = new Set(['normal', 'allow-discrete']);
+  const timingFunction = /^(?:cubic-bezier|steps|linear|var)\(.+\)$/;
+  const time = /^(?:0|[+-]?(?:\d*\.\d+|\d+\.?\d*)(?:ms|s))$/;
+
+  const properties = transitions.map((transition) => {
+    const tokens = splitTopLevel(transition, ' ')?.filter(Boolean);
+    if (!tokens?.length) return null;
+
+    const properties = tokens.filter((token) => !time.test(token) && !timingKeywords.has(token) && !behaviorKeywords.has(token) && !timingFunction.test(token));
+    return properties.length === 1 && ['transform', 'opacity', 'none'].includes(properties[0])
+      ? properties[0]
+      : null;
+  });
+
+  return properties.every(Boolean) ? properties : null;
 };
 
 const activeRuleTransitions = (source) => {
@@ -66,14 +103,32 @@ const activeRuleTransitions = (source) => {
     const body = match[3];
     const values = [...body.matchAll(/\btransition\s*:\s*([\s\S]*?);/g)]
       .map((transition) => transition[1]);
-    const properties = values.flatMap(transitionProperties);
+    const shorthandProperties = values.map(transitionProperties);
     const transitionPropertyValues = [...body.matchAll(/\btransition-property\s*:\s*([\s\S]*?);/g)]
       .flatMap((transition) => transition[1].trim().replace(/\s*!important\b/g, '').split(/\s*,\s*/));
+    const forbiddenLonghands = [...body.matchAll(/\btransition-([a-z-]+)\s*:/g)]
+      .map((longhand) => longhand[1])
+      .filter((longhand) => longhand !== 'property');
+    const properties = shorthandProperties.flat().concat(transitionPropertyValues);
 
-    return properties.length || transitionPropertyValues.length
-      ? [{ selector, properties: [...properties, ...transitionPropertyValues] }]
+    return values.length || transitionPropertyValues.length || forbiddenLonghands.length
+      ? [{ selector, properties, invalidShorthand: shorthandProperties.some((properties) => properties === null), forbiddenLonghands }]
       : [];
   });
+};
+
+const assertActiveTransitionsSafe = (source) => {
+  const activeTransitions = activeRuleTransitions(source);
+  assert.ok(activeTransitions.length > 0, 'expected active-state transition declarations');
+
+  for (const { selector, properties, invalidShorthand, forbiddenLonghands } of activeTransitions) {
+    assert.ok(!invalidShorthand, `${selector} contains an unparseable or forbidden active transition shorthand`);
+    assert.deepEqual(forbiddenLonghands, [], `${selector} contains forbidden active transition longhands: ${forbiddenLonghands.join(', ')}`);
+    assert.ok(
+      properties.every((property) => ['transform', 'opacity', 'none'].includes(property)),
+      `${selector} transitions forbidden active-state properties: ${properties.join(', ')}`
+    );
+  }
 };
 
 test('archive palette and typography use the fixed neutral system', () => {
@@ -198,14 +253,25 @@ test('active states transition only composited properties', () => {
     assert.deepEqual(properties, ['transform', 'opacity'], `${selector} must explicitly transition only transform and opacity`);
   }
 
-  const activeTransitions = activeRuleTransitions(css);
-  assert.ok(activeTransitions.length > 0, 'expected active-state transition declarations');
-  for (const { selector, properties } of activeTransitions) {
-    assert.ok(
-      properties.every((property) => ['transform', 'opacity', 'none'].includes(property)),
-      `${selector} transitions forbidden active-state properties: ${properties.join(', ')}`
+  assert.deepEqual(
+    transitionProperties('transform 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms linear(0, 0.5 50%, 1)'),
+    ['transform', 'opacity'],
+    'commas inside timing functions must not split transition entries'
+  );
+
+  for (const [description, stylesheet] of [
+    ['reordered shorthand', '.reordered:active { transition: background ease 180ms; }'],
+    ['opaque shorthand', '.opaque:active { transition: var(--active-transition); }'],
+    ['forbidden longhand', '.longhand:active { transition: transform 180ms; transition-duration: 180ms; }']
+  ]) {
+    assert.throws(
+      () => assertActiveTransitionsSafe(stylesheet),
+      /forbidden|unparseable/,
+      `${description} must not evade the active transition guard`
     );
   }
+
+  assertActiveTransitionsSafe(css);
 });
 
 test('archive transitions are composited and reduce states are instant', () => {
