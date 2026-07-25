@@ -163,6 +163,11 @@ test('archive palette and typography use the fixed neutral system', () => {
   assert.match(archiveRuleBody('.archive-track-meta'), /font-family:\s*var\(--font-ui\)/);
 });
 
+test('uses the archive void token instead of the retired shell color', () => {
+  assert.doesNotMatch(css, /#070a12/i);
+  assert.match(sourceRuleBody('.loading-screen'), /background:\s*var\(--archive-void\)/);
+});
+
 test('the viewport uses only two directional projector fields', () => {
   const fields = [sourceRuleBody('body::before'), sourceRuleBody('body::after')];
 

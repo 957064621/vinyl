@@ -1035,7 +1035,7 @@ startCriticalAssetGate({
         const updateCurrentLyric = (index) => {
             const result = lyricsPool[index];
             lyricEl.innerHTML = renderLyricLinesHTML(result.text);
-            songEl.textContent = `—— ${result.song}`;
+            songEl.textContent = `- ${result.song}`;
             currentLyricIndex = index;
             updateArchiveMetadata(index, audioController.getState().status);
             void applyCoverVisual(index);

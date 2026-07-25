@@ -17,6 +17,24 @@ const rootManifest = JSON.parse(readFileSync(
   new URL('../../manifest.webmanifest', import.meta.url),
   'utf8'
 ));
+const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+
+test('uses archive void for shell metadata and ASCII song attribution', () => {
+  const document = new JSDOM(html).window.document;
+  const firstPaintStyle = document.querySelector('head > style').textContent;
+
+  assert.equal(document.querySelector('meta[name="theme-color"]').content, '#070808');
+  assert.match(firstPaintStyle, /html,\s*body\s*\{[\s\S]*background:\s*#070808;/);
+  assert.match(firstPaintStyle, /\.loading-screen\s*\{[\s\S]*background:\s*#070808;/);
+
+  for (const currentManifest of [manifest, rootManifest]) {
+    assert.equal(currentManifest.background_color, '#070808');
+    assert.equal(currentManifest.theme_color, '#070808');
+  }
+
+  assert.match(mainSource, /songEl\.textContent\s*=\s*`- \$\{result\.song\}`;/);
+  assert.doesNotMatch(mainSource, /[—–]/);
+});
 
 test('uses the archive identity without decorative header copy', () => {
   const document = new JSDOM(html).window.document;
