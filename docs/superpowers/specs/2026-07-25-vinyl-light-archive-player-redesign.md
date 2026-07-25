@@ -63,9 +63,9 @@ Replace the layout and player composition wholesale. This creates maximum visual
 ## Draw Button Light Loop
 
 - Adapt the supplied Glowing Shadow reference into one restrained perimeter-light pass around the existing draw button. Preserve the button's current dimensions, pill geometry, label viewport, and command hierarchy.
-- Use projector white, cold silver, archive red, and the current cover accent. Do not reproduce the reference's rainbow hue cycle, large blurred halo, pulsing box shadow, or viewport-sized glow calculations.
-- In the `full` profile, each loop has one non-linear travelling pass followed by a visible quiet interval. The loop runs only while the command is idle and interactive; `data-busy`, disabled, hidden, and overlay-transition states pause it.
-- `compact` keeps a static low-opacity perimeter highlight, and `reduce` removes the loop entirely. The effect must animate only transform and opacity and must not create mobile long tasks over `50ms`.
+- Use projector white, cold silver, archive red, and the current cover accent. Do not reproduce the reference's rainbow hue cycle, viewport-sized glow calculations, or chaotic multi-peak shadow pulse. A restrained blurred halo and one synchronized pulse are allowed.
+- In the `full` profile, each loop has one non-linear travelling pass plus one synchronized halo pulse, followed by a visible quiet interval. The loop runs only while the command is idle and interactive; `data-busy`, disabled, document-hidden, loading, and overlay-transition states stop both layers and restart them from a clean phase.
+- `compact` keeps a static low-opacity perimeter highlight and very weak static halo, and `reduce` removes both layers entirely. The moving effect must animate only transform and opacity; blur, filter, and box-shadow values remain static. The effect must not create mobile long tasks over `50ms`.
 - Hover, focus-visible, and active states remain legible without depending on the loop. Button text contrast and the existing tactile press response remain intact.
 
 ## Lyrics And Playlist
