@@ -7,8 +7,8 @@
     <meta name="color-scheme" content="dark">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="光影档案馆">
-    <title>光影档案馆</title>
+    <meta name="apple-mobile-web-app-title" content="歌词抽取机">
+    <title>歌词抽取机</title>
     <link rel="manifest" href="./manifest.webmanifest">
     <style>
         html,
@@ -102,7 +102,7 @@
     <div class="app-root" id="appRoot" inert aria-hidden="true">
     <main class="app-shell" id="appShell">
         <header class="header">
-            <h1>光影档案馆</h1>
+            <h1>歌词抽取机</h1>
             <p>按下按钮，为你抽取一段专属歌词</p>
         </header>
 
@@ -126,9 +126,9 @@
         </div>
 
         <dl class="archive-track-meta" id="archiveTrackMeta" aria-live="polite">
-            <div><dt>编号</dt><dd id="archiveTrackNumber">--</dd></div>
+            <div><dt>歌曲</dt><dd id="archiveTrackSong">未抽取</dd></div>
             <div><dt>发行</dt><dd id="archiveRelease">未抽取</dd></div>
-            <div><dt>来源</dt><dd id="archiveSource">档案库</dd></div>
+            <div><dt>年份</dt><dd id="archiveYear">----</dd></div>
             <div><dt>状态</dt><dd id="archivePlaybackState">待机</dd></div>
         </dl>
 
@@ -155,7 +155,7 @@
                 </span>
             </button>
 
-            <div class="player-pill" id="playerPill">
+            <div class="player-pill" id="playerPill" inert aria-hidden="true">
                 <button class="player-ctrl-btn" id="playerToggleBtn" type="button">
                     <svg class="icon-play" viewBox="0 0 24 24"><path fill="currentColor" d="M9.2 7.3c0-.78.84-1.25 1.5-.84l6.6 4.2c.63.4.63 1.31 0 1.72l-6.6 4.2c-.66.41-1.5-.06-1.5-.84z"/></svg>
                     <svg class="icon-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M8.6 7.4c0-.66.54-1.2 1.2-1.2h.9c.66 0 1.2.54 1.2 1.2v9.2c0 .66-.54 1.2-1.2 1.2h-.9c-.66 0-1.2-.54-1.2-1.2zm4.7 0c0-.66.54-1.2 1.2-1.2h.9c.66 0 1.2.54 1.2 1.2v9.2c0 .66-.54 1.2-1.2 1.2h-.9c-.66 0-1.2-.54-1.2-1.2z"/></svg>
@@ -175,7 +175,7 @@
 
     </main>
 
-    <div class="result-area" id="resultArea">
+    <div class="result-area" id="resultArea" inert aria-hidden="true">
         <button class="overlay-close-btn" id="lyricCloseBtn" type="button" aria-label="关闭歌词页">
             <span aria-hidden="true">×</span>
             <span>关闭</span>
@@ -187,7 +187,7 @@
         <div class="result-dismiss-hint" id="lyricDismissHint">轻点空白处关闭</div>
     </div>
 
-    <div class="playlist-area" id="playlistArea">
+    <div class="playlist-area" id="playlistArea" inert aria-hidden="true">
         <button class="overlay-close-btn" id="playlistCloseBtn" type="button" aria-label="关闭播放列表">
             <span aria-hidden="true">×</span>
             <span>关闭</span>

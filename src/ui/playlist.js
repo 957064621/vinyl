@@ -38,6 +38,10 @@ export function getPlaylistViewportItems(items, viewportRect, anchorIndex = -1) 
   return visibleItems;
 }
 
+const getReleaseYear = (releaseDate) => (
+  String(releaseDate || '').match(/^\d{4}/)?.[0] || '待核对'
+);
+
 export function createPlaylist({ listEl, releases, tracks, getCoverCandidates, onSelect }) {
   const isTrackRecord = (track, requireAlbum = false) => Boolean(
     track
@@ -83,6 +87,20 @@ export function createPlaylist({ listEl, releases, tracks, getCoverCandidates, o
       heading.className = 'playlist-group-head playlist-group-header';
       const cover = getCoverCandidates(release);
 
+      const releaseIdentity = document.createElement('div');
+      releaseIdentity.className = 'playlist-album-identity';
+
+      const title = document.createElement('span');
+      title.className = 'playlist-album-title';
+      title.textContent = release.title;
+
+      const year = document.createElement('span');
+      year.className = 'playlist-album-meta';
+      year.textContent = getReleaseYear(release.releaseDate);
+
+      releaseIdentity.append(title, year);
+      heading.append(releaseIdentity);
+
       if (cover?.src) {
         const image = document.createElement('img');
         image.className = 'playlist-cover';
@@ -100,11 +118,6 @@ export function createPlaylist({ listEl, releases, tracks, getCoverCandidates, o
         }, { once: true });
         heading.append(image);
       }
-
-      const title = document.createElement('span');
-      title.className = 'playlist-album-title';
-      title.textContent = release.title;
-      heading.append(title);
       group.append(heading);
 
       for (const { index, releaseTrackIndex, track } of matchedTracks) {

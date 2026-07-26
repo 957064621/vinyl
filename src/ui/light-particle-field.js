@@ -1,6 +1,6 @@
 export const PARTICLE_PROFILES = Object.freeze({
-  full: Object.freeze({ count: 64, dpr: 1.5, gatherMs: 160, scatterMs: 140 }),
-  compact: Object.freeze({ count: 28, dpr: 1.25, gatherMs: 100, scatterMs: 90 }),
+  full: Object.freeze({ count: 48, dpr: 1.5, gatherMs: 160, scatterMs: 140 }),
+  compact: Object.freeze({ count: 18, dpr: 1.25, gatherMs: 100, scatterMs: 90 }),
   reduce: Object.freeze({ count: 0, dpr: 1, gatherMs: 0, scatterMs: 0 })
 });
 
@@ -8,6 +8,7 @@ const PARTICLE_COLORS = Object.freeze([
   Object.freeze({ point: 'rgba(228, 216, 194, 0.82)', line: 'rgba(206, 191, 166, 0.48)' }),
   Object.freeze({ point: 'rgba(199, 214, 220, 0.82)', line: 'rgba(170, 194, 204, 0.48)' })
 ]);
+const PORTAL_SIDES = Object.freeze(['left', 'right']);
 
 const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
 const finite = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -94,6 +95,15 @@ export const createLightParticleField = ({
     return canvas.getAttribute?.(`data-${attribute}`);
   };
 
+  const clearCanvasData = (name) => {
+    if (canvas.dataset) {
+      delete canvas.dataset[name];
+      return;
+    }
+    const attribute = name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+    canvas.removeAttribute?.(`data-${attribute}`);
+  };
+
   const erase = () => {
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvas.width, canvas.height);
@@ -114,6 +124,7 @@ export const createLightParticleField = ({
     particles = [];
     erase();
     setCanvasData('phase', 'idle');
+    clearCanvasData('portalSide');
     settling?.resolve();
   };
 
@@ -148,25 +159,26 @@ export const createLightParticleField = ({
     y: bounds.top + ((bounds.bottom - bounds.top) * randomUnit())
   });
 
-  const pointOnPerimeter = () => {
-    const edge = Math.floor(randomUnit() * 4);
-    const offset = randomUnit();
-    if (edge === 0) return { x: cssWidth * offset, y: 0 };
-    if (edge === 1) return { x: cssWidth, y: cssHeight * offset };
-    if (edge === 2) return { x: cssWidth * offset, y: cssHeight };
-    return { x: 0, y: cssHeight * offset };
+  const pointOnPortal = (bounds, portalSide) => {
+    const height = Math.max(1, bounds.bottom - bounds.top);
+    const centerY = bounds.top + (height / 2);
+    const x = portalSide === 'right'
+      ? bounds.right
+      : bounds.left;
+    const y = centerY + ((randomUnit() - 0.5) * height * 1.12);
+    return { x: clamp(x, 0, cssWidth), y: clamp(y, 0, cssHeight) };
   };
 
-  const buildParticles = (phase, bounds) => Array.from({ length: settings.count }, (_, index) => {
+  const buildParticles = (phase, bounds, portalSide) => Array.from({ length: settings.count }, (_, index) => {
     const inside = pointInBounds(bounds);
-    const outside = pointOnPerimeter();
+    const outside = pointOnPortal(bounds, portalSide);
     const start = phase === 'gather' ? outside : inside;
     const end = phase === 'gather' ? inside : outside;
     return {
       start,
       end,
-      radius: 0.8 + (randomUnit() * 0.7),
-      trail: 3 + (randomUnit() * 4),
+      radius: 0.65 + (randomUnit() * 0.55),
+      trail: 10 + (randomUnit() * 16),
       color: PARTICLE_COLORS[index % PARTICLE_COLORS.length],
       startTrail: null,
       rendered: null
@@ -273,8 +285,11 @@ export const createLightParticleField = ({
     else schedule();
   }
 
-  const start = (phase, bounds, durationMs) => {
+  const start = (phase, bounds, durationMs, { portalSide } = {}) => {
     if (destroyed) return Promise.resolve();
+    const resolvedPortalSide = PORTAL_SIDES.includes(portalSide)
+      ? portalSide
+      : (phase === 'scatter' ? 'right' : 'left');
     const canReuseGather = phase === 'scatter'
       && command === null
       && frameId === null
@@ -283,6 +298,7 @@ export const createLightParticleField = ({
       && particles.every(({ rendered }) => rendered);
     if (!canReuseGather && (command || frameId !== null || particles.length > 0)) settleCommand();
     if (profileName !== 'reduce') resize();
+    const normalizedBounds = normalizeBounds(bounds);
 
     const defaultDuration = phase === 'gather' ? settings.gatherMs : settings.scatterMs;
     const duration = Math.max(0, finite(durationMs, defaultDuration));
@@ -290,6 +306,7 @@ export const createLightParticleField = ({
       particles = [];
       erase();
       setCanvasData('phase', 'idle');
+      clearCanvasData('portalSide');
       return Promise.resolve();
     }
 
@@ -297,14 +314,15 @@ export const createLightParticleField = ({
       particles = particles.map((particle) => ({
         ...particle,
         start: { ...particle.rendered.position },
-        end: pointOnPerimeter(),
+        end: pointOnPortal(normalizedBounds, resolvedPortalSide),
         startTrail: { ...particle.rendered.trailEnd },
         rendered: null
       }));
     } else {
-      particles = buildParticles(phase, normalizeBounds(bounds));
+      particles = buildParticles(phase, normalizedBounds, resolvedPortalSide);
     }
     setCanvasData('phase', phase);
+    setCanvasData('portalSide', resolvedPortalSide);
     const promise = new Promise((resolve) => {
       command = { phase, duration, elapsed: 0, lastTimestamp: null, resolve };
     });
@@ -406,8 +424,8 @@ export const createLightParticleField = ({
   resize();
 
   return {
-    gather: (bounds, durationMs) => start('gather', bounds, durationMs),
-    scatter: (bounds, durationMs) => start('scatter', bounds, durationMs),
+    gather: (bounds, durationMs, options) => start('gather', bounds, durationMs, options),
+    scatter: (bounds, durationMs, options) => start('scatter', bounds, durationMs, options),
     resize,
     setProfile,
     clear,

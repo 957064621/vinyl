@@ -12,12 +12,12 @@ const POSTER_TIMING = {
   normal: {
     ...VISUAL8_TIMING.full.normal,
     reveal: VISUAL8_TIMING.full.normal.handoff,
-    scatter: VISUAL8_TIMING.full.normal.handoff
+    scatter: VISUAL8_TIMING.full.normal.exit
   },
   fast: {
     ...VISUAL8_TIMING.full.compressed,
     reveal: VISUAL8_TIMING.full.compressed.handoff,
-    scatter: VISUAL8_TIMING.full.compressed.handoff
+    scatter: VISUAL8_TIMING.full.compressed.exit
   },
   finalHold: VISUAL8_TIMING.full.finalHold,
   finalExposure: VISUAL8_TIMING.full.finalResolve,
@@ -100,16 +100,16 @@ const makeManualScheduler = ({ retainAfterAbort = () => false } = {}) => {
 const makeDeferredParticleField = () => {
   const pending = [];
   const calls = [];
-  const start = (phase, bounds, duration) => new Promise((resolve, reject) => {
-    calls.push([phase, bounds, duration]);
-    pending.push({ phase, duration, resolve, reject });
+  const start = (phase, bounds, duration, options) => new Promise((resolve, reject) => {
+    calls.push([phase, bounds, duration, options]);
+    pending.push({ phase, duration, options, resolve, reject });
   });
 
   return {
     calls,
     pending,
-    gather: (bounds, duration) => start('gather', bounds, duration),
-    scatter: (bounds, duration) => start('scatter', bounds, duration),
+    gather: (bounds, duration, options) => start('gather', bounds, duration, options),
+    scatter: (bounds, duration, options) => start('scatter', bounds, duration, options),
     finish() {
       calls.push(['finish']);
     },
@@ -124,6 +124,7 @@ const makeFixture = ({
   particleField,
   profile = 'full',
   onError,
+  onFinalScene,
   scheduleMicrotask
 } = {}) => {
   const dom = new JSDOM(`
@@ -139,11 +140,11 @@ const makeFixture = ({
   const document = dom.window.document;
   const particleCalls = [];
   const defaultParticleField = {
-    gather(bounds, duration) {
-      particleCalls.push(['gather', bounds, duration]);
+    gather(bounds, duration, options) {
+      particleCalls.push(['gather', bounds, duration, options]);
     },
-    scatter(bounds, duration) {
-      particleCalls.push(['scatter', bounds, duration]);
+    scatter(bounds, duration, options) {
+      particleCalls.push(['scatter', bounds, duration, options]);
     },
     finish() {
       particleCalls.push(['finish']);
@@ -175,6 +176,7 @@ const makeFixture = ({
     profile,
     scheduler: scheduler || makeImmediateScheduler(sleeps),
     onError: onError || ((error) => errors.push(error)),
+    onFinalScene,
     scheduleMicrotask
   });
 
@@ -192,19 +194,19 @@ const makeFixture = ({
   };
 };
 
-test('timing tables are deeply frozen and preserve exact Visual 8 profile wall times', () => {
+test('timing tables are deeply frozen and preserve fast portal travel with a readable center hold', () => {
   assert.deepEqual(VISUAL8_TIMING, {
     full: {
-      normal: { gather: 220, handoff: 820, hold: 420 },
-      compressed: { gather: 160, handoff: 620, hold: 260 },
+      normal: { gather: 90, handoff: 420, exit: 340, hold: 500 },
+      compressed: { gather: 60, handoff: 340, exit: 280, hold: 440 },
       finalHold: 840,
       finalResolve: 1100,
       exitLead: 620,
       rootFade: 680
     },
     compact: {
-      normal: { gather: 180, handoff: 720, hold: 360 },
-      compressed: { gather: 120, handoff: 560, hold: 240 },
+      normal: { gather: 70, handoff: 360, exit: 300, hold: 440 },
+      compressed: { gather: 50, handoff: 300, exit: 240, hold: 380 },
       finalHold: 720,
       finalResolve: 920,
       exitLead: 520,
@@ -212,11 +214,16 @@ test('timing tables are deeply frozen and preserve exact Visual 8 profile wall t
     },
     reduce: { fade: 120 }
   });
-  const wallTime = ({ gather, handoff, hold }) => gather + handoff + hold;
-  assert.equal(wallTime(VISUAL8_TIMING.full.normal), 1460);
-  assert.equal(wallTime(VISUAL8_TIMING.full.compressed), 1040);
-  assert.equal(wallTime(VISUAL8_TIMING.compact.normal), 1260);
-  assert.equal(wallTime(VISUAL8_TIMING.compact.compressed), 920);
+  const firstPosterTime = ({ gather, handoff, hold }) => gather + handoff + hold;
+  const exchangeTime = ({ gather, handoff, exit, hold }) => (
+    gather + exit + gather + handoff + hold
+  );
+  assert.equal(firstPosterTime(VISUAL8_TIMING.full.normal), 1010);
+  assert.equal(exchangeTime(VISUAL8_TIMING.full.normal), 1440);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.full.compressed), 840);
+  assert.equal(exchangeTime(VISUAL8_TIMING.full.compressed), 1180);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.normal), 870);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.compressed), 730);
   assert.equal(Object.isFrozen(VISUAL8_TIMING), true);
   for (const profile of ['full', 'compact', 'reduce']) {
     assert.equal(Object.isFrozen(VISUAL8_TIMING[profile]), true);
@@ -227,7 +234,7 @@ test('timing tables are deeply frozen and preserve exact Visual 8 profile wall t
   }
 });
 
-test('ordinary slit ignition precedes dominance at exactly 45% of gather', async () => {
+test('left portal ignites for the lead before a single poster begins entering', async () => {
   const scheduler = makeManualScheduler();
   const { controller, root, scheduler: unused, slit, slots } = {
     ...makeFixture({ scheduler }),
@@ -237,12 +244,25 @@ test('ordinary slit ignition precedes dominance at exactly 45% of gather', async
   controller.enqueue(slots[0]);
   await flush();
 
-  assert.deepEqual(scheduler.durations.sort((a, b) => a - b), [99, 220]);
-  scheduler.releaseDuration(99);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+  assert.equal(slit.classList.contains('is-lit'), true);
+  assert.equal(root.dataset.portalSide, 'left');
+  assert.equal(root.dataset.portalPhase, 'enter');
+  assert.equal(slit.dataset.portalSide, 'left');
+  assert.equal(slit.dataset.portalPhase, 'enter');
+  assert.equal(root.querySelectorAll('.is-active').length, 0);
+
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
   await flush();
   assert.equal(slit.classList.contains('is-lit'), true);
-  assert.equal(root.querySelectorAll('.is-active').length, 0);
-  assert.equal(root.style.getPropertyValue('--slit-duration'), '941ms');
+  assert.equal(root.classList.contains('is-scanning'), true);
+  assert.equal(root.querySelectorAll('.is-active').length, 1);
+  assert.equal(slots[0].classList.contains('is-entering'), true);
+  assert.equal(slots[0].classList.contains('is-entering-from-portal'), true);
+  assert.equal(slots[0].dataset.portalSide, 'left');
+  assert.equal(slots[0].dataset.portalPhase, 'enter');
+  assert.equal(root.style.getPropertyValue('--slit-duration'), '510ms');
+  assert.equal(root.style.getPropertyValue('--portal-phase-ms'), '510ms');
 
   controller.freeze();
 });
@@ -262,14 +282,20 @@ test('validates required collaborators and motion profiles', () => {
   assert.equal(controller.getState().profile, 'full');
 });
 
-test('rapid enqueue is synchronous, FIFO, alternates direction, and preserves exact image nodes', async () => {
+test('rapid enqueue is synchronous, FIFO, uses one vertical axis, and preserves exact image nodes', async () => {
   const { controller, images, root, slots } = makeFixture();
   const returns = slots.map((slot) => controller.enqueue(slot));
 
   assert.deepEqual(returns, [true, true, true, true, true]);
   assert.equal(controller.enqueue(slots[0]), false, 'a decoded slot is accepted once per run');
   assert.deepEqual(slots.map((slot) => slot.dataset.transitionOrder), ['1', '2', '3', '4', '5']);
-  assert.deepEqual(slots.map((slot) => slot.dataset.slitDirection), ['ltr', 'rtl', 'ltr', 'rtl', 'ltr']);
+  assert.deepEqual(slots.map((slot) => slot.dataset.slitDirection), [
+    'vertical',
+    'vertical',
+    'vertical',
+    'vertical',
+    'vertical'
+  ]);
 
   const finishing = controller.finish();
   assert.strictEqual(controller.finish(), finishing, 'finish is idempotent per run');
@@ -284,6 +310,25 @@ test('rapid enqueue is synchronous, FIFO, alternates direction, and preserves ex
     assert.equal(images[index].getAttribute('aria-hidden'), 'true');
   }
   assert.equal(root.dataset.transitionSettled, 'true');
+  assert.equal(root.classList.contains('is-scanning'), false);
+});
+
+test('final resolve reports the true final active poster before the tunnel starts', async () => {
+  const finalScenes = [];
+  const { controller, images, root, slots } = makeFixture({
+    onFinalScene: (scene) => finalScenes.push(scene)
+  });
+
+  for (const slot of slots) controller.enqueue(slot);
+  await controller.finish();
+
+  assert.equal(finalScenes.length, 1);
+  assert.strictEqual(finalScenes[0].slot, slots[4]);
+  assert.strictEqual(finalScenes[0].image, images[4]);
+  assert.equal(finalScenes[0].profile, 'full');
+  assert.equal(root.classList.contains('is-final-resolving'), true);
+  assert.equal(root.dataset.portalSide, 'center');
+  assert.equal(root.dataset.portalPhase, 'final-handoff');
 });
 
 test('enqueue accepts only mounted image slots inside its root', () => {
@@ -364,26 +409,40 @@ test('rapid backlog stays compressed through one drain and a later isolated run 
 
   const compressedRounds = await releaseProcessingRounds();
   assert.deepEqual(compressedRounds, [
-    [72, POSTER_TIMING.fast.gather],
-    [708, POSTER_TIMING.fast.handoff],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.handoff],
     [POSTER_TIMING.fast.hold],
-    [72, POSTER_TIMING.fast.gather],
-    [708, POSTER_TIMING.fast.handoff],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.exit],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.handoff],
     [POSTER_TIMING.fast.hold],
-    [72, POSTER_TIMING.fast.gather],
-    [708, POSTER_TIMING.fast.handoff],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.exit],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.handoff],
     [POSTER_TIMING.fast.hold],
-    [72, POSTER_TIMING.fast.gather],
-    [708, POSTER_TIMING.fast.handoff],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.exit],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.handoff],
     [POSTER_TIMING.fast.hold],
-    [72, POSTER_TIMING.fast.gather],
-    [708, POSTER_TIMING.fast.handoff],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.exit],
+    [POSTER_TIMING.fast.gather],
+    [POSTER_TIMING.fast.handoff],
     [POSTER_TIMING.finalHold]
   ]);
-  assert.equal(POSTER_TIMING.fast.gather + POSTER_TIMING.fast.handoff + POSTER_TIMING.fast.hold, 1040);
+  assert.equal(
+    (POSTER_TIMING.fast.gather * 2)
+      + POSTER_TIMING.fast.exit
+      + POSTER_TIMING.fast.handoff
+      + POSTER_TIMING.fast.hold,
+    1180
+  );
   assert.equal(
     slots.at(-1).style.getPropertyValue('--poster-handoff-ms'),
-    `${POSTER_TIMING.fast.handoff}ms`
+    ''
   );
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.exitLead, POSTER_TIMING.finalExposure]);
   scheduler.releaseNext();
@@ -396,13 +455,13 @@ test('rapid backlog stays compressed through one drain and a later isolated run 
   await controller.waitForIdle();
 
   assert.deepEqual(isolatedRounds, [
-    [99, POSTER_TIMING.normal.gather],
-    [941, POSTER_TIMING.normal.handoff],
+    [POSTER_TIMING.normal.gather],
+    [POSTER_TIMING.normal.handoff],
     [POSTER_TIMING.normal.hold]
   ]);
   assert.equal(
     slots[0].style.getPropertyValue('--poster-handoff-ms'),
-    String(POSTER_TIMING.normal.handoff) + 'ms'
+    ''
   );
 });
 
@@ -422,9 +481,7 @@ test('finish after an idle normal scene adds only the unread final hold remainde
   }
   await controller.waitForIdle();
   assert.deepEqual(scheduler.sleepCalls, [
-    99,
     POSTER_TIMING.normal.gather,
-    941,
     POSTER_TIMING.normal.handoff,
     POSTER_TIMING.normal.hold
   ]);
@@ -505,7 +562,7 @@ for (const [initialProfile, nextProfile] of [
   });
 }
 
-test('animated transitions overlap outgoing scatter with incoming reveal', async () => {
+test('poster exchange exits right completely before the next poster enters from the left', async () => {
   const scheduler = makeManualScheduler();
   const { controller, particleCalls, root, slit, slots } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
@@ -513,7 +570,7 @@ test('animated transitions overlap outgoing scatter with incoming reveal', async
   await flush();
 
   let guard = 0;
-  while (!slots[1].classList.contains('is-revealing')) {
+  while (root.dataset.portalSide !== 'right' || root.dataset.portalPhase !== 'exit') {
     assert.ok(guard < 16);
     assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
@@ -521,23 +578,58 @@ test('animated transitions overlap outgoing scatter with incoming reveal', async
     guard += 1;
   }
 
+  assert.equal(slots[0].classList.contains('is-active'), true);
+  assert.equal(slots[0].classList.contains('is-stable'), true);
+  assert.equal(slots[1].classList.contains('is-active'), false);
+  assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 1);
+  assert.equal(slit.dataset.portalSide, 'right');
+  assert.equal(slit.dataset.portalPhase, 'exit');
+
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
+  await flush();
+
   const outgoing = slots[0];
   const incoming = slots[1];
   assert.equal(outgoing.classList.contains('is-outgoing'), true);
+  assert.equal(outgoing.classList.contains('is-exiting'), true);
+  assert.equal(outgoing.classList.contains('is-exiting-to-portal'), true);
   assert.equal(outgoing.classList.contains('is-active'), false);
   assert.equal(outgoing.querySelector('img').getAttribute('aria-hidden'), 'true');
-  assert.equal(incoming.classList.contains('is-active'), true);
-  assert.equal(incoming.classList.contains('is-revealing'), true);
-  assert.equal(root.querySelectorAll('.is-active').length, 1);
-  assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 2);
-  assert.equal(root.style.getPropertyValue('--slit-duration'), '941ms');
+  assert.equal(outgoing.dataset.portalSide, 'right');
+  assert.equal(outgoing.dataset.portalPhase, 'exit');
+  assert.equal(incoming.classList.contains('is-active'), false);
+  assert.equal(incoming.classList.contains('is-revealing'), false);
+  assert.equal(root.querySelectorAll('.is-active').length, 0);
+  assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 1);
+  assert.equal(root.style.getPropertyValue('--slit-duration'), '430ms');
   assert.ok(particleCalls.some(([name]) => name === 'scatter'));
-  assert.ok(scheduler.durations.includes(POSTER_TIMING.normal.handoff));
+  assert.ok(scheduler.durations.includes(POSTER_TIMING.normal.exit));
   assert.equal(
-    outgoing.style.getPropertyValue('--poster-handoff-ms'),
-    `${POSTER_TIMING.normal.handoff}ms`
+    outgoing.style.getPropertyValue('--poster-exit-ms'),
+    `${POSTER_TIMING.normal.exit}ms`
   );
   assert.equal(slit.classList.contains('is-lit'), true);
+
+  scheduler.releaseDuration(POSTER_TIMING.normal.exit);
+  await flush();
+  assert.equal(outgoing.classList.contains('is-outgoing'), false);
+  assert.equal(outgoing.classList.contains('is-exiting'), false);
+  assert.equal(outgoing.classList.contains('is-exiting-to-portal'), false);
+  assert.equal(root.dataset.portalSide, 'left');
+  assert.equal(root.dataset.portalPhase, 'enter');
+  assert.equal(incoming.classList.contains('is-active'), false);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
+  await flush();
+  assert.equal(incoming.classList.contains('is-active'), true);
+  assert.equal(incoming.classList.contains('is-revealing'), true);
+  assert.equal(incoming.classList.contains('is-entering-from-portal'), true);
+  assert.equal(incoming.dataset.portalSide, 'left');
+  assert.equal(incoming.dataset.portalPhase, 'enter');
+  assert.equal(root.querySelectorAll('.is-active').length, 1);
+  assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
+  assert.ok(scheduler.durations.includes(POSTER_TIMING.normal.handoff));
 
   while (controller.getState().processing) {
     assert.ok(guard < 32);
@@ -549,6 +641,9 @@ test('animated transitions overlap outgoing scatter with incoming reveal', async
   assert.equal(slit.classList.contains('is-lit'), false);
   assert.equal(outgoing.classList.contains('is-outgoing'), false);
   assert.equal(outgoing.style.getPropertyValue('--poster-handoff-ms'), '');
+  assert.equal(incoming.classList.contains('is-entering-from-portal'), false);
+  assert.equal(root.dataset.portalSide, undefined);
+  assert.equal(root.dataset.portalPhase, undefined);
   await controller.waitForIdle();
   assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
   assert.equal(root.querySelectorAll('.is-active').length, 1);
@@ -560,11 +655,11 @@ test('normal and compressed scene durations override deliberately slow particle 
     const calls = [];
     return {
       calls,
-      gather(bounds, duration = 2_000) {
-        calls.push(['gather', duration, bounds]);
+      gather(bounds, duration = 2_000, options) {
+        calls.push(['gather', duration, bounds, options]);
       },
-      scatter(bounds, duration = 2_000) {
-        calls.push(['scatter', duration, bounds]);
+      scatter(bounds, duration = 2_000, options) {
+        calls.push(['scatter', duration, bounds, options]);
       },
       finish() {},
       setProfile() {}
@@ -578,11 +673,15 @@ test('normal and compressed scene durations override deliberately slow particle 
   await normal.controller.waitForIdle();
   assert.deepEqual(
     normalField.calls.filter(([phase]) => phase === 'gather').map(([, duration]) => duration),
-    [POSTER_TIMING.normal.gather, POSTER_TIMING.normal.gather]
+    [POSTER_TIMING.normal.handoff, POSTER_TIMING.normal.handoff]
   );
   assert.deepEqual(
     normalField.calls.filter(([phase]) => phase === 'scatter').map(([, duration]) => duration),
     [POSTER_TIMING.normal.scatter]
+  );
+  assert.deepEqual(
+    normalField.calls.map(([phase, , , options]) => [phase, options.portalSide]),
+    [['gather', 'left'], ['scatter', 'right'], ['gather', 'left']]
   );
 
   const fastField = makeSlowField();
@@ -591,7 +690,7 @@ test('normal and compressed scene durations override deliberately slow particle 
   await fast.controller.waitForIdle();
   assert.deepEqual(
     fastField.calls.filter(([phase]) => phase === 'gather').map(([, duration]) => duration),
-    Array(5).fill(POSTER_TIMING.fast.gather)
+    Array(5).fill(POSTER_TIMING.fast.handoff)
   );
   assert.deepEqual(
     fastField.calls.filter(([phase]) => phase === 'scatter').map(([, duration]) => duration),
@@ -599,7 +698,7 @@ test('normal and compressed scene durations override deliberately slow particle 
   );
 });
 
-test('full to compact settles particles without cancelling the poster handoff', async () => {
+test('full to compact settles particles without cancelling the active portal phase', async () => {
   const scheduler = makeManualScheduler();
   const particleCalls = [];
   let particleProfile = 'full';
@@ -639,7 +738,7 @@ test('full to compact settles particles without cancelling the poster handoff', 
     await flush();
     guard += 1;
   }
-  assert.equal(slots[0].classList.contains('is-outgoing'), true);
+  assert.equal(slots[0].classList.contains('is-outgoing'), false);
   assert.equal(slots[1].classList.contains('is-revealing'), true);
   assert.ok(scheduler.durations.includes(POSTER_TIMING.normal.handoff));
   const signalsBeforeChange = scheduler.signals;
@@ -653,12 +752,12 @@ test('full to compact settles particles without cancelling the poster handoff', 
   assert.equal(root.dataset.motionProfile, 'compact');
   assert.deepEqual(particleCalls.slice(-2), [
     ['profile', 'compact'],
-    ['settle', 'scatter']
+    ['settle', 'gather']
   ]);
   assert.deepEqual(scheduler.signals, signalsBeforeChange);
   assert.equal(scheduler.signals.every((signal) => !signal.aborted), true);
   assert.ok(scheduler.durations.includes(POSTER_TIMING.normal.handoff));
-  assert.equal(slots[0].classList.contains('is-outgoing'), true);
+  assert.equal(slots[0].classList.contains('is-outgoing'), false);
   assert.equal(slots[1].classList.contains('is-revealing'), true);
 
   let iterations = 0;
@@ -677,16 +776,6 @@ test('full to compact settles particles without cancelling the poster handoff', 
 
   controller.enqueue(slots[2]);
   await flush();
-  assert.equal(
-    particleCalls.some(([phase, profile]) => phase === 'gather' && profile === 'compact'),
-    true
-  );
-
-  settleParticle();
-  assert.equal(
-    slots[2].style.getPropertyValue('--poster-handoff-ms'),
-    `${VISUAL8_TIMING.compact.normal.handoff}ms`
-  );
 
   iterations = 0;
   while (controller.getState().processing) {
@@ -698,10 +787,19 @@ test('full to compact settles particles without cancelling the poster handoff', 
     iterations += 1;
   }
   await controller.waitForIdle();
+  assert.equal(
+    particleCalls.some(([phase, profile]) => phase === 'scatter' && profile === 'compact'),
+    true
+  );
+  assert.equal(
+    particleCalls.some(([phase, profile]) => phase === 'gather' && profile === 'compact'),
+    true
+  );
+  assert.equal(slots[2].style.getPropertyValue('--poster-handoff-ms'), '');
   assert.equal(controller.getState().activeId, 'archive-03');
 });
 
-test('scatter rejection during overlap stabilizes the incoming poster and cleans transient state', async () => {
+test('right-exit rejection restores the current poster and cleans transient portal state', async () => {
   const scheduler = makeManualScheduler();
   const expected = new Error('overlapped scatter failed');
   let scatterCalls = 0;
@@ -739,13 +837,17 @@ test('scatter rejection during overlap stabilizes the incoming poster and cleans
     assert.equal(errors.length, 1);
     assert.strictEqual(errors[0], expected);
     assert.equal(scatterCalls, 1);
-    assert.equal(root.querySelectorAll('.is-outgoing, .is-scattering, .is-revealing').length, 0);
+    assert.equal(root.querySelectorAll(
+      '.is-outgoing, .is-scattering, .is-revealing, .is-exiting-to-portal'
+    ).length, 0);
     assert.equal(root.querySelectorAll('.is-active').length, 1);
-    assert.strictEqual(root.querySelector('.is-active'), slots[1]);
-    assert.equal(slots[1].classList.contains('is-stable'), true);
-    assert.equal(slots[1].querySelector('img').hasAttribute('aria-hidden'), false);
-    assert.equal(slots[0].classList.contains('is-active'), false);
-    assert.equal(slots[0].querySelector('img').getAttribute('aria-hidden'), 'true');
+    assert.strictEqual(root.querySelector('.is-active'), slots[0]);
+    assert.equal(slots[0].classList.contains('is-stable'), true);
+    assert.equal(slots[0].querySelector('img').hasAttribute('aria-hidden'), false);
+    assert.equal(slots[1].classList.contains('is-active'), false);
+    assert.equal(slots[1].querySelector('img').getAttribute('aria-hidden'), 'true');
+    assert.equal(root.dataset.portalSide, undefined);
+    assert.equal(root.dataset.portalPhase, undefined);
     assert.deepEqual(unhandled, []);
   } finally {
     process.removeListener('unhandledRejection', handleUnhandled);
@@ -881,7 +983,6 @@ test('finish resolves at the profile exit gate and stale final completion cannot
   assert.equal(root.dataset.finalSettled, undefined);
   assert.deepEqual(scheduler.durations, [
     POSTER_TIMING.finalExposure,
-    99,
     POSTER_TIMING.normal.gather
   ]);
   scheduler.releaseDuration(POSTER_TIMING.normal.gather);
@@ -966,7 +1067,12 @@ test('reset aborts an old finish exposure without settling the new run', async (
   assert.equal(root.dataset.transitionSettled, undefined);
   assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
   assert.equal(slots[0].style.getPropertyValue('--poster-handoff-ms'), '');
-  assert.equal(root.style.getPropertyValue('--slit-duration'), '');
+  assert.equal(
+    root.style.getPropertyValue('--slit-duration'),
+    `${POSTER_TIMING.normal.gather + POSTER_TIMING.normal.handoff}ms`
+  );
+  assert.equal(root.dataset.portalSide, 'left');
+  assert.equal(root.dataset.portalPhase, 'enter');
   assert.equal(controller.getState().activeId, null);
   iterations = 0;
   while (scheduler.pending) {
@@ -1030,17 +1136,22 @@ test('reduce profile uses direct fades without gather, scatter, or a lit slit', 
   assert.equal(particleCalls.some(([name]) => name === 'gather' || name === 'scatter'), false);
   assert.ok(particleCalls.some(([name]) => name === 'finish'));
   assert.equal(slit.classList.contains('is-lit'), false);
+  assert.equal(root.classList.contains('is-scanning'), false);
   assert.ok(sleeps.includes(POSTER_TIMING.reduceFade));
   assert.equal(sleeps.includes(POSTER_TIMING.finalExposure), false);
 });
 
-test('switching to reduce mid-gather cancels animation and resumes every item as a fade', async () => {
+test('switching to reduce mid-entry cancels portal animation and resumes every item as a fade', async () => {
   const scheduler = makeManualScheduler();
   const { controller, particleCalls, slit, slots } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
   controller.enqueue(slots[1]);
   await flush();
-  assert.deepEqual(scheduler.durations.sort((a, b) => a - b), [99, POSTER_TIMING.normal.gather]);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
+  await flush();
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.handoff]);
+  assert.equal(slots[0].classList.contains('is-entering-from-portal'), true);
 
   slots[0].style.setProperty('--poster-handoff-ms', '260ms');
   assert.equal(slots[0].style.getPropertyValue('--poster-handoff-ms'), '260ms');
@@ -1058,10 +1169,15 @@ test('switching to reduce mid-gather cancels animation and resumes every item as
   }
   await controller.waitForIdle();
 
-  assert.equal(scheduler.sleepCalls.includes(POSTER_TIMING.normal.reveal), false);
+  assert.equal(scheduler.sleepCalls.includes(POSTER_TIMING.normal.reveal), true);
   assert.deepEqual(
     scheduler.sleepCalls,
-    [99, POSTER_TIMING.normal.gather, POSTER_TIMING.reduceFade, POSTER_TIMING.reduceFade]
+    [
+      POSTER_TIMING.normal.gather,
+      POSTER_TIMING.normal.handoff,
+      POSTER_TIMING.reduceFade,
+      POSTER_TIMING.reduceFade
+    ]
   );
   assert.ok(particleCalls.some(([name]) => name === 'finish'));
   assert.equal(slit.classList.contains('is-lit'), false);
@@ -1077,7 +1193,10 @@ test('a late gather completion cannot clear tracking for the same resumed reduce
   const { controller, slots } = makeFixture({ particleField, scheduler });
   controller.enqueue(slots[0]);
   await flush();
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
+  await flush();
   const staleGather = particleField.pending.shift();
+  assert.equal(staleGather.phase, 'gather');
 
   controller.setProfile('reduce');
   await flush();
@@ -1095,8 +1214,8 @@ test('a late gather completion cannot clear tracking for the same resumed reduce
   await flush();
   await controller.waitForIdle();
   assert.deepEqual(scheduler.sleepCalls, [
-    99,
     POSTER_TIMING.normal.gather,
+    POSTER_TIMING.normal.handoff,
     POSTER_TIMING.reduceFade,
     POSTER_TIMING.reduceFade
   ]);
@@ -1137,8 +1256,9 @@ test('animation errors stabilize the current poster, reject finish once, and res
   await assert.rejects(controller.finish(), expected);
   assert.deepEqual(errors, [expected]);
   assert.equal(controller.getState().queued, 0);
-  assert.equal(slots[0].classList.contains('is-active'), true);
-  assert.equal(slots[0].classList.contains('is-stable'), true);
+  assert.equal(slots[0].classList.contains('is-active'), false);
+  assert.equal(slots[1].classList.contains('is-active'), true);
+  assert.equal(slots[1].classList.contains('is-stable'), true);
   assert.equal(slots[0].style.getPropertyValue('--poster-handoff-ms'), '');
   assert.equal(slots[0].dataset.status, undefined, 'visual failures must not become image failures');
 
@@ -1160,6 +1280,8 @@ test('an asynchronous animation error aborts pending timing and seals the run un
   };
   const { controller, errors, slots } = makeFixture({ particleField, scheduler });
   controller.enqueue(slots[0]);
+  await flush();
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
   await flush();
   await controller.waitForIdle();
 

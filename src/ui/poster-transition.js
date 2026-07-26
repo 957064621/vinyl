@@ -1,15 +1,15 @@
 export const POSTER_TIMING = Object.freeze({
   full: Object.freeze({
-    normal: Object.freeze({ gather: 220, handoff: 820, hold: 420 }),
-    compressed: Object.freeze({ gather: 160, handoff: 620, hold: 260 }),
+    normal: Object.freeze({ gather: 90, handoff: 420, exit: 340, hold: 500 }),
+    compressed: Object.freeze({ gather: 60, handoff: 340, exit: 280, hold: 440 }),
     finalHold: 840,
     finalResolve: 1100,
     exitLead: 620,
     rootFade: 680
   }),
   compact: Object.freeze({
-    normal: Object.freeze({ gather: 180, handoff: 720, hold: 360 }),
-    compressed: Object.freeze({ gather: 120, handoff: 560, hold: 240 }),
+    normal: Object.freeze({ gather: 70, handoff: 360, exit: 300, hold: 440 }),
+    compressed: Object.freeze({ gather: 50, handoff: 300, exit: 240, hold: 380 }),
     finalHold: 720,
     finalResolve: 920,
     exitLead: 520,
@@ -64,6 +64,7 @@ export function createPosterTransition({
   profile = 'compact',
   scheduler = defaultScheduler,
   onError = () => {},
+  onFinalScene = () => {},
   scheduleMicrotask = defaultScheduleMicrotask
 } = {}) {
   if (!hasMethods(root, ['contains', 'querySelectorAll']) || !root.classList || !root.dataset) {
@@ -80,6 +81,9 @@ export function createPosterTransition({
   }
   if (typeof onError !== 'function') {
     throw new TypeError('Poster transition onError callback must be a function');
+  }
+  if (typeof onFinalScene !== 'function') {
+    throw new TypeError('Poster transition onFinalScene callback must be a function');
   }
   if (typeof scheduleMicrotask !== 'function') {
     throw new TypeError('Poster transition microtask scheduler must be a function');
@@ -103,7 +107,7 @@ export function createPosterTransition({
   let errorReported = false;
   let finishPromise = null;
   let runToken = {};
-  let lastDirection = 'ltr';
+  const portalOrientation = 'vertical';
   const idleWaiters = new Set();
 
   const slots = () => [...root.querySelectorAll('[data-loading-slot]')];
@@ -144,9 +148,48 @@ export function createPosterTransition({
     else item.image.setAttribute('aria-hidden', 'true');
   };
 
+  const clearSlotPortalState = (slot) => {
+    if (!slot) return;
+    slot.classList.remove(
+      'is-entering',
+      'is-entering-from-portal',
+      'is-exiting',
+      'is-exiting-to-portal'
+    );
+    delete slot.dataset.portalSide;
+    delete slot.dataset.portalPhase;
+    slot.style.removeProperty('--poster-enter-ms');
+    slot.style.removeProperty('--poster-exit-ms');
+  };
+
+  const clearPortalState = () => {
+    root.classList.remove('is-scanning', 'is-portal-active');
+    slit.classList.remove('is-lit');
+    delete root.dataset.portalSide;
+    delete root.dataset.portalPhase;
+    delete slit.dataset.portalSide;
+    delete slit.dataset.portalPhase;
+    root.style.removeProperty('--slit-duration');
+    root.style.removeProperty('--portal-phase-ms');
+  };
+
+  const activatePortal = (side, phase, sceneProfile, duration) => {
+    root.dataset.portalSide = side;
+    root.dataset.portalPhase = phase;
+    slit.dataset.direction = portalOrientation;
+    slit.dataset.portalSide = side;
+    slit.dataset.portalPhase = phase;
+    slit.dataset.motionProfile = sceneProfile;
+    root.style.setProperty('--slit-duration', `${duration}ms`);
+    root.style.setProperty('--portal-phase-ms', `${duration}ms`);
+    root.classList.add('is-scanning', 'is-portal-active');
+    slit.classList.add('is-lit');
+  };
+
   const stabilize = (item) => {
     if (!item) return;
     item.slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
+    clearSlotPortalState(item.slot);
     item.slot.classList.add('is-stable');
     setActive(item, true);
   };
@@ -169,6 +212,7 @@ export function createPosterTransition({
     if (activeItem) {
       setActive(activeItem, false);
       activeItem.slot.classList.remove('is-revealing', 'is-scattering', 'is-stable');
+      clearSlotPortalState(activeItem.slot);
     }
 
     activeItem = item;
@@ -181,57 +225,70 @@ export function createPosterTransition({
   };
 
   const runAnimatedItem = async (item, token, timing, sceneProfile) => {
-    const bounds = item.slot.getBoundingClientRect();
-    slit.dataset.direction = item.direction;
-    slit.dataset.motionProfile = sceneProfile;
     item.slot.dataset.motionProfile = sceneProfile;
-    const ignition = timing.gather * 0.45;
-    const slitDuration = (timing.gather - ignition) + timing.handoff;
-    const slitWork = (async () => {
-      if (!await sleep(ignition, token)) return false;
-      if (!isCurrent(token)) return false;
-      root.style.setProperty('--slit-duration', `${slitDuration}ms`);
-      slit.classList.add('is-lit');
-      return sleep(slitDuration, token);
-    })();
-
-    const [, gathered] = await Promise.all([
-      Promise.resolve(particleField.gather(bounds, timing.gather)),
-      sleep(timing.gather, token)
-    ]);
-    if (!isCurrent(token) || gathered === false) return;
-
     const outgoing = activeItem;
     if (outgoing) {
+      const exitDuration = timing.gather + timing.exit;
+      activatePortal('right', 'exit', sceneProfile, exitDuration);
+      if (!await sleep(timing.gather, token)) return;
+      if (!isCurrent(token)) return;
+
       setActive(outgoing, false);
       outgoing.slot.dataset.motionProfile = sceneProfile;
-      outgoing.slot.style.setProperty('--poster-handoff-ms', `${timing.handoff}ms`);
+      outgoing.slot.dataset.portalSide = 'right';
+      outgoing.slot.dataset.portalPhase = 'exit';
+      outgoing.slot.style.setProperty('--poster-exit-ms', `${timing.exit}ms`);
+      outgoing.slot.style.setProperty('--poster-handoff-ms', `${timing.exit}ms`);
       outgoing.slot.classList.remove('is-stable');
-      outgoing.slot.classList.add('is-outgoing', 'is-scattering');
-    }
+      outgoing.slot.classList.add(
+        'is-outgoing',
+        'is-scattering',
+        'is-exiting',
+        'is-exiting-to-portal'
+      );
 
-    activeItem = item;
-    lastDirection = item.direction;
-    completedReadableHold = 0;
-    setActive(activeItem, true);
-    activeItem.slot.style.setProperty('--poster-handoff-ms', `${timing.handoff}ms`);
-    activeItem.slot.classList.add('is-revealing');
-    const scatterWork = outgoing
-      ? Promise.all([
-          Promise.resolve(particleField.scatter(outgoing.slot.getBoundingClientRect(), timing.handoff)),
-          sleep(timing.handoff, token)
-        ])
-      : Promise.all([Promise.resolve(true), sleep(timing.handoff, token)]);
-    const [scatterResult, slitSettled] = await Promise.all([scatterWork, slitWork]);
-    const scattered = outgoing ? scatterResult[1] : true;
-    if (!isCurrent(token) || scattered === false || slitSettled === false) return;
-    if (outgoing) {
+      const [, exited] = await Promise.all([
+        Promise.resolve(particleField.scatter(
+          outgoing.slot.getBoundingClientRect(),
+          timing.exit,
+          { portalSide: 'right' }
+        )),
+        sleep(timing.exit, token)
+      ]);
+      if (!isCurrent(token) || exited === false) return;
       outgoing.slot.classList.remove('is-outgoing', 'is-scattering');
       outgoing.slot.style.removeProperty('--poster-handoff-ms');
+      clearSlotPortalState(outgoing.slot);
+      clearPortalState();
     }
+
+    const enterDuration = timing.gather + timing.handoff;
+    activatePortal('left', 'enter', sceneProfile, enterDuration);
+    if (!await sleep(timing.gather, token)) return;
+    if (!isCurrent(token)) return;
+
+    activeItem = item;
+    completedReadableHold = 0;
+    setActive(activeItem, true);
+    activeItem.slot.dataset.portalSide = 'left';
+    activeItem.slot.dataset.portalPhase = 'enter';
+    activeItem.slot.style.setProperty('--poster-enter-ms', `${timing.handoff}ms`);
+    activeItem.slot.style.setProperty('--poster-handoff-ms', `${timing.handoff}ms`);
+    activeItem.slot.classList.add('is-revealing', 'is-entering', 'is-entering-from-portal');
+    const [, entered] = await Promise.all([
+      Promise.resolve(particleField.gather(
+        activeItem.slot.getBoundingClientRect(),
+        timing.handoff,
+        { portalSide: 'left' }
+      )),
+      sleep(timing.handoff, token)
+    ]);
+    if (!isCurrent(token) || entered === false) return;
     activeItem.slot.classList.remove('is-revealing');
+    clearSlotPortalState(activeItem.slot);
     activeItem.slot.classList.add('is-stable');
-    slit.classList.remove('is-lit');
+    activeItem.slot.style.removeProperty('--poster-handoff-ms');
+    clearPortalState();
 
     const finalItem = sealed && queue.length === 0;
     const profileTiming = POSTER_TIMING[sceneProfile];
@@ -274,10 +331,10 @@ export function createPosterTransition({
     abortController.abort();
     abortController = new AbortController();
     settleParticleField();
-    slit.classList.remove('is-lit');
-    root.style.removeProperty('--slit-duration');
+    clearPortalState();
     for (const slot of slots()) {
       slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
+      clearSlotPortalState(slot);
       slot.style.removeProperty('--poster-handoff-ms');
     }
     stabilize(activeItem);
@@ -340,6 +397,7 @@ export function createPosterTransition({
   const clearSlotState = () => {
     for (const slot of slots()) {
       slot.classList.remove('is-active', 'is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
+      clearSlotPortalState(slot);
       delete slot.dataset.transitionOrder;
       delete slot.dataset.slitDirection;
       delete slot.dataset.motionProfile;
@@ -362,7 +420,7 @@ export function createPosterTransition({
     currentItem = null;
     queue = [];
     compressedDrain = false;
-    slit.classList.remove('is-lit');
+    clearPortalState();
     delete slit.dataset.direction;
     delete slit.dataset.motionProfile;
     root.style.removeProperty('--slit-duration');
@@ -375,6 +433,7 @@ export function createPosterTransition({
     if (preserveActive) {
       for (const slot of slots()) {
         slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering', 'is-stable');
+        clearSlotPortalState(slot);
         slot.style.removeProperty('--poster-handoff-ms');
       }
       stabilize(activeItem);
@@ -398,7 +457,7 @@ export function createPosterTransition({
       queue.unshift(interruptedItem);
     }
 
-    slit.classList.remove('is-lit');
+    clearPortalState();
     delete slit.dataset.direction;
     delete slit.dataset.motionProfile;
     root.style.removeProperty('--slit-duration');
@@ -408,6 +467,7 @@ export function createPosterTransition({
     delete root.dataset.finalSettled;
     for (const slot of slots()) {
       slot.classList.remove('is-outgoing', 'is-revealing', 'is-scattering');
+      clearSlotPortalState(slot);
       slot.style.removeProperty('--poster-handoff-ms');
       if (activeItem?.slot === slot) slot.classList.add('is-stable');
     }
@@ -436,7 +496,7 @@ export function createPosterTransition({
       if (!image || accepted.has(slot)) return false;
 
       const order = accepted.size + 1;
-      const direction = order % 2 === 1 ? 'ltr' : 'rtl';
+      const direction = portalOrientation;
       const item = { slot, image, order, direction };
       accepted.add(slot);
       image.setAttribute('aria-hidden', 'true');
@@ -479,9 +539,19 @@ export function createPosterTransition({
 
           if (finalSceneProfile !== 'reduce') {
             const profileTiming = POSTER_TIMING[finalSceneProfile];
-            slit.dataset.direction = lastDirection;
+            onFinalScene({
+              slot: activeItem?.slot ?? null,
+              image: activeItem?.image ?? null,
+              profile: finalSceneProfile
+            });
+            root.dataset.portalSide = 'center';
+            root.dataset.portalPhase = 'final-handoff';
+            slit.dataset.direction = portalOrientation;
+            slit.dataset.portalSide = 'center';
+            slit.dataset.portalPhase = 'final-handoff';
             slit.dataset.motionProfile = finalSceneProfile;
             root.style.setProperty('--final-resolve-ms', `${profileTiming.finalResolve}ms`);
+            root.style.setProperty('--portal-phase-ms', `${profileTiming.finalResolve}ms`);
             root.classList.add('is-final-resolving');
             const gateWork = sleep(profileTiming.exitLead, token);
             const finalWork = sleep(profileTiming.finalResolve, token);

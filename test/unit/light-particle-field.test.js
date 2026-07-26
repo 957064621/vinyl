@@ -237,8 +237,8 @@ const runToIdle = async (fixture, promise, { start = 0, step = 50 } = {}) => {
 
 test('exports exact frozen profiles and caps backing-store DPR', () => {
   assert.deepEqual(PARTICLE_PROFILES, {
-    full: { count: 64, dpr: 1.5, gatherMs: 160, scatterMs: 140 },
-    compact: { count: 28, dpr: 1.25, gatherMs: 100, scatterMs: 90 },
+    full: { count: 48, dpr: 1.5, gatherMs: 160, scatterMs: 140 },
+    compact: { count: 18, dpr: 1.25, gatherMs: 100, scatterMs: 90 },
     reduce: { count: 0, dpr: 1, gatherMs: 0, scatterMs: 0 }
   });
   assert.equal(Object.isFrozen(PARTICLE_PROFILES), true);
@@ -275,13 +275,13 @@ test('exports exact frozen profiles and caps backing-store DPR', () => {
   compact.destroy();
 });
 
-test('gather renders 64 bounded particles and retains its final pixels without an idle frame', async () => {
+test('gather renders 48 bounded particles and retains its final pixels without an idle frame', async () => {
   const fixture = createFixture();
   const field = createField(fixture, 'full');
   const gathering = field.gather({ left: -50, top: 40, right: 500, bottom: 150 });
 
   assert.deepEqual(field.getState(), {
-    profile: 'full', particleCount: 64, dpr: 1.5, animating: true, destroyed: false
+    profile: 'full', particleCount: 48, dpr: 1.5, animating: true, destroyed: false
   });
   assert.equal(fixture.scheduler.pendingCount, 1);
   assert.equal(fixture.canvas.dataset.phase, 'gather');
@@ -298,8 +298,49 @@ test('gather renders 64 bounded particles and retains its final pixels without a
   assert.equal(fixture.canvas.dataset.phase, 'gathered');
   assert.ok(Number(fixture.canvas.dataset.frameCount) > 0);
   assert.equal(field.getState().animating, false);
-  assert.equal(field.getState().particleCount, 64);
-  assert.equal(renderedFrames(fixture.context.calls).at(-1).filter(([name]) => name === 'arc').length, 64);
+  assert.equal(field.getState().particleCount, 48);
+  assert.equal(renderedFrames(fixture.context.calls).at(-1).filter(([name]) => name === 'arc').length, 48);
+  field.destroy();
+});
+
+test('animated particles travel from the left portal into the poster and out through the right portal', async () => {
+  const fixture = createFixture();
+  let randomCall = 0;
+  const field = createLightParticleField({
+    canvas: fixture.canvas,
+    documentRef: fixture.document,
+    windowRef: fixture.dom.window,
+    profile: 'compact',
+    random: () => {
+      const value = randomCall % 6 === 3
+        ? (Math.floor(randomCall / 6) % 2 === 0 ? 0.25 : 0.75)
+        : 0.5;
+      randomCall += 1;
+      return value;
+    },
+    requestFrame: fixture.scheduler.requestFrame,
+    cancelFrame: fixture.scheduler.cancelFrame
+  });
+  const bounds = { left: 60, top: 50, width: 100, height: 80 };
+  const gathering = field.gather(bounds, 100, { portalSide: 'left' });
+  fixture.scheduler.step(0);
+
+  const gatherStartX = renderedFrames(fixture.context.calls)[0]
+    .filter(([name]) => name === 'arc')
+    .map(([, x]) => x);
+  assert.deepEqual([...new Set(gatherStartX)], [50]);
+  assert.equal(fixture.canvas.dataset.portalSide, 'left');
+
+  await runToIdle(fixture, gathering, { start: 50, step: 50 });
+  const scattering = field.scatter(bounds, 100, { portalSide: 'right' });
+  await runToIdle(fixture, scattering, { start: 100, step: 50 });
+  const scatterEndX = renderedFrames(fixture.context.calls).at(-1)
+    .filter(([name]) => name === 'arc')
+    .map(([, x]) => x);
+  assert.deepEqual([...new Set(scatterEndX)], [150]);
+  assert.equal(fixture.canvas.dataset.phase, 'idle');
+  assert.equal(fixture.canvas.dataset.portalSide, undefined);
+
   field.destroy();
 });
 
@@ -323,7 +364,7 @@ test('scatter starts from the exact gathered render and only then clears on sett
   fixture.scheduler.step(PARTICLE_PROFILES.compact.gatherMs);
   const scatterFrames = renderedFrames(fixture.context.calls);
   assert.deepEqual(renderFingerprint(scatterFrames[gatheredFrameCount]), gatheredFingerprint);
-  assert.equal(field.getState().particleCount, 28);
+  assert.equal(field.getState().particleCount, 18);
   assert.equal(fixture.scheduler.pendingCount, 1);
   assert.equal(fixture.canvas.dataset.phase, 'scatter');
 
@@ -331,7 +372,7 @@ test('scatter starts from the exact gathered render and only then clears on sett
     start: PARTICLE_PROFILES.compact.gatherMs + 30,
     step: 30
   });
-  assert.ok(fixture.context.calls.filter(([name]) => name === 'stroke').length >= 28);
+  assert.ok(fixture.context.calls.filter(([name]) => name === 'stroke').length >= 18);
   assert.equal(fixture.scheduler.pendingCount, 0);
   assert.equal(fixture.canvas.dataset.phase, 'idle');
   const lastClearIndex = fixture.context.calls.findLastIndex(([name]) => name === 'clearRect');
@@ -545,7 +586,7 @@ test('each animated command refreshes CSS size and DPR before creating particles
   assert.equal(fixture.canvas.width, 185);
   assert.equal(fixture.canvas.height, 101);
   assert.equal(field.getState().dpr, 1.5);
-  assert.equal(field.getState().particleCount, 64);
+  assert.equal(field.getState().particleCount, 48);
 
   field.destroy();
   await gathering;

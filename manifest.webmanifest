@@ -1,9 +1,0 @@
-{
-  "name": "光影档案馆",
-  "short_name": "光影档案馆",
-  "start_url": "./",
-  "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#070808",
-  "theme_color": "#070808"
-}

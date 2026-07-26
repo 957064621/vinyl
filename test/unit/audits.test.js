@@ -23,7 +23,7 @@ test('builds deterministic audit documents from library data', () => {
 | 已配置 OSS 链接 | 142 |
 | 待补 OSS | 0 |
 | 待补歌词 | 0 |
-| 待补封面 OSS | 22 |`;
+| 待补封面 OSS | 23 |`;
 
   assert.match(audioManifest, /更新时间：2026-07-18/);
   assert.ok(audioManifest.includes(summary));
@@ -36,6 +36,10 @@ test('builds deterministic audit documents from library data', () => {
   }
   assert.match(audioManifest, /\| 曲库歌曲条目 \| 142 \|/);
   assert.match(audioManifest, /\| 唯一音频标题 \| 131 \|/);
-  assert.match(audioManifest, /\| 媚人 \| 万兽之王演唱会录音 \| 已填 6 行 \| OSS \|/);
-  assert.match(libraryAudit, /\| 万兽之王演唱会录音 \| live-recording \| 待核对 \| 3 \| 0 \| 0 \| [YN] \| Y \|/);
+  assert.match(
+    audioManifest,
+    /\| 媚人 \| 媚人 - Single \| 已填 6 行 \| OSS \| https:\/\/is1-ssl\.mzstatic\.com\/image\/thumb\/Music221\/v4\/6c\/c8\/3a\/6cc83adf-7cd1-8dd0-6606-94106ac1f83f\/4896016816485\.jpg\/600x600bb\.jpg \|/
+  );
+  assert.match(libraryAudit, /\| 万兽之王演唱会录音 \| live-recording \| 2026 \| 2 \| 0 \| 0 \| Y \| Y \|/);
+  assert.match(libraryAudit, /\| 媚人 - Single \| single \| 2026-07-17 \| 1 \| 0 \| 0 \| Y \| N \|/);
 });

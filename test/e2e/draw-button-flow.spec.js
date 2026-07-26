@@ -156,6 +156,35 @@ const concentration = (idle, peak) => {
   return Object.fromEntries(Object.entries(buckets).map(([name, [sum, count]]) => [name, sum / count / 255]));
 };
 
+const externalHaloDelta = (idle, peak, buttonBounds) => {
+  let sum = 0;
+  let max = 0;
+  let changed = 0;
+  let pixels = 0;
+  for (let y = 0; y < idle.height; y += 1) {
+    for (let x = 0; x < idle.width; x += 1) {
+      const insideButton = x >= buttonBounds.x
+        && x < buttonBounds.x + buttonBounds.width
+        && y >= buttonBounds.y
+        && y < buttonBounds.y + buttonBounds.height;
+      if (insideButton) continue;
+      const index = (y * idle.width + x) * 4;
+      const delta = Math.abs(peak.pixels[index] - idle.pixels[index])
+        + Math.abs(peak.pixels[index + 1] - idle.pixels[index + 1])
+        + Math.abs(peak.pixels[index + 2] - idle.pixels[index + 2]);
+      sum += delta;
+      max = Math.max(max, delta);
+      changed += delta >= 3 ? 1 : 0;
+      pixels += 1;
+    }
+  }
+  return {
+    meanRgbAbsDelta: sum / pixels,
+    maxRgbAbsDelta: max,
+    changedPixelRatioAt3: changed / pixels
+  };
+};
+
 test('full desktop synchronizes one perimeter pass and one halo pulse', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium');
   await waitForApp(page);
@@ -194,6 +223,38 @@ test('full desktop synchronizes one perimeter pass and one halo pulse', async ({
   }
 });
 
+test('full desktop halo pulses outside the draw button bounds', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await waitForApp(page);
+  const button = page.locator('#playButton');
+  const box = await button.boundingBox();
+  expect(box).not.toBeNull();
+  const padding = 28;
+  const clip = {
+    x: Math.max(0, Math.floor(box.x - padding)),
+    y: Math.max(0, Math.floor(box.y - padding)),
+    width: Math.ceil(box.width + padding * 2),
+    height: Math.ceil(box.height + padding * 2)
+  };
+  const bounds = {
+    x: box.x - clip.x,
+    y: box.y - clip.y,
+    width: box.width,
+    height: box.height
+  };
+
+  await setPhase(page, 0);
+  const idle = await page.screenshot({ path: testInfo.outputPath('halo-idle.png'), clip, scale: 'css' });
+  await setPhase(page, 600);
+  const peak = await page.screenshot({ path: testInfo.outputPath('halo-peak.png'), clip, scale: 'css' });
+  const delta = externalHaloDelta(await decodeScreenshot(page, idle), await decodeScreenshot(page, peak), bounds);
+
+  expect(delta.meanRgbAbsDelta).toBeGreaterThan(1);
+  expect(delta.maxRgbAbsDelta).toBeGreaterThanOrEqual(4);
+  expect(delta.changedPixelRatioAt3).toBeGreaterThan(0.1);
+  await writeFile(testInfo.outputPath('halo-external-pixel-delta.json'), `${JSON.stringify(delta, null, 2)}\n`);
+});
+
 test('compact is static and reduced motion has no decorative light', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'desktop-chromium');
   await waitForApp(page);
@@ -207,6 +268,85 @@ test('compact is static and reduced motion has no decorative light', async ({ pa
   if (testInfo.project.name === 'mobile-reduce') {
     expect(state).toMatchObject({ perimeter: { animationName: 'none', opacity: 0 }, halo: { animationName: 'none', opacity: 0 }, animations: [] });
   }
+});
+
+test('runtime reduced-motion changes settle and restart draw-button light cleanly', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await waitForApp(page);
+  await expect(page.locator('html')).toHaveAttribute('data-motion-profile', 'full');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(page.locator('html')).toHaveAttribute('data-motion-profile', 'reduce');
+  expect(await lightState(page)).toMatchObject({
+    perimeter: { animationName: 'none', opacity: 0 },
+    halo: { animationName: 'none', opacity: 0 },
+    animations: []
+  });
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect(page.locator('html')).toHaveAttribute('data-motion-profile', 'full');
+  await page.locator('#playButton').evaluate(() => new Promise(requestAnimationFrame));
+  const restarted = await lightState(page);
+  expect(restarted).toMatchObject({
+    perimeter: { animationName: 'btn-perimeter-pass' },
+    halo: { animationName: 'btn-halo-pulse' }
+  });
+  expect(restarted.animations).toHaveLength(2);
+  expect(restarted.animations.every(({ currentTime }) => currentTime < 100)).toBe(true);
+});
+
+test('desktop draw button pointer light follows locally and clears on unavailable states', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await waitForApp(page);
+  const button = page.locator('#playButton');
+  const bounds = await button.boundingBox();
+  expect(bounds).not.toBeNull();
+
+  const readSpot = () => button.evaluate((node) => ({
+    x: node.style.getPropertyValue('--btn-spot-x'),
+    y: node.style.getPropertyValue('--btn-spot-y'),
+    strength: node.style.getPropertyValue('--btn-spot-strength')
+  }));
+  const expectSpotCleared = async () => {
+    await expect.poll(readSpot).toEqual({ x: '', y: '', strength: '' });
+  };
+
+  await page.mouse.move(bounds.x + bounds.width * 0.86, bounds.y + bounds.height * 0.72);
+  await expect.poll(async () => Number.parseFloat((await readSpot()).x)).toBeGreaterThan(75);
+  await expect.poll(async () => Number.parseFloat((await readSpot()).y)).toBeGreaterThan(60);
+  await expect.poll(async () => Number.parseFloat((await readSpot()).strength)).toBeGreaterThan(90);
+
+  await page.mouse.move(bounds.x - 12, bounds.y - 12);
+  const leaving = await readSpot();
+  expect(leaving.x).not.toBe('');
+  expect(leaving.y).not.toBe('');
+  expect(Number.parseFloat(leaving.strength)).toBeGreaterThan(0);
+  await expectSpotCleared();
+
+  await page.mouse.move(bounds.x + bounds.width * 0.78, bounds.y + bounds.height * 0.62);
+  await expect.poll(async () => Number.parseFloat((await readSpot()).x)).toBeGreaterThan(65);
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await expectSpotCleared();
+
+  await page.mouse.move(bounds.x + bounds.width * 0.74, bounds.y + bounds.height * 0.58);
+  await expect.poll(async () => Number.parseFloat((await readSpot()).x)).toBeGreaterThan(60);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(page.locator('html')).toHaveAttribute('data-motion-profile', 'reduce');
+  await expectSpotCleared();
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect(page.locator('html')).toHaveAttribute('data-motion-profile', 'full');
+  await page.mouse.move(bounds.x + bounds.width * 0.7, bounds.y + bounds.height * 0.54);
+  await expect.poll(async () => Number.parseFloat((await readSpot()).x)).toBeGreaterThan(58);
+
+  await page.evaluate(() => {
+    Object.defineProperties(document, {
+      hidden: { configurable: true, value: true },
+      visibilityState: { configurable: true, value: 'hidden' }
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expectSpotCleared();
 });
 
 test('button geometry, label, press, focus, and perimeter concentration remain locked', async ({ page }, testInfo) => {
@@ -263,11 +403,13 @@ test('button geometry, label, press, focus, and perimeter concentration remain l
   await page.mouse.up();
 
   if (testInfo.project.name === 'desktop-chromium') {
+    const haloSuppression = await page.addStyleTag({ content: '#playButton::after { animation: none !important; opacity: 0 !important; }' });
     await setPhase(page, 0);
     const baseline = await button.screenshot({ path: testInfo.outputPath('perimeter-idle.png'), scale: 'css' });
     await setPhase(page, 600);
     const peak = await button.screenshot({ path: testInfo.outputPath('perimeter-peak.png'), scale: 'css' });
     const delta = concentration(await decodeScreenshot(page, baseline), await decodeScreenshot(page, peak));
+    await haloSuppression.evaluate((node) => node.remove());
     expect(delta.center).toBeLessThan(4 / 255);
     expect(delta.perimeter).toBeGreaterThan(Math.max(delta.interior * 3, 0.0005));
     await writeFile(testInfo.outputPath('perimeter-pixel-concentration.json'), `${JSON.stringify(delta, null, 2)}\n`);

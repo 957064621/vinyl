@@ -32,6 +32,9 @@ const createFixture = () => new JSDOM(`
       </div>
     </div>
   </div>
+  <div class="vinyl-sticker">
+    <div class="vinyl-cover" id="vinylCoverA"></div>
+  </div>
 `);
 
 const createControllerHarness = ({
@@ -173,7 +176,101 @@ test('visual factories receive the loading stage dependencies and motion profile
   assert.strictEqual(transitionCall[1].slit, slit);
   assert.strictEqual(transitionCall[1].particleField, harness.particleField);
   assert.equal(transitionCall[1].profile, 'full');
+  assert.equal(typeof transitionCall[1].onFinalScene, 'function');
   assert.equal(typeof transitionCall[1].onError, 'function');
+});
+
+test('final handoff derives the contained artwork crop and primes the sticker cover', () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const target = document.querySelector('.vinyl-sticker');
+  const targetCover = document.getElementById('vinylCoverA');
+  const { harness } = createInjectedView(document, {
+    viewOptions: { motionProfile: 'full' }
+  });
+  const root = document.getElementById('loadingScreen');
+  const slot = root.querySelector('[data-loading-slot="archive-05"]');
+  const image = document.createElement('img');
+  image.className = 'loading-image';
+  image.src = 'https://example.test/archive-05.jpg';
+  Object.defineProperties(image, {
+    naturalWidth: { configurable: true, value: 600 },
+    naturalHeight: { configurable: true, value: 800 }
+  });
+  slot.prepend(image);
+  slot.getBoundingClientRect = () => ({
+    left: 100,
+    top: 50,
+    right: 500,
+    bottom: 550,
+    width: 400,
+    height: 500
+  });
+  target.getBoundingClientRect = () => ({
+    left: 500,
+    top: 600,
+    right: 620,
+    bottom: 720,
+    width: 120,
+    height: 120
+  });
+  const transitionCall = harness.calls.find(([name]) => name === 'transitionFactory');
+
+  transitionCall[1].onFinalScene({ image, profile: 'full' });
+
+  assert.equal(root.dataset.handoffReady, 'true');
+  assert.equal(root.style.getPropertyValue('--poster-final-x'), '260px');
+  assert.equal(root.style.getPropertyValue('--poster-final-y'), '360px');
+  assert.equal(root.style.getPropertyValue('--poster-final-scale'), '0.32');
+  assert.equal(root.style.getPropertyValue('--poster-source-inset-top'), '0.0000%');
+  assert.equal(root.style.getPropertyValue('--poster-source-inset-right'), '3.1250%');
+  assert.equal(root.style.getPropertyValue('--poster-source-inset-bottom'), '0.0000%');
+  assert.equal(root.style.getPropertyValue('--poster-source-inset-left'), '3.1250%');
+  assert.equal(root.style.getPropertyValue('--poster-final-inset-top'), '12.5000%');
+  assert.equal(root.style.getPropertyValue('--poster-final-inset-right'), '3.1250%');
+  assert.equal(root.style.getPropertyValue('--poster-final-inset-bottom'), '12.5000%');
+  assert.equal(root.style.getPropertyValue('--poster-final-inset-left'), '3.1250%');
+  assert.equal(targetCover.dataset.loadingHandoff, 'true');
+  assert.equal(targetCover.classList.contains('is-active'), true);
+  assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/archive-05.jpg")');
+
+  transitionCall[1].onFinalScene({ image, profile: 'reduce' });
+  assert.equal(root.dataset.handoffReady, undefined);
+  assert.equal(root.style.getPropertyValue('--poster-final-x'), '');
+  assert.equal(root.style.getPropertyValue('--poster-final-y'), '');
+  assert.equal(root.style.getPropertyValue('--poster-final-scale'), '');
+  for (const phase of ['source', 'final']) {
+    for (const edge of ['top', 'right', 'bottom', 'left']) {
+      assert.equal(root.style.getPropertyValue(`--poster-${phase}-inset-${edge}`), '');
+    }
+  }
+  assert.equal(targetCover.hasAttribute('data-loading-handoff'), false);
+  assert.equal(targetCover.classList.contains('is-active'), false);
+  assert.equal(targetCover.style.backgroundImage, '');
+});
+
+test('loading screen forwards live profiles to its transition and uses the latest profile by default', async () => {
+  const dom = createFixture();
+  const { view, harness } = createInjectedView(dom.window.document, {
+    viewOptions: { motionProfile: 'full' }
+  });
+  const root = dom.window.document.getElementById('loadingScreen');
+
+  view.setProfile('reduce');
+  await view.playReadySequence();
+
+  assert.deepEqual(
+    harness.calls.filter((call) => Array.isArray(call) && call[0] === 'transition.setProfile'),
+    [
+      ['transition.setProfile', 'reduce'],
+      ['transition.setProfile', 'reduce']
+    ]
+  );
+
+  const exiting = view.exit();
+  root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
+  await exiting;
+  assert.equal(root.isConnected, false);
 });
 
 test('loading screen validates required nodes and the exact slot count', () => {
@@ -412,7 +509,7 @@ test('full exit waits for both root opacity settlement and proven slit opacity z
   assert.equal(harness.calls.includes('transition.destroy'), false);
 
   slit.style.opacity = '0';
-  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-ltr'));
+  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-tunnel'));
   await exiting;
   assert.equal(root.isConnected, false);
   assert.deepEqual(harness.calls.slice(-2), ['transition.destroy', 'particles.destroy']);
@@ -448,7 +545,7 @@ test('reset cancels active exit waiters and stale settlement cannot remove the r
 
   root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
   slit.style.opacity = '0';
-  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-ltr'));
+  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-tunnel'));
   await timers.advance(POSTER_TIMING.full.finalResolve + POSTER_TIMING.full.rootFade + 200);
   assert.equal(root.isConnected, true);
   assert.equal(harness.calls.includes('transition.destroy'), false);
@@ -505,7 +602,7 @@ test('destroy cancels active exit waiters before removing the root and controlle
   assert.equal(harness.calls.filter((call) => call === 'transition.destroy').length, 1);
   assert.equal(harness.calls.filter((call) => call === 'particles.destroy').length, 1);
   slit.style.opacity = '0';
-  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-rtl'));
+  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-tunnel'));
   await timers.advance(POSTER_TIMING.full.finalResolve + POSTER_TIMING.full.rootFade + 200);
   assert.equal(harness.calls.filter((call) => call === 'transition.destroy').length, 1);
   assert.equal(harness.calls.filter((call) => call === 'particles.destroy').length, 1);
@@ -753,6 +850,65 @@ test('bootstrap waits for visual finish before releasing the application and res
   assert.deepEqual(await ready, [result]);
 });
 
+test('bootstrap exposes a backward-compatible live loading-profile setter', async () => {
+  const dom = createGateFixture();
+  const document = dom.window.document;
+  const calls = [];
+  const result = { id: 'archive-01' };
+  let resolveLoad;
+  let resolveVisual;
+  let resolveExit;
+  const load = new Promise((resolve) => { resolveLoad = resolve; });
+  const visual = new Promise((resolve) => { resolveVisual = resolve; });
+  const exited = new Promise((resolve) => { resolveExit = resolve; });
+
+  const ready = startCriticalAssetGate({
+    documentRef: document,
+    viewportWidth: 390,
+    motionProfile: 'full',
+    createView() {
+      return {
+        reset: () => calls.push('reset'),
+        setProgress: () => {},
+        setProfile: (profile) => calls.push(['profile', profile]),
+        showError: () => assert.fail('unexpected gate error'),
+        playReadySequence: (profile) => {
+          calls.push(['ready', profile]);
+          return visual;
+        },
+        exit: (profile) => {
+          calls.push(['exit', profile]);
+          return exited;
+        }
+      };
+    },
+    load: () => load
+  });
+
+  assert.equal(typeof ready.then, 'function');
+  assert.equal(typeof ready.setProfile, 'function');
+  ready.setProfile('reduce');
+  resolveLoad([result]);
+  await nextTurn();
+  assert.deepEqual(calls.filter((call) => Array.isArray(call)), [
+    ['profile', 'reduce'],
+    ['ready', 'reduce']
+  ]);
+
+  ready.setProfile('compact');
+  resolveVisual();
+  await nextTurn();
+  assert.deepEqual(calls.filter((call) => Array.isArray(call)), [
+    ['profile', 'reduce'],
+    ['ready', 'reduce'],
+    ['profile', 'compact'],
+    ['exit', 'compact']
+  ]);
+
+  resolveExit();
+  assert.deepEqual(await ready, [result]);
+});
+
 test('bootstrap keeps the app gated when visual finish fails and reruns after retry', async () => {
   const dom = createGateFixture();
   const document = dom.window.document;
@@ -897,12 +1053,41 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     assert.match(beam, /rgba\([^)]*,\s*0\)\s+100%/, `${selector} must end transparent`);
     assert.doesNotMatch(beam, /background:\s*rgba\(/, `${selector} must not be a solid rectangle`);
   }
-  assert.match(extractCssBlock(loadingBlock, '.loading-light-edge.is-warm'), /rgba\(255, 244, 222, 0\)\s+72%/);
-  assert.match(extractCssBlock(loadingBlock, '.loading-light-edge.is-cool'), /rgba\(220, 241, 255, 0\)\s+28%/);
+  assert.match(extractCssBlock(loadingBlock, '.loading-light-edge.is-warm'), /rgba\(255, 244, 222, 0\.26\)\s+52%/);
+  assert.match(extractCssBlock(loadingBlock, '.loading-light-edge.is-cool'), /rgba\(220, 241, 255, 0\.24\)\s+52%/);
   const coreBeam = extractCssBlock(loadingBlock, '.loading-light-core');
-  assert.match(coreBeam, /rgba\(255, 255, 255, 0\)\s+32%/);
-  assert.match(coreBeam, /rgba\(255, 255, 255, 0\)\s+68%/);
-  assert.ok(((46 * 0.28) + 8 + (46 * 0.28)) <= 35, 'effective beam width must stay within 35vw');
+  assert.match(coreBeam, /rgba\(255, 255, 255, 0\)\s+20%/);
+  assert.match(coreBeam, /rgba\(255, 255, 255, 0\.72\)\s+48%/);
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-light-slit > span'),
+    { filter: 'blur(18px)' },
+    'fixed desktop beam blur'
+  );
+  assert.match(
+    loadingBlock,
+    /\.loading-screen\[data-motion-profile="compact"\] \.loading-stage::before\s*\{[^}]*filter:\s*blur\(0\.6px\)/s,
+    'compact scan line should retain a soft subpixel blur'
+  );
+  assert.match(
+    loadingBlock,
+    /\.loading-screen\[data-motion-profile="compact"\] \.loading-stage::after,\s*\.loading-screen\[data-motion-profile="compact"\] \.loading-light-slit > span,\s*\.loading-screen\[data-motion-profile="compact"\] \.loading-frame::before\s*\{[^}]*filter:\s*blur\(7px\)/s,
+    'compact tunnel layers should retain a bounded soft glow'
+  );
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-stage::before'),
+    { height: '1px', filter: 'blur(1px)' },
+    'fixed scan gate line'
+  );
+  assert.match(
+    loadingBlock,
+    /\.loading-stage::after\s*\{[^}]*height:\s*30px[^}]*filter:\s*blur\(12px\)/s,
+    'fixed scan gate halo must use a small, statically blurred layer'
+  );
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-frame::before'),
+    { filter: 'blur(18px)' },
+    'poster wake glow'
+  );
   assert.match(loadingBlock, /\.loading-controls\s*\{[^}]*z-index:\s*5/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*object-fit:\s*contain/s);
   assert.match(loadingBlock, /--loading-motion-ease:\s*cubic-bezier\(0\.22, 1, 0\.36, 1\)/);
@@ -913,157 +1098,336 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-frame\s*\{[^}]*visibility:\s*hidden/s);
   assert.match(loadingBlock, /\.loading-frame\.is-active,\s*\.loading-frame\.is-outgoing,\s*\.loading-frame\.is-failed\s*\{[^}]*visibility:\s*visible/s);
   assert.doesNotMatch(extractCssBlock(loadingBlock, '.loading-frame'), /transition[^;]*opacity|opacity[^;]*transition/);
-  assert.doesNotMatch(loadingBlock, /clip-path/);
   assert.doesNotMatch(loadingBlock, /\.loading-frame\.is-active figcaption/);
   assert.match(loadingBlock, /\.loading-frame\.is-failed figcaption\s*\{[^}]*opacity:\s*1/s);
   assert.equal(POSTER_TIMING.full.finalResolve, 1100);
   assert.equal(POSTER_TIMING.full.exitLead, 620);
-  assert.match(loadingBlock, /--slit-duration:\s*941ms/);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-handoff-ms, 820ms\) var\(--loading-handoff-ease\)/s);
-  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-handoff-ms, 820ms\) var\(--loading-handoff-ease\)/s);
+  assert.match(loadingBlock, /--slit-duration:\s*721ms/);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-handoff-ms, 600ms\) var\(--loading-handoff-ease\)/s);
+  assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-handoff-ms, 600ms\) var\(--loading-settle-ease\)/s);
+  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="compact"\]\s*\{[^}]*--poster-handoff-ms:\s*480ms[^}]*--slit-duration:\s*579ms/s);
 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),
     {
-      transition: 'opacity var(--poster-handoff-ms, 820ms) var(--loading-handoff-ease),\n                transform var(--poster-handoff-ms, 820ms) var(--loading-handoff-ease)'
+      transition: 'opacity var(--poster-handoff-ms, 600ms) var(--loading-handoff-ease),\n                transform var(--poster-handoff-ms, 600ms) var(--loading-settle-ease)'
     },
     'outgoing scatter duration'
   );
 
-  for (const [selector, transform] of [
-    ['.loading-frame[data-slit-direction="ltr"] .loading-image', 'translateX(-0.9%) scale(0.997)'],
-    ['.loading-frame[data-slit-direction="rtl"] .loading-image', 'translateX(0.9%) scale(0.997)'],
-    ['.loading-frame[data-motion-profile="compact"][data-slit-direction="ltr"] .loading-image', 'translateX(-6px) scale(0.998)'],
-    ['.loading-frame[data-motion-profile="compact"][data-slit-direction="rtl"] .loading-image', 'translateX(6px) scale(0.998)']
-  ]) {
-    expectDeclarations(extractCssBlock(loadingBlock, selector), { transform }, selector);
-  }
-
-  for (const [selector, transform] of [
-    [
-      '.loading-frame.is-scattering[data-slit-direction="ltr"] .loading-image',
-      'translateX(0.75%) scale(0.996)'
-    ],
-    [
-      '.loading-frame.is-scattering[data-slit-direction="rtl"] .loading-image',
-      'translateX(-0.75%) scale(0.996)'
-    ],
-    [
-      '.loading-frame[data-motion-profile="compact"].is-scattering[data-slit-direction="ltr"] .loading-image',
-      'translateX(5px) scale(0.997)'
-    ],
-    [
-      '.loading-frame[data-motion-profile="compact"].is-scattering[data-slit-direction="rtl"] .loading-image',
-      'translateX(-5px) scale(0.997)'
-    ]
-  ]) {
-    expectDeclarations(extractCssBlock(loadingBlock, selector), { transform }, selector);
-  }
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-image'),
+    {
+      '--poster-enter-y': '-32%',
+      '--poster-enter-scale': '0.24',
+      '--poster-exit-y': '9%',
+      '--poster-exit-scale': '1.08',
+      transform: 'translate3d(0, var(--poster-enter-y), 0) scale(var(--poster-enter-scale))'
+    },
+    'fast full-profile poster tunnel geometry'
+  );
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-frame[data-slit-direction="vertical"] .loading-image'),
+    { transform: 'translate3d(0, var(--poster-enter-y), 0) scale(var(--poster-enter-scale))' },
+    'vertical poster entry geometry'
+  );
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-frame.is-scattering[data-slit-direction="vertical"] .loading-image'),
+    {
+      opacity: '0',
+      transform: 'translate3d(0, var(--poster-exit-y), 0) scale(var(--poster-exit-scale))'
+    },
+    'vertical poster exit geometry'
+  );
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-frame[data-motion-profile="compact"][data-slit-direction="vertical"] .loading-image'),
+    {
+      '--poster-enter-y': '-24%',
+      '--poster-enter-scale': '0.36',
+      '--poster-exit-y': '7%',
+      '--poster-exit-scale': '1.055'
+    },
+    'fast compact poster tunnel geometry'
+  );
 
   for (const [selector, animation] of [
     [
-      '.loading-light-slit.is-lit[data-direction="ltr"]',
-      'loading-slit-ltr var(--slit-duration, 941ms) var(--loading-light-ease) both'
+      '.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-revealing[data-slit-direction="vertical"] .loading-image',
+      'loading-poster-enter var(--poster-handoff-ms, 600ms) var(--loading-settle-ease) both'
     ],
     [
-      '.loading-light-slit.is-lit[data-direction="rtl"]',
-      'loading-slit-rtl var(--slit-duration, 941ms) var(--loading-light-ease) both'
+      '.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-revealing[data-slit-direction="vertical"]::before',
+      'loading-poster-wake var(--poster-handoff-ms, 600ms) var(--loading-settle-ease) both'
+    ],
+    [
+      '.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-scattering[data-slit-direction="vertical"] .loading-image',
+      'loading-poster-exit var(--poster-handoff-ms, 600ms) var(--loading-settle-ease) both'
+    ],
+    [
+      '.loading-light-slit.is-lit[data-direction="vertical"]',
+      'loading-tunnel-pass var(--slit-duration, 721ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-core',
-      'loading-curtain-core var(--slit-duration, 941ms) var(--loading-light-ease) both'
+      'loading-tunnel-core var(--slit-duration, 721ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-edge.is-warm',
-      'loading-curtain-warm var(--slit-duration, 941ms) var(--loading-light-ease) both'
+      'loading-tunnel-warm var(--slit-duration, 721ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-edge.is-cool',
-      'loading-curtain-cool var(--slit-duration, 941ms) var(--loading-light-ease) both'
+      'loading-tunnel-cool var(--slit-duration, 721ms) var(--loading-light-ease) both'
+    ],
+    [
+      '.loading-screen.is-scanning .loading-stage::before',
+      'loading-scan-gate-line var(--slit-duration, 721ms) var(--loading-light-ease) both'
+    ],
+    [
+      '.loading-screen.is-scanning .loading-stage::after',
+      'loading-scan-gate-halo var(--slit-duration, 721ms) var(--loading-light-ease) both'
+    ],
+    [
+      '.loading-screen.is-final-resolving .loading-light-slit[data-direction="vertical"]',
+      'loading-final-tunnel var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
+    ],
+    [
+      '.loading-screen.is-final-resolving .loading-stage::before',
+      'loading-final-scan-gate-line var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
+    ],
+    [
+      '.loading-screen.is-final-resolving .loading-stage::after',
+      'loading-final-scan-gate-halo var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
+    ],
+    [
+      '.loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-frame.is-active .loading-image',
+      'loading-poster-to-player var(--final-resolve-ms, 1100ms) var(--loading-settle-ease) both'
     ]
   ]) {
     expectDeclarations(extractCssBlock(loadingBlock, selector), { animation }, selector);
   }
 
-  expectKeyframeStops(loadingBlock, 'loading-slit-ltr', {
-    '0%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' },
-    '18%': { opacity: '0.025' },
-    '42%': { opacity: '0.18' },
-    '60%': { opacity: '0.28' },
-    '82%': { opacity: '0.09' },
-    '100%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' }
-  });
-
-  expectKeyframeStops(loadingBlock, 'loading-slit-rtl', {
-    '0%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' },
-    '18%': { opacity: '0.025' },
-    '42%': { opacity: '0.18' },
-    '60%': { opacity: '0.28' },
-    '82%': { opacity: '0.09' },
-    '100%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' }
-  });
-
-  expectKeyframeStops(loadingBlock, 'loading-curtain-core', {
-    '0%': { opacity: '0', transform: 'scaleX(0.16)' },
-    '42%': { opacity: '0.62', transform: 'scaleX(0.68)' },
-    '60%': { opacity: '0.48', transform: 'scaleX(0.62)' },
-    '100%': { opacity: '0', transform: 'scaleX(0.20)' }
-  });
-
-  expectKeyframeStops(loadingBlock, 'loading-curtain-warm', {
-    '0%': { opacity: '0', transform: 'translateX(4%) scaleX(0.12)' },
-    '42%': { opacity: '0.26', transform: 'translateX(0) scaleX(0.62)' },
-    '60%': { opacity: '0.20', transform: 'translateX(-2%) scaleX(0.56)' },
-    '100%': { opacity: '0', transform: 'translateX(-8%) scaleX(0.22)' }
-  });
-
-  expectKeyframeStops(loadingBlock, 'loading-curtain-cool', {
-    '0%': { opacity: '0', transform: 'translateX(-4%) scaleX(0.12)' },
-    '42%': { opacity: '0.23', transform: 'translateX(0) scaleX(0.62)' },
-    '60%': { opacity: '0.18', transform: 'translateX(2%) scaleX(0.56)' },
-    '100%': { opacity: '0', transform: 'translateX(8%) scaleX(0.22)' }
-  });
-
-  expectDeclarations(
-    extractCssBlock(loadingBlock, '.loading-screen.is-final-resolving .loading-light-slit[data-direction="ltr"]'),
-    {
-      animation: 'loading-final-ltr var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
-    },
-    'final directional duration sync'
+  const keyframes = [
+    expectKeyframeStops(loadingBlock, 'loading-poster-enter', {
+      '0%, 10%': {
+        opacity: '0',
+        transform: 'translate3d(0, var(--poster-enter-y), 0) scale(var(--poster-enter-scale))'
+      },
+      '20%': {
+        opacity: '0.08',
+        transform: 'translate3d(0, -27%, 0) scale(0.34)'
+      },
+      '36%': {
+        opacity: '0.68',
+        transform: 'translate3d(0, -7.5%, 0) scale(0.84)'
+      },
+      '47%': {
+        opacity: '1',
+        transform: 'translate3d(0, 1.2%, 0) scale(1.034)'
+      },
+      '66%, 100%': {
+        opacity: '1',
+        transform: 'translate3d(0, 0, 0) scale(1)'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-poster-wake', {
+      '0%, 10%': {
+        opacity: '0',
+        transform: 'translate3d(-50%, -32%, 0) scale3d(0.22, 0.62, 1)'
+      },
+      '30%': {
+        opacity: '0.26',
+        transform: 'translate3d(-50%, -12%, 0) scale3d(0.52, 1.04, 1)'
+      },
+      '47%': {
+        opacity: '0.16',
+        transform: 'translate3d(-50%, 3%, 0) scale3d(1.02, 0.82, 1)'
+      },
+      '66%, 100%': {
+        opacity: '0',
+        transform: 'translate3d(-50%, 8%, 0) scale3d(1.08, 0.46, 1)'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-poster-exit', {
+      '0%, 12%': {
+        opacity: '1',
+        transform: 'translate3d(0, 0, 0) scale(1)'
+      },
+      '22%': {
+        opacity: '0.36',
+        transform: 'translate3d(0, 2%, 0) scale(1.025)'
+      },
+      '30%': {
+        opacity: '0.08',
+        transform: 'translate3d(0, 5%, 0) scale(1.058)'
+      },
+      '38%, 100%': {
+        opacity: '0',
+        transform: 'translate3d(0, var(--poster-exit-y), 0) scale(var(--poster-exit-scale))'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-scan-gate-line', {
+      '35%': {
+        opacity: '0.18',
+        transform: 'translate3d(-50%, -50%, 0) scaleX(0.72)'
+      },
+      '43%': {
+        opacity: '0.86',
+        transform: 'translate3d(-50%, -50%, 0) scaleX(1)'
+      },
+      '50%': {
+        opacity: '0.16',
+        transform: 'translate3d(-50%, -50%, 0) scaleX(1.045)'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-scan-gate-halo', {
+      '43%': {
+        opacity: '0.34',
+        transform: 'translate3d(-50%, -50%, 0) scaleX(1)'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-final-scan-gate-line', {
+      '46%': {
+        opacity: '0.16',
+        transform: 'translate3d(-50%, -50%, 0) scaleX(0.7)'
+      },
+      '52%': {
+        opacity: '0.82',
+        transform: 'translate3d(-50%, -50%, 0) scaleX(1)'
+      },
+      '60%': {
+        opacity: '0.14',
+        transform: 'translate3d(-50%, -50%, 0) scaleX(1.045)'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-final-scan-gate-halo', {
+      '52%': {
+        opacity: '0.3',
+        transform: 'translate3d(-50%, -50%, 0) scaleX(1)'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-tunnel-pass', {
+      '0%': {
+        opacity: '0',
+        transform: 'translate3d(-50%, -112%, 0) scale3d(0.56, 0.28, 1)'
+      },
+      '31%': {
+        opacity: '0.18',
+        transform: 'translate3d(-50%, -68%, 0) scale3d(0.68, 0.68, 1)'
+      },
+      '43%': {
+        opacity: '0.28',
+        transform: 'translate3d(-50%, -40%, 0) scale3d(1.05, 1.05, 1)'
+      },
+      '100%': {
+        opacity: '0',
+        transform: 'translate3d(-50%, 18%, 0) scale3d(0.54, 0.38, 1)'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-tunnel-core', {
+      '0%': { opacity: '0', transform: 'scale3d(0.58, 0.25, 1)' },
+      '43%': { opacity: '0.62', transform: 'scale3d(1, 1, 1)' },
+      '100%': { opacity: '0', transform: 'scale3d(0.62, 0.3, 1)' }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-tunnel-warm', {
+      '0%': { opacity: '0', transform: 'translate3d(4%, -5%, 0) scale3d(0.52, 0.2, 1)' },
+      '43%': { opacity: '0.26', transform: 'translate3d(-1%, 2%, 0) scale3d(1, 1, 1)' },
+      '100%': { opacity: '0', transform: 'translate3d(-6%, 8%, 0) scale3d(0.58, 0.3, 1)' }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-tunnel-cool', {
+      '0%': { opacity: '0', transform: 'translate3d(-4%, -5%, 0) scale3d(0.52, 0.2, 1)' },
+      '43%': { opacity: '0.23', transform: 'translate3d(1%, 2%, 0) scale3d(1, 1, 1)' },
+      '100%': { opacity: '0', transform: 'translate3d(6%, 8%, 0) scale3d(0.58, 0.3, 1)' }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-final-tunnel', {
+      '0%': {
+        opacity: '0',
+        transform: 'translate3d(-50%, -108%, 0) scale3d(0.54, 0.26, 1)'
+      },
+      '52%': {
+        opacity: '0.22',
+        transform: 'translate3d(-50%, -40%, 0) scale3d(1.04, 1.02, 1)'
+      },
+      '100%': {
+        opacity: '0',
+        transform: 'translate3d(-50%, 18%, 0) scale3d(0.54, 0.34, 1)'
+      }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-final-core', {
+      '38%': { opacity: '0.52', transform: 'scale3d(0.86, 0.8, 1)' },
+      '100%': { opacity: '0', transform: 'scale3d(0.58, 0.28, 1)' }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-final-warm', {
+      '38%': { opacity: '0.22', transform: 'translate3d(1%, 0, 0) scale3d(0.84, 0.76, 1)' },
+      '100%': { opacity: '0', transform: 'translate3d(-7%, 8%, 0) scale3d(0.56, 0.26, 1)' }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-final-cool', {
+      '38%': { opacity: '0.2', transform: 'translate3d(-1%, 0, 0) scale3d(0.84, 0.76, 1)' },
+      '100%': { opacity: '0', transform: 'translate3d(7%, 8%, 0) scale3d(0.56, 0.26, 1)' }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-poster-to-player', {
+      '0%': { opacity: '1', transform: 'translate3d(0, 0, 0) scale(1)' },
+      '42%': { opacity: '1' },
+      '72%': {
+        opacity: '1',
+        transform: 'translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4))'
+      },
+      '84%': {
+        opacity: '0.94',
+        transform: 'translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4))'
+      },
+      '100%': {
+        opacity: '0',
+        transform: 'translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4))'
+      }
+    })
+  ];
+  for (const keyframe of keyframes) {
+    assert.doesNotMatch(keyframe, /(?:filter|box-shadow|backdrop-filter|top|left|width|height)\s*:/);
+  }
+  for (const keyframe of keyframes.slice(0, -1)) {
+    assert.doesNotMatch(keyframe, /(?:-webkit-)?clip-path\s*:/);
+  }
+  const finalFlip = keyframes.at(-1);
+  assert.match(
+    extractCssBlock(finalFlip, '0%'),
+    /clip-path:\s*inset\(\s*var\(--poster-source-inset-top, 0%\)\s*var\(--poster-source-inset-right, 0%\)\s*var\(--poster-source-inset-bottom, 0%\)\s*var\(--poster-source-inset-left, 0%\)\s*round 0\s*\)/s
   );
-
-  expectKeyframeStops(loadingBlock, 'loading-final-ltr', {
-    '0%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' },
-    '18%': { opacity: '0.03' },
-    '38%': { opacity: '0.14' },
-    '52%': { opacity: '0.22' },
-    '70%': { opacity: '0.11' },
-    '86%': { opacity: '0.03' },
-    '100%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' }
-  });
-  expectKeyframeStops(loadingBlock, 'loading-final-rtl', {
-    '0%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' },
-    '100%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' }
-  });
-  assert.doesNotMatch(loadingBlock, /loading-final-exposure|scaleX\(1\)/);
-  assert.match(loadingBlock, /loading-final-core[\s\S]*opacity:\s*0\.52/);
-  assert.match(loadingBlock, /loading-final-warm[\s\S]*opacity:\s*0\.22/);
-  assert.match(loadingBlock, /loading-final-cool[\s\S]*opacity:\s*0\.20/);
+  assert.match(
+    extractCssBlock(finalFlip, '42%'),
+    /clip-path:\s*inset\(\s*var\(--poster-source-inset-top, 0%\)\s*var\(--poster-source-inset-right, 0%\)\s*var\(--poster-source-inset-bottom, 0%\)\s*var\(--poster-source-inset-left, 0%\)\s*round 12%\s*\)/s
+  );
+  for (const stop of ['72%', '84%', '100%']) {
+    assert.match(
+      extractCssBlock(finalFlip, stop),
+      /clip-path:\s*inset\(\s*var\(--poster-final-inset-top, 0%\)\s*var\(--poster-final-inset-right, 0%\)\s*var\(--poster-final-inset-bottom, 0%\)\s*var\(--poster-final-inset-left, 0%\)\s*round 50%\s*\)/s,
+      `${stop} must preserve the circular sticker crop`
+    );
+  }
+  assert.doesNotMatch(loadingBlock, /loading-(?:slit-(?:ltr|rtl)|curtain|final-(?:ltr|rtl))/);
   assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s var\(--loading-motion-ease\)/s);
   assert.deepEqual(loadingBlock.match(/transition:[^;]*linear;/g), [
     'transition: opacity 120ms linear;',
     'transition: opacity 120ms linear;'
   ]);
-  assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image|\.loading-light-slit)[^{]*\{[^}]*(?:filter|box-shadow|backdrop-filter)\s*:/s);
+  for (const selector of ['.loading-frame', '.loading-image', '.loading-light-slit']) {
+    assert.doesNotMatch(
+      extractCssBlock(loadingBlock, selector),
+      /(?:filter|box-shadow|backdrop-filter)\s*:/,
+      `${selector} must not blur its content layer`
+    );
+  }
   assert.doesNotMatch(loadingBlock, /letter-spacing:\s*-/);
   assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
-  assert.doesNotMatch(loadingBlock, /(?:perspective|rotate|translateY)\s*[:(]/);
+  assert.doesNotMatch(loadingBlock, /(?:perspective|rotate|translateX)\s*[:(]/);
   const posterScales = [...loadingBlock.matchAll(/(?<!X)scale\(([0-9.]+)\)/g)]
     .map(([, scale]) => Number(scale));
   assert.ok(posterScales.length > 0);
-  assert.ok(posterScales.every((scale) => scale >= 0.996 && scale <= 1));
+  assert.ok(posterScales.every((scale) => scale >= 0.24 && scale <= 1.08));
   assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\]\s*\{[^}]*transition:\s*opacity 120ms linear/s);
   assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\] \.loading-frame\s*\{[^}]*transition:\s*none/s);
+  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\] \.loading-image\s*\{[^}]*animation:\s*none/s);
+  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\] \.loading-stage::before,[^}]*\.loading-stage::after\s*\{[^}]*display:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-particles[\s\S]*display:\s*none/s);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-image[\s\S]*120ms/s);
 });

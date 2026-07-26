@@ -69,8 +69,8 @@ test('draw button perimeter light preserves the locked pill geometry', () => {
   assert.match(perimeter, /var\(--archive-red\)/);
   assert.match(perimeter, /var\(--cover-accent\)/);
   assert.match(halo, /filter:\s*blur\(\d+px\)/);
-  assert.match(halo, /transparent 46%,\s*rgba\(241,\s*242,\s*238,\s*0\.16\) 74%,\s*transparent 100%/);
-  assert.match(halo, /transparent 46%,\s*color-mix\(in srgb, var\(--cover-accent\) 16%, transparent\) 74%,\s*transparent 100%/);
+  assert.match(halo, /transparent 38%,\s*rgba\(241,\s*242,\s*238,\s*0\.34\) 72%,\s*transparent 100%/);
+  assert.match(halo, /transparent 38%,\s*color-mix\(in srgb, var\(--cover-accent\) 34%, transparent\) 72%,\s*transparent 100%/);
   assert.match(css, /\.play-btn:active\s*\{[\s\S]*?--button-y:\s*1px[\s\S]*?--button-scale:\s*0\.972/);
   assert.match(html, /<span class="btn-sheen" aria-hidden="true"><\/span>/);
 });
@@ -124,4 +124,37 @@ test('compact is static, reduced is absent, and unavailable states restart from 
   assert.match(css, /\.play-btn\[data-busy\][\s\S]*?\.play-btn:disabled[\s\S]*?html\[data-document-hidden\][\s\S]*?#loadingScreen[\s\S]*?animation:\s*none/);
   assert.match(script, /document\.documentElement\.toggleAttribute\('data-document-hidden',\s*document\.hidden\);\s*document\.addEventListener\('visibilitychange'/);
   assert.match(script, /document\.addEventListener\('visibilitychange',\s*\(\)\s*=>\s*\{\s*document\.documentElement\.toggleAttribute\('data-document-hidden',\s*document\.hidden\)/);
+});
+
+test('draw button pointer light is local, damped, finite, and fully gated', () => {
+  const button = ruleBody('.play-btn');
+  const surface = ruleBody('.play-btn::before');
+
+  assert.match(button, /--btn-spot-x:\s*35%/);
+  assert.match(button, /--btn-spot-y:\s*0%/);
+  assert.match(button, /--btn-spot-strength:\s*0%/);
+  assert.match(surface, /radial-gradient\(\s*circle at var\(--btn-spot-x\) var\(--btn-spot-y\)/);
+  assert.match(surface, /var\(--btn-spot-strength\)/);
+  assert.doesNotMatch(surface, /mix-blend-mode/);
+
+  assert.match(script, /DRAW_BUTTON_SPOT_EASE\s*=\s*0\.22/);
+  assert.match(script, /DRAW_BUTTON_SPOT_FADE_EASE\s*=\s*0\.16/);
+  assert.match(script, /DRAW_BUTTON_SPOT_STOP_THRESHOLD\s*=\s*0\.06/);
+  assert.match(script, /matchMedia\('\(hover: hover\) and \(pointer: fine\)'\)/);
+  assert.match(script, /document\.documentElement\.dataset\.motionProfile\s*===\s*'full'/);
+  assert.match(script, /!playButton\.hasAttribute\('data-busy'\)/);
+  assert.match(script, /playButton\.style\.setProperty\('--btn-spot-x'/);
+  assert.match(script, /playButton\.style\.setProperty\('--btn-spot-y'/);
+  assert.match(script, /playButton\.style\.setProperty\('--btn-spot-strength'/);
+  assert.match(script, /playButton\.style\.removeProperty\('--btn-spot-x'\)/);
+  assert.match(script, /playButton\.style\.removeProperty\('--btn-spot-y'\)/);
+  assert.match(script, /playButton\.style\.removeProperty\('--btn-spot-strength'\)/);
+  assert.match(script, /playButton\.addEventListener\('pointerleave',\s*releaseDrawButtonSpotlight\)/);
+  assert.match(script, /drawButtonSpotPhase\s*=\s*'leaving'/);
+  assert.match(script, /drawButtonSpotTargetX\s*=\s*DRAW_BUTTON_SPOT_DEFAULT_X/);
+  assert.match(script, /drawButtonSpotTargetStrength\s*=\s*0/);
+  assert.match(script, /window\.addEventListener\('blur',\s*resetPointerEffects\)/);
+  assert.match(script, /setPlayButtonBusy\(isDrawing\);\s*if \(isDrawing\) resetDrawButtonSpotlight\(\)/);
+  assert.match(script, /if \(document\.hidden\) \{[\s\S]*?resetDrawButtonSpotlight\(\)/);
+  assert.match(script, /if \(nextProfile !== 'full'\) resetDrawButtonSpotlight\(\)/);
 });

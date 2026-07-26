@@ -1,0 +1,342 @@
+# Review package: 7e55df9..f2a33b3
+
+## Commits
+f2a33b3 refine: remove loading poster chrome
+
+## Files changed
+ index.html                                 |  5 +---
+ src/style.css                              | 43 +++++++++---------------------
+ test/e2e/loading-poster-transition.spec.js |  2 +-
+ test/unit/loading-screen.test.js           | 12 +++------
+ 4 files changed, 18 insertions(+), 44 deletions(-)
+
+## Diff
+diff --git a/index.html b/index.html
+index 2362d8f..a1d27d6 100644
+--- a/index.html
++++ b/index.html
+@@ -68,43 +68,40 @@
+         .loading-particles {
+             inset: 0;
+         }
+     </style>
+     <link rel="stylesheet" href="./src/style.css">
+ </head>
+ <body>
+     <div class="loading-screen" id="loadingScreen" data-state="loading">
+         <div class="loading-intake">
+             <div class="loading-controls">
+-                <div class="loading-intake-head">
+-                    <output id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
+-                </div>
++                <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
+                 <div class="loading-status">
+                     <p class="loading-copy" id="loadingCopy">影像读取中</p>
+                     <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
+                 </div>
+             </div>
+             <div class="loading-stage">
+                 <div class="loading-poster-stack">
+                     <figure class="loading-frame" data-loading-slot="archive-01"><figcaption aria-hidden="true">AR-01</figcaption></figure>
+                     <figure class="loading-frame" data-loading-slot="archive-02"><figcaption aria-hidden="true">AR-02</figcaption></figure>
+                     <figure class="loading-frame" data-loading-slot="archive-03"><figcaption aria-hidden="true">AR-03</figcaption></figure>
+                     <figure class="loading-frame" data-loading-slot="archive-04"><figcaption aria-hidden="true">AR-04</figcaption></figure>
+                     <figure class="loading-frame" data-loading-slot="archive-05"><figcaption aria-hidden="true">AR-05</figcaption></figure>
+                 </div>
+                 <canvas class="loading-particles" id="loadingParticles" aria-hidden="true"></canvas>
+                 <div class="loading-light-slit" id="loadingLightSlit" aria-hidden="true">
+                     <span class="loading-light-edge is-warm"></span>
+                     <span class="loading-light-core"></span>
+                     <span class="loading-light-edge is-cool"></span>
+                 </div>
+-                <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
+             </div>
+         </div>
+     </div>
+ 
+     <div class="app-root" id="appRoot" inert aria-hidden="true">
+     <main class="app-shell" id="appShell">
+         <div class="header">
+             <h1>歌词抽取机</h1>
+             <p>按下按钮Yuko为你抽取专属歌词</p>
+         </div>
+diff --git a/src/style.css b/src/style.css
+index 09bb667..e3f0107 100644
+--- a/src/style.css
++++ b/src/style.css
+@@ -86,20 +86,32 @@
+             inherits: false;
+             initial-value: 9600ms;
+         }
+ 
+         * {
+             box-sizing: border-box;
+             margin: 0;
+             padding: 0;
+         }
+ 
++        .sr-only {
++            position: absolute !important;
++            width: 1px !important;
++            height: 1px !important;
++            padding: 0 !important;
++            margin: -1px !important;
++            overflow: hidden !important;
++            clip: rect(0, 0, 0, 0) !important;
++            white-space: nowrap !important;
++            border: 0 !important;
++        }
++
+         html {
+             width: 100%;
+             height: 100%;
+             overflow: hidden;
+             overscroll-behavior: none;
+             background: #070a12;
+         }
+ 
+         body {
+             font-family: "Manrope", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+@@ -185,21 +197,20 @@
+         body::before,
+         body::after {
+             background-color: #060910;
+         }
+ 
+         .app-root {
+             display: contents;
+         }
+ 
+         .loading-screen {
+-            --loading-progress: 0;
+             --loading-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+             --loading-handoff-ease: cubic-bezier(0.42, 0, 0.58, 1);
+             --loading-light-ease: cubic-bezier(0.4, 0, 0.2, 1);
+             --loading-settle-ease: cubic-bezier(0.32, 0.72, 0, 1);
+             --poster-handoff-ms: 820ms;
+             --slit-duration: 941ms;
+             --final-resolve-ms: 1100ms;
+             box-sizing: border-box;
+             position: fixed;
+             inset: 0;
+@@ -229,31 +240,20 @@
+         .loading-controls {
+             position: absolute;
+             inset: 0;
+             z-index: 5;
+             display: flex;
+             flex-direction: column;
+             justify-content: space-between;
+             pointer-events: none;
+         }
+ 
+-        .loading-intake-head {
+-            display: flex;
+-            align-items: center;
+-            justify-content: flex-end;
+-            color: rgba(237, 245, 255, 0.82);
+-            font-family: "SFMono-Regular", Consolas, monospace;
+-            font-size: 11px;
+-            line-height: 1.4;
+-            letter-spacing: 0;
+-        }
+-
+         .loading-stage {
+             position: absolute;
+             inset: 48px 0 72px;
+             min-height: 0;
+         }
+ 
+         .loading-poster-stack,
+         .loading-particles {
+             position: absolute;
+             inset: 0;
+@@ -456,39 +456,20 @@
+         }
+ 
+         .loading-screen.is-final-resolving .loading-light-edge.is-warm {
+             animation: loading-final-warm var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both;
+         }
+ 
+         .loading-screen.is-final-resolving .loading-light-edge.is-cool {
+             animation: loading-final-cool var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both;
+         }
+ 
+-        .loading-progress-rail {
+-            position: absolute;
+-            right: 0;
+-            bottom: 0;
+-            left: 0;
+-            z-index: 5;
+-            height: 1px;
+-            overflow: hidden;
+-            background: rgba(205, 229, 255, 0.18);
+-        }
+-
+-        .loading-progress-rail span {
+-            display: block;
+-            width: calc(var(--loading-progress) * 20%);
+-            height: 100%;
+-            background: #edf7ff;
+-            transition: width 180ms var(--loading-motion-ease);
+-        }
+-
+         .loading-status {
+             min-height: 54px;
+             text-align: center;
+         }
+ 
+         .loading-copy {
+             min-height: 1.5em;
+             text-align: center;
+             color: rgba(237, 245, 255, 0.9);
+             font-weight: 600;
+diff --git a/test/e2e/loading-poster-transition.spec.js b/test/e2e/loading-poster-transition.spec.js
+index a151cbc..f61801a 100644
+--- a/test/e2e/loading-poster-transition.spec.js
++++ b/test/e2e/loading-poster-transition.spec.js
+@@ -295,21 +295,21 @@ const getLightOracleClip = (page) => page.evaluate(() => {
+   };
+   const intersects = (rect) => (
+     rect.right > clip.x
+     && rect.left < clip.x + clip.width
+     && rect.bottom > clip.y
+     && rect.top < clip.y + clip.height
+   );
+   const blockers = [
+     ...document.querySelectorAll(
+       '.loading-poster-stack, #loadingParticles, #loadingProgress, #loadingCopy, '
+-      + '#loadingRetry, .loading-progress-rail'
++      + '#loadingRetry'
+     )
+   ].filter((element) => intersects(element.getBoundingClientRect()))
+     .map((element) => element.id || element.className);
+   return {
+     clip,
+     blockers,
+     slitCoversClipVertically: slit.top <= clip.y && slit.bottom >= clip.y + clip.height
+   };
+ });
+ 
+diff --git a/test/unit/loading-screen.test.js b/test/unit/loading-screen.test.js
+index f96be31..7746fcc 100644
+--- a/test/unit/loading-screen.test.js
++++ b/test/unit/loading-screen.test.js
+@@ -8,37 +8,34 @@ import { CriticalAssetError } from '../../src/media/asset-loader.js';
+ import {
+   VisualTransitionError,
+   createLoadingScreen
+ } from '../../src/ui/loading-screen.js';
+ import { POSTER_TIMING } from '../../src/ui/poster-transition.js';
+ 
+ const createFixture = () => new JSDOM(`
+   <div class="loading-screen" id="loadingScreen" data-state="loading">
+     <div class="loading-intake">
+       <div class="loading-controls">
+-        <div class="loading-intake-head">
+-          <output id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
+-        </div>
++        <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
+         <p class="loading-copy" id="loadingCopy">影像读取中</p>
+         <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
+       </div>
+       <div class="loading-stage">
+         <div class="loading-poster-stack">
+         <figure class="loading-frame" data-loading-slot="archive-01"><figcaption aria-hidden="true">AR-01</figcaption></figure>
+         <figure class="loading-frame" data-loading-slot="archive-02"><figcaption aria-hidden="true">AR-02</figcaption></figure>
+         <figure class="loading-frame" data-loading-slot="archive-03"><figcaption aria-hidden="true">AR-03</figcaption></figure>
+         <figure class="loading-frame" data-loading-slot="archive-04"><figcaption aria-hidden="true">AR-04</figcaption></figure>
+         <figure class="loading-frame" data-loading-slot="archive-05"><figcaption aria-hidden="true">AR-05</figcaption></figure>
+         </div>
+         <canvas class="loading-particles" id="loadingParticles"></canvas>
+         <div class="loading-light-slit" id="loadingLightSlit"></div>
+-        <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
+       </div>
+     </div>
+   </div>
+ `);
+ 
+ const createControllerHarness = ({
+   finish,
+   particleDestroy,
+   transitionDestroy
+ } = {}) => {
+@@ -129,29 +126,28 @@ const createTimerHarness = () => {
+       await Promise.resolve();
+     }
+     now = end;
+     await Promise.resolve();
+   };
+   return { setTimer, clearTimer, advance, get pending() { return timers.size; } };
+ };
+ 
+ const createGateFixture = () => new JSDOM(`
+   <div class="loading-screen" id="loadingScreen" data-state="loading">
+-    <output id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
++    <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
+     <div data-loading-slot="archive-01"></div>
+     <div data-loading-slot="archive-02"></div>
+     <div data-loading-slot="archive-03"></div>
+     <div data-loading-slot="archive-04"></div>
+     <div data-loading-slot="archive-05"></div>
+     <canvas id="loadingParticles"></canvas>
+     <div id="loadingLightSlit"></div>
+-    <div class="loading-progress-rail" aria-hidden="true"><span></span></div>
+     <button id="loadingRetry" type="button" hidden>重新载入</button>
+     <p id="loadingCopy">影像读取中</p>
+   </div>
+   <div class="app-root" id="appRoot" inert aria-hidden="true">
+     <main id="appShell"></main>
+   </div>
+ `);
+ 
+ const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
+ 
+@@ -818,23 +814,24 @@ test('application markup starts as one inert root outside the loading screen', (
+     'archive-01', 'archive-02', 'archive-03', 'archive-04', 'archive-05'
+   ]);
+   assert.deepEqual(slots.map((slot) => slot.textContent.trim()), ['AR-01', 'AR-02', 'AR-03', 'AR-04', 'AR-05']);
+   assert.ok(slots.every((slot) => slot.querySelector('figcaption').getAttribute('aria-hidden') === 'true'));
+   assert.doesNotMatch(loadingScreen.textContent, /LIGHT ARCHIVE|PROJECTION/);
+   assert.equal(loadingScreen.querySelectorAll('canvas#loadingParticles').length, 1);
+   assert.equal(loadingScreen.querySelectorAll('div#loadingLightSlit').length, 1);
+   assert.equal(loadingScreen.querySelectorAll('button').length, 1);
+   assert.equal(loadingScreen.querySelectorAll('img').length, 0);
+   assert.equal(loadingScreen.querySelector('[src]'), null);
++  assert.equal(document.querySelectorAll('#loadingProgress.sr-only').length, 1);
++  assert.equal(document.querySelector('.loading-progress-rail'), null);
+   assert.equal(loadingScreen.querySelector('#loadingProgress').getAttribute('aria-live'), 'polite');
+   assert.equal(loadingScreen.querySelector('#loadingProgress').getAttribute('aria-atomic'), 'true');
+-  assert.equal(loadingScreen.querySelector('.loading-progress-rail').getAttribute('aria-hidden'), 'true');
+ 
+   const criticalStyle = document.querySelector('style').textContent;
+   assert.match(criticalStyle, /\.loading-screen\s*\{[^}]*box-sizing:\s*border-box/s);
+   assert.match(criticalStyle, /padding:\s*max\(24px, env\(safe-area-inset-top\)\)\s+max\(24px, env\(safe-area-inset-right\)\)\s+max\(24px, env\(safe-area-inset-bottom\)\)\s+max\(24px, env\(safe-area-inset-left\)\)/s);
+   assert.match(criticalStyle, /\.loading-intake\s*\{[^}]*width:\s*min\(100%, 680px\)[^}]*height:\s*min\(100%, 820px\)/s);
+ });
+ 
+ const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+ 
+ const extractCssBlock = (source, selector) => {
+@@ -1045,21 +1042,20 @@ test('loading CSS defines the projection layers and motion-specific fallbacks',
+     '100%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' }
+   });
+   expectKeyframeStops(loadingBlock, 'loading-final-rtl', {
+     '0%': { opacity: '0', transform: 'translate3d(12%, -50%, 0)' },
+     '100%': { opacity: '0', transform: 'translate3d(-112%, -50%, 0)' }
+   });
+   assert.doesNotMatch(loadingBlock, /loading-final-exposure|scaleX\(1\)/);
+   assert.match(loadingBlock, /loading-final-core[\s\S]*opacity:\s*0\.52/);
+   assert.match(loadingBlock, /loading-final-warm[\s\S]*opacity:\s*0\.22/);
+   assert.match(loadingBlock, /loading-final-cool[\s\S]*opacity:\s*0\.20/);
+-  assert.match(loadingBlock, /\.loading-progress-rail span\s*\{[^}]*transition:\s*width 180ms var\(--loading-motion-ease\)/s);
+   assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s var\(--loading-motion-ease\)/s);
+   assert.deepEqual(loadingBlock.match(/transition:[^;]*linear;/g), [
+     'transition: opacity 120ms linear;',
+     'transition: opacity 120ms linear;'
+   ]);
+   assert.doesNotMatch(loadingBlock, /(?:\.loading-frame|\.loading-image|\.loading-light-slit)[^{]*\{[^}]*(?:filter|box-shadow|backdrop-filter)\s*:/s);
+   assert.doesNotMatch(loadingBlock, /letter-spacing:\s*-/);
+   assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
+   assert.doesNotMatch(loadingBlock, /(?:perspective|rotate|translateY)\s*[:(]/);
+   const posterScales = [...loadingBlock.matchAll(/(?<!X)scale\(([0-9.]+)\)/g)]

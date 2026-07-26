@@ -11,14 +11,20 @@ export function createAppTransitions({
   audio,
   selectTrack
 }) {
-  const resetAfterPlaybackError = async (signal, tokens) => {
+  const resetAfterPlaybackError = async (signal, tokens, profile) => {
     await turntable.resetAfterPlaybackError({
       signal,
       duration: tokens.settle
     });
+    if (signal.aborted) return;
+    await controls.setLabel('再次抽取', {
+      signal,
+      duration: tokens.enter,
+      profile
+    });
   };
 
-  const loadSelectedTrack = async ({ signal, targetIndex, tokens }) => {
+  const loadSelectedTrack = async ({ signal, targetIndex, profile, tokens }) => {
     try {
       const track = await selectTrack(targetIndex, { signal });
       assertActive(signal);
@@ -27,17 +33,17 @@ export function createAppTransitions({
       assertActive(signal);
       return track;
     } catch (error) {
-      if (!signal.aborted) await resetAfterPlaybackError(signal, tokens);
+      if (!signal.aborted) await resetAfterPlaybackError(signal, tokens, profile);
       throw error;
     }
   };
 
-  const playSelectedTrack = async (signal, tokens) => {
+  const playSelectedTrack = async (signal, tokens, profile) => {
     try {
       const played = await audio.play({ signal });
       if (played === false) throw new Error('Audio playback did not start');
     } catch (error) {
-      await resetAfterPlaybackError(signal, tokens);
+      await resetAfterPlaybackError(signal, tokens, profile);
       assertActive(signal);
       throw error;
     }
@@ -74,7 +80,7 @@ export function createAppTransitions({
       ]);
       assertActive(signal);
 
-      await loadSelectedTrack({ signal, targetIndex, tokens });
+      await loadSelectedTrack({ signal, targetIndex, profile, tokens });
 
       await Promise.all([
         turntable.moveArmTo('play', { signal, duration: tokens.settle, profile }),
@@ -90,13 +96,20 @@ export function createAppTransitions({
       });
       assertActive(signal);
 
-      await playSelectedTrack(signal, tokens);
+      await playSelectedTrack(signal, tokens, profile);
       assertActive(signal);
       await controls.setLabel('再次抽取', { signal, duration: tokens.enter, profile });
       assertActive(signal);
     },
 
-    async switchTrack({ signal, targetIndex, profile, tokens, headless = false }) {
+    async switchTrack({
+      signal,
+      targetIndex,
+      profile,
+      tokens,
+      headless = false,
+      showLyrics = false
+    }) {
       const overlayState = headless
         ? null
         : await overlays.closeAll({ signal, duration: tokens.enter, profile });
@@ -105,22 +118,31 @@ export function createAppTransitions({
       audio.pause();
       assertActive(signal);
 
-      await loadSelectedTrack({ signal, targetIndex, tokens });
+      await loadSelectedTrack({ signal, targetIndex, profile, tokens });
 
-      if (!headless) {
+      if (!headless && !showLyrics) {
         await overlays.refresh({ signal, duration: tokens.enter, profile });
         assertActive(signal);
       }
 
-      await playSelectedTrack(signal, tokens);
+      await playSelectedTrack(signal, tokens, profile);
       assertActive(signal);
 
       if (!headless) {
-        await overlays.restoreAfterTrackSwitch(overlayState, {
-          signal,
-          duration: tokens.enter,
-          profile
-        });
+        if (showLyrics) {
+          await overlays.open('lyrics', {
+            signal,
+            duration: tokens.enter,
+            profile,
+            previousState: overlayState
+          });
+        } else {
+          await overlays.restoreAfterTrackSwitch(overlayState, {
+            signal,
+            duration: tokens.enter,
+            profile
+          });
+        }
         assertActive(signal);
       }
     },

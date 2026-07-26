@@ -50,6 +50,8 @@ test('renders only on first open and updates active rows without rebuilding', ()
   const cover = listEl.querySelector('.playlist-cover');
   assert.match(cover.srcset, /480w.*960w/);
   assert.equal(cover.loading, 'lazy');
+  assert.equal(cover, cover.closest('.playlist-group-head').lastElementChild);
+  assert.equal(listEl.querySelector('.playlist-album-meta').textContent, '2006');
   const firstNode = listEl.querySelector('.playlist-item');
   playlist.ensureRendered();
   assert.equal(listEl.querySelector('.playlist-item'), firstNode);
@@ -65,6 +67,7 @@ test('renders only on first open and updates active rows without rebuilding', ()
 test('skips invalid or unmatched release tracks and falls back to the release ordinal', () => {
   const releaseFixtures = [{
     title: 'Fixture Release',
+    releaseDate: '',
     tracks: [
       null,
       { title: 'Matched', trackNumber: 2 },
@@ -89,6 +92,7 @@ test('skips invalid or unmatched release tracks and falls back to the release or
   assert.deepEqual(items.map((item) => item.querySelector('.playlist-track-no').textContent), ['02', '03']);
   assert.equal(listEl.querySelector('[data-index="undefined"]'), null);
   assert.equal(listEl.textContent.includes('undefined'), false);
+  assert.equal(listEl.querySelector('.playlist-album-meta').textContent, '待核对');
 });
 
 test('recovers from a pre-render active update and maintains accessible group state', () => {

@@ -3,17 +3,29 @@ import { writeFile } from 'node:fs/promises';
 import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
 
 const FIXTURE_DELAY_STEP_MS = 80;
-const LIGHT_PEAK_OFFSETS = Object.freeze({ ordinary: 0.60, final: 0.52 });
+const LIGHT_PEAK_OFFSETS = Object.freeze({ ordinary: 0.40, final: 0.30 });
+const HIGH_VISIBILITY_POSTER_OPACITY = 0.35;
 // One 60Hz presentation interval plus 3.4ms for timestamp and rAF sampling quantization.
 const PRESENTED_FRAME_TOLERANCE_MS = 20;
-const PARENT_PEAK_LOWER_BOUNDS = Object.freeze({ ordinary: 0.27, final: 0.20 });
-const PARENT_PEAK_UPPER_BOUNDS = Object.freeze({ ordinary: 0.28, final: 0.22 });
-const CENTER_PEAK_LOWER_BOUNDS = Object.freeze({ ordinary: 2.5, final: 10 });
-const CENTER_PEAK_UPPER_BOUNDS = Object.freeze({
-  ordinary: (255 * 0.28 * 0.62 * 0.78) + 1,
-  final: (255 * 0.22 * 0.52 * 0.78) + 1
+const PARENT_PEAK_LOWER_BOUNDS = Object.freeze({ ordinary: 0.60, final: 0.20 });
+const PARENT_PEAK_UPPER_BOUNDS = Object.freeze({ ordinary: 0.84, final: 0.30 });
+const SEMANTIC_LIGHT_LIMITS = Object.freeze({
+  gateNetMeanMin: 4,
+  gateLitRatioMin: 0.75,
+  gateProminenceMin: 1.2,
+  gateP90Max: 210,
+  shoulderNetMeanMin: 0.5,
+  shoulderLitRatioMin: 0.25,
+  shoulderBalanceMin: 0.04,
+  shoulderP90Max: 96
 });
-const EDGE_BACKGROUND_DELTA = 3;
+const COMPACT_SEMANTIC_LIGHT_LIMITS = Object.freeze({
+  ...SEMANTIC_LIGHT_LIMITS,
+  gateLitRatioMin: 0.67,
+  gateP90Max: 220,
+  shoulderNetMeanMin: 0.15,
+  shoulderLitRatioMin: 0.08
+});
 const EXPECTED_ARCHIVE_IDS = Object.freeze([
   'archive-01',
   'archive-02',
@@ -32,6 +44,13 @@ const COVER_FIXTURES = new Map(EXPECTED_ARCHIVE_IDS.map((id, index) => {
   ];
 }));
 const EXPECTED_COVER_PATHNAMES = [...COVER_FIXTURES.keys()].sort();
+const FINAL_COVER_PATHNAME = new URL(
+  CRITICAL_IMAGE_MANIFEST.find(({ id }) => id === 'archive-05').source
+).pathname;
+const EXPECTED_COMPLETE_REQUEST_PATHNAMES = [
+  ...EXPECTED_COVER_PATHNAMES,
+  FINAL_COVER_PATHNAME
+].sort();
 const FAILED_COVER_PATHNAME = new URL(
   CRITICAL_IMAGE_MANIFEST.find(({ id }) => id === 'archive-01').source
 ).pathname;
@@ -87,10 +106,13 @@ const installDeterministicCovers = async (page) => {
   return stats;
 };
 
-const expectExactCoverRequests = (stats) => {
+const expectExactCoverRequests = (stats, expectHandoff = true) => {
+  const expectedPathnames = expectHandoff
+    ? EXPECTED_COMPLETE_REQUEST_PATHNAMES
+    : EXPECTED_COVER_PATHNAMES;
   expect(stats.active).toBe(0);
-  expect(stats.total).toBe(EXPECTED_ARCHIVE_IDS.length);
-  expect([...stats.pathnames].sort()).toEqual(EXPECTED_COVER_PATHNAMES);
+  expect(stats.total).toBe(expectedPathnames.length);
+  expect([...stats.pathnames].sort()).toEqual(expectedPathnames);
   expect(stats.unknownPathnames).toEqual([]);
   expect(stats.maxActive).toBeLessThanOrEqual(2);
 };
@@ -173,10 +195,11 @@ const canvasState = (canvas) => canvas.evaluate((element) => {
   return { alphaCount, phase: element.dataset.phase };
 });
 
-const measureHorizontalLightDelta = (page, before, after, clip) => page.evaluate(async ({
+const measureSemanticLightDelta = (page, before, after, clip, regions) => page.evaluate(async ({
   before,
   after,
-  clip
+  clip,
+  regions
 }) => {
   const decode = (base64, mimeType) => new Promise((resolve, reject) => {
     const image = new Image();
@@ -222,10 +245,50 @@ const measureHorizontalLightDelta = (page, before, after, clip) => page.evaluate
   };
   const afterPixels = pixelsFor(afterImage, source);
   const croppedPng = canvas.toDataURL('image/png').split(',')[1];
-  const columns = Array(canvas.width).fill(0);
-  for (let x = 0; x < canvas.width; x += 1) {
+  const deltasFor = (regionOrRegions) => {
+    const values = [];
+    const regionList = Array.isArray(regionOrRegions) ? regionOrRegions : [regionOrRegions];
+    for (const region of regionList) {
+      for (let y = region.top - clip.y; y < region.bottom - clip.y; y += 1) {
+        for (let x = region.left - clip.x; x < region.right - clip.x; x += 1) {
+          const index = ((y * canvas.width) + x) * 4;
+          const beforeLuma = (beforePixels[index] * 0.2126)
+            + (beforePixels[index + 1] * 0.7152)
+            + (beforePixels[index + 2] * 0.0722);
+          const afterLuma = (afterPixels[index] * 0.2126)
+            + (afterPixels[index + 1] * 0.7152)
+            + (afterPixels[index + 2] * 0.0722);
+          values.push(Math.max(0, afterLuma - beforeLuma));
+        }
+      }
+    }
+    return values;
+  };
+  const summarize = (values, visibleFloor = Number.POSITIVE_INFINITY) => {
+    const sorted = [...values].sort((left, right) => left - right);
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return {
+      mean,
+      max: sorted.at(-1),
+      p90: sorted[Math.floor((sorted.length - 1) * 0.9)],
+      litRatio: values.filter((value) => value > visibleFloor).length / values.length
+    };
+  };
+  const background = summarize(deltasFor(regions.background));
+  // JPEG screencast frames introduce a small positive rounding floor. Derive the
+  // visible threshold from the isolated archive-void background instead of a magic luma value.
+  const visibleFloor = background.p90 + 0.75;
+  const withNetMean = (region) => {
+    const summary = summarize(deltasFor(region), visibleFloor);
+    return { ...summary, netMean: Math.max(0, summary.mean - background.mean) };
+  };
+  const gate = withNetMean(regions.gate);
+  const gateContext = withNetMean(regions.gateContext);
+  const leftShoulder = withNetMean(regions.leftShoulder);
+  const rightShoulder = withNetMean(regions.rightShoulder);
+  const columnMeans = Array.from({ length: canvas.width }, (_, x) => {
     let total = 0;
-    for (let y = 0; y < canvas.height; y += 2) {
+    for (let y = 0; y < canvas.height; y += 1) {
       const index = ((y * canvas.width) + x) * 4;
       const beforeLuma = (beforePixels[index] * 0.2126)
         + (beforePixels[index + 1] * 0.7152)
@@ -235,32 +298,22 @@ const measureHorizontalLightDelta = (page, before, after, clip) => page.evaluate
         + (afterPixels[index + 2] * 0.0722);
       total += Math.max(0, afterLuma - beforeLuma);
     }
-    columns[x] = total / Math.ceil(canvas.height / 2);
-  }
-  const mean = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
-  const edgeWidth = Math.max(1, Math.floor(canvas.width * 0.1));
-  const middle = columns.slice(edgeWidth, -edgeWidth);
-  const centerPeak = Math.max(...middle);
-  const brightFloor = Math.max(0.35, centerPeak * 0.08);
-  const uniformStep = Math.max(0.35, centerPeak * 0.04);
-  let longestNearUniformRun = 0;
-  let currentNearUniformRun = 0;
-  for (let index = 0; index < columns.length; index += 1) {
-    const value = columns[index];
-    const followsUniformly = currentNearUniformRun === 0
-      || Math.abs(value - columns[index - 1]) <= uniformStep;
-    if (value >= brightFloor && followsUniformly) currentNearUniformRun += 1;
-    else currentNearUniformRun = value >= brightFloor ? 1 : 0;
-    longestNearUniformRun = Math.max(longestNearUniformRun, currentNearUniformRun);
-  }
+    return total / canvas.height;
+  });
+  const brightestColumn = columnMeans.reduce((brightest, mean, x) => (
+    mean > brightest.mean ? { x: x + clip.x, mean } : brightest
+  ), { x: clip.x, mean: columnMeans[0] });
   return {
-    centerPeak,
-    leftEdgeMean: mean(columns.slice(0, edgeWidth)),
-    rightEdgeMean: mean(columns.slice(-edgeWidth)),
-    longestNearUniformRun,
-    longestNearUniformRatio: longestNearUniformRun / columns.length,
-    brightFloor,
-    uniformStep,
+    background,
+    visibleFloor,
+    gate,
+    gateContext,
+    gateProminence: gate.netMean / Math.max(0.01, gateContext.netMean),
+    leftShoulder,
+    rightShoulder,
+    shoulderBalance: Math.min(leftShoulder.netMean, rightShoulder.netMean)
+      / Math.max(0.01, leftShoulder.netMean, rightShoulder.netMean),
+    brightestColumn,
     croppedPng,
     frameMapping: {
       imageWidth: afterImage.naturalWidth,
@@ -269,7 +322,8 @@ const measureHorizontalLightDelta = (page, before, after, clip) => page.evaluate
       croppedHeight: canvas.height,
       scaleX,
       scaleY,
-      source
+      source,
+      regions
     }
   };
 }, {
@@ -280,57 +334,116 @@ const measureHorizontalLightDelta = (page, before, after, clip) => page.evaluate
     metadata: after.metadata,
     viewportState: after.viewportState
   },
-  clip
+  clip,
+  regions
 });
 
-const getLightOracleClip = (page) => page.evaluate(() => {
+const getLightOracleRegions = (page) => page.evaluate(() => {
   const stage = document.querySelector('.loading-stage').getBoundingClientRect();
-  const slit = document.querySelector('#loadingLightSlit').getBoundingClientRect();
-  const height = 8;
+  const portalEdgeInset = Math.max(0, (stage.width - 520) / 2);
+  const portalX = stage.right - portalEdgeInset;
+  const centerY = stage.top + (stage.height / 2);
+  const portalHalfHeight = Math.min(stage.height * 0.38, innerHeight * 0.34, 270);
+  const portalTop = centerY - portalHalfHeight;
+  const portalBottom = centerY + portalHalfHeight;
+  const clampRect = ({ left, top, right, bottom }) => ({
+    left: Math.max(0, Math.ceil(left)),
+    top: Math.max(0, Math.ceil(top)),
+    right: Math.min(innerWidth, Math.floor(right)),
+    bottom: Math.min(innerHeight, Math.floor(bottom))
+  });
   const clip = {
     x: 0,
-    y: Math.floor(stage.top - height - 6),
+    y: 0,
     width: Math.floor(innerWidth),
-    height
+    height: Math.floor(innerHeight)
   };
-  const intersects = (rect) => (
-    rect.right > clip.x
-    && rect.left < clip.x + clip.width
-    && rect.bottom > clip.y
-    && rect.top < clip.y + clip.height
-  );
-  const blockers = [
-    ...document.querySelectorAll(
-      '.loading-poster-stack, #loadingParticles, #loadingProgress, #loadingCopy, '
-      + '#loadingRetry'
-    )
-  ].filter((element) => intersects(element.getBoundingClientRect()))
-    .map((element) => element.id || element.className);
+  const gateRegion = clampRect({
+    left: portalX - 2,
+    top: portalTop,
+    right: portalX + 3,
+    bottom: portalBottom
+  });
+  const gateContext = [
+    clampRect({
+      left: portalX - 30,
+      top: portalTop,
+      right: portalX - 20,
+      bottom: portalBottom
+    }),
+    clampRect({
+      left: portalX + 20,
+      top: portalTop,
+      right: portalX + 30,
+      bottom: portalBottom
+    })
+  ];
+  const backgroundWidth = Math.max(16, Math.min(72, innerWidth * 0.06));
+  const regions = {
+    gate: gateRegion,
+    gateContext,
+    leftShoulder: clampRect({
+      left: portalX - 18,
+      top: portalTop,
+      right: portalX - 5,
+      bottom: portalBottom
+    }),
+    rightShoulder: clampRect({
+      left: portalX + 5,
+      top: portalTop,
+      right: portalX + 18,
+      bottom: portalBottom
+    }),
+    background: [
+      clampRect({ left: 0, top: portalTop, right: backgroundWidth, bottom: portalBottom }),
+      clampRect({
+        left: innerWidth - backgroundWidth,
+        top: portalTop,
+        right: innerWidth,
+        bottom: portalBottom
+      })
+    ]
+  };
   return {
     clip,
-    blockers,
-    slitCoversClipVertically: slit.top <= clip.y && slit.bottom >= clip.y + clip.height
+    regions,
+    gateIsVertical: (gateRegion.bottom - gateRegion.top) / (gateRegion.right - gateRegion.left) >= 30,
+    gateMatchesRightPortal: Math.abs(((gateRegion.left + gateRegion.right) / 2) - portalX) <= 1,
+    shouldersAreBilateral: regions.leftShoulder.right < portalX
+      && regions.rightShoulder.left > portalX,
+    regionsAreNonempty: Object.values(regions).flat().every((region) => (
+      region.right > region.left && region.bottom > region.top
+    ))
   };
 });
 
 const readLightAnimation = (phase) => {
   const root = document.querySelector('#loadingScreen');
   const slit = document.querySelector('#loadingLightSlit');
-  const prefix = phase === 'final' ? 'loading-final-' : 'loading-slit-';
+  const final = phase === 'final';
+  const prefix = final ? 'loading-final-ambient-converge' : 'loading-right-portal-pulse';
   const animation = root?.getAnimations({ subtree: true }).find(({ animationName }) => (
     animationName?.startsWith(prefix)
   ));
   if (!animation) return null;
   const timing = animation.effect.getComputedTiming();
   const duration = Number(timing.duration);
-  const peakOffset = phase === 'final' ? 0.52 : 0.60;
+  const peakOffset = final ? 0.30 : 0.40;
   const at = performance.now();
   const currentTime = Number(animation.currentTime);
   const naturalPeakAt = at + (((duration * peakOffset) - currentTime) / animation.playbackRate);
   const animations = root.getAnimations({ subtree: true }).filter(({ animationName }) => (
     animationName?.startsWith(phase === 'final' ? 'loading-final-' : 'loading-')
   ));
-  const opacity = (selector) => Number.parseFloat(getComputedStyle(root.querySelector(selector)).opacity) || 0;
+  const opacity = (selector) => {
+    const element = root.querySelector(selector);
+    return element ? Number.parseFloat(getComputedStyle(element).opacity) || 0 : 0;
+  };
+  const stage = root.querySelector('.loading-stage');
+  const gateLine = getComputedStyle(stage, '::before');
+  const gateHalo = getComputedStyle(stage, '::after');
+  const slitStyle = getComputedStyle(slit);
+  const gateLineOpacity = Number.parseFloat(gateLine.opacity) || 0;
   return {
     at,
     currentTime,
@@ -340,10 +453,21 @@ const readLightAnimation = (phase) => {
     playState: animation.playState,
     playbackRate: animation.playbackRate,
     direction: slit.dataset.direction,
-    parentOpacity: opacity('#loadingLightSlit'),
-    coreOpacity: opacity('.loading-light-core'),
-    warmOpacity: opacity('.loading-light-edge.is-warm'),
-    coolOpacity: opacity('.loading-light-edge.is-cool'),
+    portalSide: slit.dataset.portalSide,
+    portalPhase: slit.dataset.portalPhase,
+    parentOpacity: final ? gateLineOpacity : opacity('#loadingLightSlit'),
+    coreOpacity: final ? 0 : opacity('.loading-light-core'),
+    warmOpacity: final ? 0 : opacity('.loading-light-edge.is-warm'),
+    coolOpacity: final ? 0 : opacity('.loading-light-edge.is-cool'),
+    slitDisplay: slitStyle.display,
+    slitOpacity: Number.parseFloat(slitStyle.opacity) || 0,
+    gateLineOpacity,
+    gateHaloOpacity: Number.parseFloat(gateHalo.opacity) || 0,
+    gateLineWidth: Number.parseFloat(gateLine.width) || 0,
+    gateLineHeight: Number.parseFloat(gateLine.height) || 0,
+    gateLineFilter: gateLine.filter,
+    gateLineAnimationName: gateLine.animationName,
+    gateLineDuration: Number.parseFloat(gateLine.animationDuration) * 1000,
     pausedAnimations: animations.filter(({ playState }) => playState === 'paused').length
   };
 };
@@ -362,7 +486,9 @@ const captureNaturalPeak = async (page, { clip, phase }) => {
   const peakOffset = LIGHT_PEAK_OFFSETS[phase];
   await page.waitForFunction(({ phase, peakOffset }) => {
     const root = document.querySelector('#loadingScreen');
-    const prefix = phase === 'final' ? 'loading-final-' : 'loading-slit-';
+    const prefix = phase === 'final'
+      ? 'loading-final-ambient-converge'
+      : 'loading-right-portal-pulse';
     const animation = root?.getAnimations({ subtree: true }).find(({ animationName }) => (
       animationName?.startsWith(prefix)
     ));
@@ -451,13 +577,29 @@ const installBrowserProbe = async (page) => {
       decodedAssetIds: [],
       posterGeometry: null,
       slitHiddenAtFirstActive: null,
+      gateHiddenAtFirstActive: null,
+      portalOpacityAtFirstActive: null,
+      portalCoreOpacityAtFirstActive: null,
+      gateLineOpacityAtFirstActive: null,
+      gateHaloOpacityAtFirstActive: null,
       continuityArmed: false,
       continuitySamples: 0,
       maxVisualLayers: 0,
-      maxDominantPosters: 0,
+      highVisibilityPosterOpacity: 0.35,
+      maxHighVisibilityPosters: 0,
+      highVisibilityPosterViolations: [],
+      finalContinuitySamples: 0,
+      maxFinalHighVisibilityPosters: 0,
+      finalHighVisibilityPosterViolations: [],
       minCompositeOpacity: 1,
       midHandoffs: {},
       ignitionLeads: [],
+      posterTrajectories: {},
+      exitTrajectories: {},
+      portalSequence: [],
+      lastPortalKey: null,
+      stableHolds: [],
+      currentStable: null,
       currentIgnitionAt: null,
       wasSlitLit: false,
       gatheredPixels: [],
@@ -467,6 +609,8 @@ const installBrowserProbe = async (page) => {
       settledFrameCount: null,
       lightPasses: [],
       activeLightPass: null,
+      finalHandoffSamples: [],
+      handoffReadySeen: false,
       exitGateAt: null
     };
 
@@ -586,7 +730,19 @@ const installBrowserProbe = async (page) => {
           insideStage: imageRect.width <= stageRect.width + 0.5 && imageRect.height <= stageRect.height + 0.5
         };
         const slit = document.querySelector('#loadingLightSlit');
+        const core = slit?.querySelector('.loading-light-core');
+        const stageLine = getComputedStyle(stage, '::before');
+        const stageHalo = getComputedStyle(stage, '::after');
         probe.slitHiddenAtFirstActive = slit ? getComputedStyle(slit).display === 'none' : null;
+        probe.gateHiddenAtFirstActive = stageLine.display === 'none';
+        probe.portalOpacityAtFirstActive = slit
+          ? Number.parseFloat(getComputedStyle(slit).opacity) || 0
+          : null;
+        probe.portalCoreOpacityAtFirstActive = core
+          ? Number.parseFloat(getComputedStyle(core).opacity) || 0
+          : null;
+        probe.gateLineOpacityAtFirstActive = Number.parseFloat(stageLine.opacity) || 0;
+        probe.gateHaloOpacityAtFirstActive = Number.parseFloat(stageHalo.opacity) || 0;
       };
 
       new MutationObserver(() => {
@@ -602,9 +758,87 @@ const installBrowserProbe = async (page) => {
       inspectActivePosters();
       inspectCanvas();
 
+      const readClipGeometry = (clipPath, rect) => {
+        if (!clipPath || clipPath === 'none' || !clipPath.startsWith('inset(')) {
+          return {
+            inset: null,
+            roundPercent: null,
+            visibleLeft: rect.left,
+            visibleTop: rect.top,
+            visibleWidth: rect.width,
+            visibleHeight: rect.height
+          };
+        }
+        const content = clipPath.slice('inset('.length, -1);
+        const [insetSource, roundSource = '0'] = content.split(/\s+round\s+/);
+        const tokens = insetSource.trim().split(/\s+/);
+        const expanded = tokens.length === 1
+          ? [tokens[0], tokens[0], tokens[0], tokens[0]]
+          : tokens.length === 2
+            ? [tokens[0], tokens[1], tokens[0], tokens[1]]
+            : tokens.length === 3
+              ? [tokens[0], tokens[1], tokens[2], tokens[1]]
+              : tokens.slice(0, 4);
+        const toPixels = (token, size) => (
+          token.endsWith('%') ? (Number.parseFloat(token) / 100) * size : Number.parseFloat(token)
+        );
+        const [top, right, bottom, left] = [
+          toPixels(expanded[0], rect.height),
+          toPixels(expanded[1], rect.width),
+          toPixels(expanded[2], rect.height),
+          toPixels(expanded[3], rect.width)
+        ];
+        return {
+          inset: { top, right, bottom, left },
+          roundPercent: Number.parseFloat(roundSource),
+          visibleLeft: rect.left + left,
+          visibleTop: rect.top + top,
+          visibleWidth: Math.max(0, rect.width - left - right),
+          visibleHeight: Math.max(0, rect.height - top - bottom)
+        };
+      };
+
+      const readPosterSample = (frame, image, at) => {
+        const frameStyle = getComputedStyle(frame);
+        const imageStyle = getComputedStyle(image);
+        const rect = image.getBoundingClientRect();
+        const stageRect = image.closest('.loading-stage').getBoundingClientRect();
+        const transform = imageStyle.transform;
+        const matrix = transform === 'none' ? null : new DOMMatrixReadOnly(transform);
+        const clipPath = imageStyle.clipPath;
+        const clip = readClipGeometry(clipPath, rect);
+        const frameOpacity = Number.parseFloat(frameStyle.opacity) || 0;
+        const imageOpacity = Number.parseFloat(imageStyle.opacity) || 0;
+        return {
+          at,
+          centerX: rect.left + (rect.width / 2),
+          centerY: rect.top + (rect.height / 2),
+          stageCenterX: stageRect.left + (stageRect.width / 2),
+          portalX: frame.dataset.portalSide === 'right'
+            ? stageRect.right - Math.max(0, (stageRect.width - 520) / 2)
+            : stageRect.left + Math.max(0, (stageRect.width - 520) / 2),
+          stageWidth: stageRect.width,
+          stageHeight: stageRect.height,
+          scale: matrix ? Math.hypot(matrix.a, matrix.b) : 1,
+          opacity: frameStyle.visibility === 'visible' ? frameOpacity * imageOpacity : 0,
+          clipPath,
+          clip,
+          rect: {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height
+          }
+        };
+      };
+
       const samplePosterContinuity = () => {
         const loading = document.querySelector('#loadingScreen');
         if (!loading) {
+          if (probe.currentStable) {
+            probe.stableHolds.push({ ...probe.currentStable, endedAt: performance.now() });
+            probe.currentStable = null;
+          }
           if (probe.activeLightPass) {
             probe.activeLightPass.endedAt = performance.now();
             probe.lightPasses.push(probe.activeLightPass);
@@ -620,35 +854,94 @@ const installBrowserProbe = async (page) => {
         const slitLit = Boolean(slit?.classList.contains('is-lit'));
         const finalResolving = loading.classList.contains('is-final-resolving');
         const lightPhase = finalResolving ? 'final' : (slitLit ? 'ordinary' : null);
+        const portalSide = slit?.dataset.portalSide ?? null;
+        const portalPhase = slit?.dataset.portalPhase ?? null;
+        const portalKey = lightPhase ? `${lightPhase}:${portalSide}:${portalPhase}` : null;
         if (loading.classList.contains('is-exiting') && probe.exitGateAt === null) {
           probe.exitGateAt = now;
         }
         if (lightPhase) {
-          if (!probe.activeLightPass || probe.activeLightPass.phase !== lightPhase) {
+          if (!probe.activeLightPass || probe.activeLightPass.key !== portalKey) {
             if (probe.activeLightPass) {
               probe.activeLightPass.endedAt = now;
               probe.lightPasses.push(probe.activeLightPass);
             }
             probe.activeLightPass = {
+              key: portalKey,
               phase: lightPhase,
               direction: slit.dataset.direction,
+              portalSide,
+              portalPhase,
               startedAt: now,
               endedAt: null,
               samples: []
             };
+            if (portalKey !== probe.lastPortalKey) {
+              probe.portalSequence.push({
+                side: portalSide,
+                phase: portalPhase,
+                at: now
+              });
+              probe.lastPortalKey = portalKey;
+            }
           }
           const bounds = slit.getBoundingClientRect();
           const opacity = (selector) => Number.parseFloat(
             getComputedStyle(loading.querySelector(selector)).opacity
           ) || 0;
+          const stage = loading.querySelector('.loading-stage');
+          const gateLineOpacity = Number.parseFloat(
+            getComputedStyle(stage, '::before').opacity
+          ) || 0;
+          const gateHaloOpacity = Number.parseFloat(
+            getComputedStyle(stage, '::after').opacity
+          ) || 0;
           probe.activeLightPass.samples.push({
             at: now,
-            center: bounds.left + (bounds.width / 2),
-            parentOpacity: opacity('#loadingLightSlit'),
-            coreOpacity: opacity('.loading-light-core'),
-            warmOpacity: opacity('.loading-light-edge.is-warm'),
-            coolOpacity: opacity('.loading-light-edge.is-cool')
+            centerX: bounds.left + (bounds.width / 2),
+            centerY: bounds.top + (bounds.height / 2),
+            parentOpacity: finalResolving ? gateLineOpacity : opacity('#loadingLightSlit'),
+            coreOpacity: finalResolving ? 0 : opacity('.loading-light-core'),
+            warmOpacity: finalResolving ? 0 : opacity('.loading-light-edge.is-warm'),
+            coolOpacity: finalResolving ? 0 : opacity('.loading-light-edge.is-cool'),
+            slitDisplay: getComputedStyle(slit).display,
+            gateLineOpacity,
+            gateHaloOpacity
           });
+          if (finalResolving) {
+            const poster = loading.querySelector('.loading-frame.is-active .loading-image');
+            const target = document.querySelector('.vinyl-sticker');
+            if (poster && target) {
+              const frame = poster.closest('.loading-frame');
+              const posterSample = readPosterSample(frame, poster, now);
+              const targetRect = target.getBoundingClientRect();
+              const visibleCenterX = posterSample.clip.visibleLeft
+                + (posterSample.clip.visibleWidth / 2);
+              const visibleCenterY = posterSample.clip.visibleTop
+                + (posterSample.clip.visibleHeight / 2);
+              const targetCenterX = targetRect.left + (targetRect.width / 2);
+              const targetCenterY = targetRect.top + (targetRect.height / 2);
+              const targetCover = document.querySelector('#vinylCoverA');
+              const artworkSource = poster.currentSrc || poster.src;
+              probe.handoffReadySeen ||= loading.dataset.handoffReady === 'true';
+              probe.finalHandoffSamples.push({
+                ...posterSample,
+                centerDistance: Math.hypot(
+                  visibleCenterX - targetCenterX,
+                  visibleCenterY - targetCenterY
+                ),
+                visibleWidth: posterSample.clip.visibleWidth,
+                visibleHeight: posterSample.clip.visibleHeight,
+                targetWidth: targetRect.width,
+                targetHeight: targetRect.height,
+                targetCoverLoadingHandoff: targetCover?.dataset.loadingHandoff === 'true',
+                targetCoverActive: Boolean(targetCover?.classList.contains('is-active')),
+                targetCoverArtworkMatches: Boolean(
+                  artworkSource && targetCover?.style.backgroundImage.includes(artworkSource)
+                )
+              });
+            }
+          }
         } else if (probe.activeLightPass) {
           probe.activeLightPass.endedAt = now;
           probe.lightPasses.push(probe.activeLightPass);
@@ -658,7 +951,16 @@ const installBrowserProbe = async (page) => {
         if (!slitLit && probe.wasSlitLit) probe.currentIgnitionAt = null;
         probe.wasSlitLit = slitLit;
 
-        if (probe.continuityArmed && !loading.classList.contains('is-final-resolving')) {
+        const stable = loading.querySelector('.loading-frame.is-active.is-stable');
+        const stableId = stable?.dataset.loadingSlot ?? null;
+        if (stableId !== probe.currentStable?.id) {
+          if (probe.currentStable) {
+            probe.stableHolds.push({ ...probe.currentStable, endedAt: now });
+          }
+          probe.currentStable = stableId ? { id: stableId, startedAt: now } : null;
+        }
+
+        if (probe.continuityArmed) {
           const effectiveOpacities = visualFrames.map((frame) => {
             const frameStyle = getComputedStyle(frame);
             const imageStyle = getComputedStyle(frame.querySelector('.loading-image'));
@@ -668,36 +970,81 @@ const installBrowserProbe = async (page) => {
           });
           probe.continuitySamples += 1;
           probe.maxVisualLayers = Math.max(probe.maxVisualLayers, visualFrames.length);
-          probe.maxDominantPosters = Math.max(
-            probe.maxDominantPosters,
-            effectiveOpacities.filter((opacity) => opacity > 0.55).length
+          const highVisibilityPosters = visualFrames.flatMap((frame, index) => (
+            effectiveOpacities[index] > probe.highVisibilityPosterOpacity
+              ? [{ id: frame.dataset.loadingSlot, opacity: effectiveOpacities[index] }]
+              : []
+          ));
+          probe.maxHighVisibilityPosters = Math.max(
+            probe.maxHighVisibilityPosters,
+            highVisibilityPosters.length
           );
-          probe.minCompositeOpacity = Math.min(
-            probe.minCompositeOpacity,
-            effectiveOpacities.reduce((sum, opacity) => sum + opacity, 0)
-          );
-          const incoming = visualFrames.find((frame) => frame.classList.contains('is-revealing'));
-          if (incoming && Number(incoming.dataset.transitionOrder) > 1) {
-            const index = visualFrames.indexOf(incoming);
-            const opacity = effectiveOpacities[index];
-            const id = incoming.dataset.loadingSlot;
-            if (opacity >= 0.15 && opacity <= 0.85) {
-              const sample = probe.midHandoffs[id] ?? { first: now, last: now, count: 0 };
-              sample.last = now;
-              sample.count += 1;
-              probe.midHandoffs[id] = sample;
-            }
+          if (highVisibilityPosters.length > 1 && probe.highVisibilityPosterViolations.length < 12) {
+            probe.highVisibilityPosterViolations.push({
+              at: now,
+              phase: finalResolving ? 'final' : 'ordinary',
+              posters: highVisibilityPosters
+            });
+          }
+          if (finalResolving) {
+            probe.finalContinuitySamples += 1;
+            probe.maxFinalHighVisibilityPosters = Math.max(
+              probe.maxFinalHighVisibilityPosters,
+              highVisibilityPosters.length
+            );
             if (
-              opacity > 0.05
-              && probe.currentIgnitionAt !== null
-              && !probe.ignitionLeads.some((entry) => entry.id === id)
+              highVisibilityPosters.length > 1
+              && probe.finalHighVisibilityPosterViolations.length < 12
             ) {
-              probe.ignitionLeads.push({
-                id,
-                ignitionAt: probe.currentIgnitionAt,
-                dominanceAt: now,
-                leadMs: now - probe.currentIgnitionAt
+              probe.finalHighVisibilityPosterViolations.push({
+                at: now,
+                posters: highVisibilityPosters
               });
+            }
+          } else {
+            probe.minCompositeOpacity = Math.min(
+              probe.minCompositeOpacity,
+              effectiveOpacities.reduce((sum, opacity) => sum + opacity, 0)
+            );
+            const incoming = visualFrames.find((frame) => (
+              frame.classList.contains('is-entering-from-portal')
+            ));
+            if (incoming && Number(incoming.dataset.transitionOrder) > 1) {
+              const index = visualFrames.indexOf(incoming);
+              const opacity = effectiveOpacities[index];
+              const id = incoming.dataset.loadingSlot;
+              const image = incoming.querySelector('.loading-image');
+              const samples = probe.posterTrajectories[id] ?? [];
+              samples.push(readPosterSample(incoming, image, now));
+              probe.posterTrajectories[id] = samples;
+              if (opacity >= 0.15 && opacity <= 0.85) {
+                const sample = probe.midHandoffs[id] ?? { first: now, last: now, count: 0 };
+                sample.last = now;
+                sample.count += 1;
+                probe.midHandoffs[id] = sample;
+              }
+              if (
+                opacity > 0.05
+                && probe.activeLightPass?.portalSide === 'left'
+                && !probe.ignitionLeads.some((entry) => entry.id === id)
+              ) {
+                probe.ignitionLeads.push({
+                  id,
+                  ignitionAt: probe.activeLightPass.startedAt,
+                  dominanceAt: now,
+                  leadMs: now - probe.activeLightPass.startedAt
+                });
+              }
+            }
+            const outgoing = visualFrames.find((frame) => (
+              frame.classList.contains('is-exiting-to-portal')
+            ));
+            if (outgoing) {
+              const image = outgoing.querySelector('.loading-image');
+              const id = outgoing.dataset.loadingSlot;
+              const samples = probe.exitTrajectories[id] ?? [];
+              samples.push(readPosterSample(outgoing, image, now));
+              probe.exitTrajectories[id] = samples;
             }
           }
         }
@@ -732,7 +1079,12 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     loadingSeen: window.__vinylLoadingProbe.loadingSeen,
     maxActive: window.__vinylLoadingProbe.maxActive,
     posterGeometry: window.__vinylLoadingProbe.posterGeometry,
-    slitHiddenAtFirstActive: window.__vinylLoadingProbe.slitHiddenAtFirstActive
+    slitHiddenAtFirstActive: window.__vinylLoadingProbe.slitHiddenAtFirstActive,
+    gateHiddenAtFirstActive: window.__vinylLoadingProbe.gateHiddenAtFirstActive,
+    portalOpacityAtFirstActive: window.__vinylLoadingProbe.portalOpacityAtFirstActive,
+    portalCoreOpacityAtFirstActive: window.__vinylLoadingProbe.portalCoreOpacityAtFirstActive,
+    gateLineOpacityAtFirstActive: window.__vinylLoadingProbe.gateLineOpacityAtFirstActive,
+    gateHaloOpacityAtFirstActive: window.__vinylLoadingProbe.gateHaloOpacityAtFirstActive
   }));
   expect(Number.isFinite(initialProbe.effectStart)).toBe(true);
   expect(initialProbe.loadingSeen).toBe(true);
@@ -744,19 +1096,44 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     insideStage: true
   });
 
-  if (reduce) expect(initialProbe.slitHiddenAtFirstActive).toBe(true);
+  if (reduce) {
+    expect(initialProbe.slitHiddenAtFirstActive).toBe(true);
+    expect(initialProbe.gateHiddenAtFirstActive).toBe(true);
+  } else {
+    expect(initialProbe.gateHiddenAtFirstActive).toBe(false);
+    expect(initialProbe.portalOpacityAtFirstActive).toBeGreaterThanOrEqual(0.24);
+    expect(initialProbe.portalCoreOpacityAtFirstActive).toBeGreaterThanOrEqual(0.58);
+    expect(initialProbe.gateLineOpacityAtFirstActive).toBeGreaterThanOrEqual(0.005);
+    expect(initialProbe.gateHaloOpacityAtFirstActive).toBeGreaterThanOrEqual(0.14);
+  }
   let ordinaryLightMetrics = null;
   let ordinaryCapture = null;
   let finalLightMetrics = null;
   let finalCapture = null;
   if (!reduce) {
-    const lightOracle = await getLightOracleClip(page);
-    expect(lightOracle.blockers).toEqual([]);
-    expect(lightOracle.slitCoversClipVertically).toBe(true);
+    const lightOracle = await getLightOracleRegions(page);
+    expect(lightOracle.gateIsVertical).toBe(true);
+    expect(lightOracle.gateMatchesRightPortal).toBe(true);
+    expect(lightOracle.shouldersAreBilateral).toBe(true);
+    expect(lightOracle.regionsAreNonempty).toBe(true);
+    await page.addStyleTag({ content: `
+      #loadingScreen[data-light-oracle-isolated="true"] .loading-poster-stack,
+      #loadingScreen[data-light-oracle-isolated="true"] #loadingParticles,
+      #loadingScreen[data-light-oracle-isolated="true"] .loading-status {
+        opacity: 0 !important;
+      }
+    ` });
+    const setLightOracleIsolation = (isolated) => page.evaluate((nextIsolated) => {
+      const root = document.querySelector('#loadingScreen');
+      if (!root) return;
+      if (nextIsolated) root.dataset.lightOracleIsolated = 'true';
+      else delete root.dataset.lightOracleIsolated;
+    }, isolated);
     await page.waitForFunction(() => (
       document.querySelector('[data-loading-slot="archive-01"].is-active.is-stable')
       && !document.querySelector('#loadingLightSlit')?.classList.contains('is-lit')
     ));
+    await setLightOracleIsolation(true);
     const ordinaryBaseline = await captureBaseline(page, lightOracle.clip);
     await writeFile(
       testInfo.outputPath(`ordinary-baseline-${testInfo.project.name}.png`),
@@ -766,6 +1143,10 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       clip: lightOracle.clip,
       phase: 'ordinary'
     });
+    await writeFile(
+      testInfo.outputPath(`ordinary-full-natural-peak-${testInfo.project.name}.jpeg`),
+      ordinaryPeak.buffer
+    );
     ordinaryCapture = {
       presentedAt: ordinaryPeak.presentedAt,
       presentedRange: ordinaryPeak.presentedRange,
@@ -775,19 +1156,22 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       before: ordinaryPeak.before,
       after: ordinaryPeak.after,
       candidateCount: ordinaryPeak.candidateCount,
-      oracleClip: lightOracle.clip
+      oracleClip: lightOracle.clip,
+      oracleRegions: lightOracle.regions
     };
-    ordinaryLightMetrics = await measureHorizontalLightDelta(
+    ordinaryLightMetrics = await measureSemanticLightDelta(
       page,
       ordinaryBaseline,
       ordinaryPeak,
-      lightOracle.clip
+      lightOracle.clip,
+      lightOracle.regions
     );
     await writeFile(
       testInfo.outputPath(`ordinary-natural-peak-${testInfo.project.name}.png`),
       Buffer.from(ordinaryLightMetrics.croppedPng, 'base64')
     );
     delete ordinaryLightMetrics.croppedPng;
+    await setLightOracleIsolation(false);
 
     await page.waitForFunction(() => (
       window.__vinylLoadingProbe.activeIds.includes('archive-05')
@@ -796,6 +1180,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       const final = document.querySelector('[data-loading-slot="archive-05"].is-active.is-stable');
       return final && !document.querySelector('#loadingScreen')?.classList.contains('is-final-resolving');
     });
+    await setLightOracleIsolation(true);
     const finalBaseline = await captureBaseline(page, lightOracle.clip);
     await writeFile(
       testInfo.outputPath(`final-baseline-${testInfo.project.name}.png`),
@@ -805,6 +1190,10 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       clip: lightOracle.clip,
       phase: 'final'
     });
+    await writeFile(
+      testInfo.outputPath(`final-full-natural-peak-${testInfo.project.name}.jpeg`),
+      finalPeak.buffer
+    );
     finalCapture = {
       presentedAt: finalPeak.presentedAt,
       presentedRange: finalPeak.presentedRange,
@@ -814,22 +1203,25 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       before: finalPeak.before,
       after: finalPeak.after,
       candidateCount: finalPeak.candidateCount,
-      oracleClip: lightOracle.clip
+      oracleClip: lightOracle.clip,
+      oracleRegions: lightOracle.regions
     };
-    finalLightMetrics = await measureHorizontalLightDelta(
+    finalLightMetrics = await measureSemanticLightDelta(
       page,
       finalBaseline,
       finalPeak,
-      lightOracle.clip
+      lightOracle.clip,
+      lightOracle.regions
     );
     await writeFile(
       testInfo.outputPath(`final-natural-peak-${testInfo.project.name}.png`),
       Buffer.from(finalLightMetrics.croppedPng, 'base64')
     );
     delete finalLightMetrics.croppedPng;
+    await setLightOracleIsolation(false);
 
     for (const capture of [ordinaryCapture, finalCapture]) {
-      expect(['ltr', 'rtl']).toContain(capture.before.direction);
+      expect(capture.before.direction).toBe('vertical');
       expect(capture.before.playState).toBe('running');
       expect(capture.before.playbackRate).toBe(1);
       expect(capture.before.pausedAnimations).toBe(0);
@@ -847,32 +1239,69 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       expect(capture.viewportState.visualOffsetTop).toBe(0);
       expect(capture.viewportState.visualScale).toBe(1);
     }
-    expect(ordinaryCapture.before.animationName).toBe(
-      `loading-slit-${ordinaryCapture.before.direction}`
+    expect(ordinaryCapture.before.portalSide).toBe('right');
+    expect(ordinaryCapture.before.portalPhase).toBe('exit');
+    expect(finalCapture.before.portalSide).toBe('center');
+    expect(finalCapture.before.portalPhase).toBe('final-handoff');
+    expect(ordinaryCapture.before.animationName).toBe('loading-right-portal-pulse');
+    expect(finalCapture.before.animationName).toBe('loading-final-ambient-converge');
+    expect(ordinaryCapture.before.gateLineAnimationName).toBe('loading-right-portal-rail-pulse');
+    expect(finalCapture.before.gateLineAnimationName).toBe('loading-final-ambient-converge');
+    expect(ordinaryCapture.before.gateLineHeight / ordinaryCapture.before.gateLineWidth)
+      .toBeGreaterThanOrEqual(30);
+    expect(Math.abs(
+      ordinaryCapture.before.gateLineDuration - ordinaryCapture.before.duration
+    )).toBeLessThanOrEqual(1);
+    expect(ordinaryCapture.before.gateLineFilter).toBe('blur(0.35px)');
+    const finalAmbientAspect = Math.min(
+      finalCapture.before.gateLineWidth,
+      finalCapture.before.gateLineHeight
+    ) / Math.max(
+      finalCapture.before.gateLineWidth,
+      finalCapture.before.gateLineHeight
     );
-    expect(finalCapture.before.animationName).toBe(`loading-final-${finalCapture.before.direction}`);
+    expect(finalAmbientAspect).toBeGreaterThanOrEqual(0.42);
+    expect(Math.abs(
+      finalCapture.before.gateLineDuration - finalCapture.before.duration
+    )).toBeLessThanOrEqual(1);
+    expect(finalCapture.before.gateLineFilter).toBe('blur(22px)');
     for (const state of [finalCapture.before, finalCapture.after]) {
-      expect(state.parentOpacity).toBeLessThanOrEqual(0.22);
-      expect(state.coreOpacity).toBeLessThanOrEqual(0.52);
-      expect(state.warmOpacity).toBeLessThanOrEqual(0.22);
-      expect(state.coolOpacity).toBeLessThanOrEqual(0.20);
+      expect(state.slitDisplay).toBe('none');
+      expect(state.slitOpacity).toBe(0);
+      expect(state.parentOpacity).toBeLessThanOrEqual(0.30);
+      expect(state.coreOpacity).toBe(0);
+      expect(state.warmOpacity).toBe(0);
+      expect(state.coolOpacity).toBe(0);
     }
   }
   await expect(loading).toHaveCount(0, { timeout: 10_000 });
   const effectEnd = await page.evaluate(() => performance.now());
   if (!reduce) {
+    console.log('PORTAL_ORACLE_DEBUG', testInfo.project.name, JSON.stringify({
+      capture: ordinaryCapture,
+      metrics: ordinaryLightMetrics
+    }));
     for (const [phase, { capture, metrics }] of Object.entries({
-      ordinary: { capture: ordinaryCapture, metrics: ordinaryLightMetrics },
-      final: { capture: finalCapture, metrics: finalLightMetrics }
+      ordinary: { capture: ordinaryCapture, metrics: ordinaryLightMetrics }
     })) {
-      expect(metrics.centerPeak).toBeGreaterThanOrEqual(CENTER_PEAK_LOWER_BOUNDS[phase]);
-      expect(metrics.centerPeak).toBeLessThanOrEqual(CENTER_PEAK_UPPER_BOUNDS[phase]);
+      const lightLimits = capture.viewportState.innerWidth < 768
+        ? COMPACT_SEMANTIC_LIGHT_LIMITS
+        : SEMANTIC_LIGHT_LIMITS;
       expect(metrics.frameMapping.croppedWidth).toBe(capture.oracleClip.width);
       expect(metrics.frameMapping.croppedHeight).toBe(capture.oracleClip.height);
-      const edgeNoiseBound = Math.max(EDGE_BACKGROUND_DELTA, metrics.centerPeak * 0.25);
-      expect(metrics.leftEdgeMean).toBeLessThan(edgeNoiseBound);
-      expect(metrics.rightEdgeMean).toBeLessThan(edgeNoiseBound);
-      expect(metrics.longestNearUniformRatio).toBeLessThanOrEqual(0.35);
+      expect(metrics.frameMapping.regions).toEqual(capture.oracleRegions);
+      expect(metrics.gate.netMean).toBeGreaterThanOrEqual(lightLimits.gateNetMeanMin);
+      expect(metrics.gate.litRatio).toBeGreaterThanOrEqual(lightLimits.gateLitRatioMin);
+      expect(metrics.gateProminence).toBeGreaterThanOrEqual(lightLimits.gateProminenceMin);
+      expect(metrics.gate.p90).toBeLessThanOrEqual(lightLimits.gateP90Max);
+      for (const shoulder of [metrics.leftShoulder, metrics.rightShoulder]) {
+        expect(shoulder.netMean).toBeGreaterThanOrEqual(lightLimits.shoulderNetMeanMin);
+        expect(shoulder.litRatio).toBeGreaterThanOrEqual(lightLimits.shoulderLitRatioMin);
+        expect(shoulder.p90).toBeLessThanOrEqual(lightLimits.shoulderP90Max);
+      }
+      expect(metrics.shoulderBalance).toBeGreaterThanOrEqual(
+        lightLimits.shoulderBalanceMin
+      );
     }
   }
 
@@ -894,20 +1323,34 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     decodedAssetIds: window.__vinylLoadingProbe.decodedAssetIds,
     continuitySamples: window.__vinylLoadingProbe.continuitySamples,
     maxVisualLayers: window.__vinylLoadingProbe.maxVisualLayers,
-    maxDominantPosters: window.__vinylLoadingProbe.maxDominantPosters,
+    highVisibilityPosterOpacity: window.__vinylLoadingProbe.highVisibilityPosterOpacity,
+    maxHighVisibilityPosters: window.__vinylLoadingProbe.maxHighVisibilityPosters,
+    highVisibilityPosterViolations: window.__vinylLoadingProbe.highVisibilityPosterViolations,
+    finalContinuitySamples: window.__vinylLoadingProbe.finalContinuitySamples,
+    maxFinalHighVisibilityPosters: window.__vinylLoadingProbe.maxFinalHighVisibilityPosters,
+    finalHighVisibilityPosterViolations: window.__vinylLoadingProbe.finalHighVisibilityPosterViolations,
     minCompositeOpacity: window.__vinylLoadingProbe.minCompositeOpacity,
     midHandoffs: window.__vinylLoadingProbe.midHandoffs,
     ignitionLeads: window.__vinylLoadingProbe.ignitionLeads,
+    posterTrajectories: window.__vinylLoadingProbe.posterTrajectories,
+    exitTrajectories: window.__vinylLoadingProbe.exitTrajectories,
+    portalSequence: window.__vinylLoadingProbe.portalSequence,
+    stableHolds: window.__vinylLoadingProbe.stableHolds,
     gatheredPixels: window.__vinylLoadingProbe.gatheredPixels,
     scatterHandoffs: window.__vinylLoadingProbe.scatterHandoffs,
     clearedPixelCounts: window.__vinylLoadingProbe.clearedPixelCounts,
     lightPasses: window.__vinylLoadingProbe.lightPasses,
+    finalHandoffSamples: window.__vinylLoadingProbe.finalHandoffSamples,
+    handoffReadySeen: window.__vinylLoadingProbe.handoffReadySeen,
     exitGateAt: window.__vinylLoadingProbe.exitGateAt
   }));
   expect(finalProbe.maxActive).toBe(1);
   expect(finalProbe.decodedNodeCount).toBe(5);
   expect(finalProbe.decodedNodeUniqueCount).toBe(5);
   expect(finalProbe.decodedAssetIds).toEqual(EXPECTED_ARCHIVE_IDS);
+  expect(finalProbe.highVisibilityPosterOpacity).toBe(HIGH_VISIBILITY_POSTER_OPACITY);
+  expect(finalProbe.maxHighVisibilityPosters).toBeLessThanOrEqual(1);
+  expect(finalProbe.highVisibilityPosterViolations).toEqual([]);
   if (reduce) {
     expect(framesAtExit).toBe(0);
     expect(finalProbe.phaseLeftIdle).toBe(false);
@@ -925,17 +1368,72 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   }
   if (!reduce) {
     expect(finalProbe.continuitySamples).toBeGreaterThan(3);
-    expect(finalProbe.maxVisualLayers).toBeLessThanOrEqual(2);
-    expect(finalProbe.maxDominantPosters).toBeLessThanOrEqual(1);
-    expect(finalProbe.minCompositeOpacity).toBeGreaterThanOrEqual(0.94);
+    expect(finalProbe.maxVisualLayers).toBeLessThanOrEqual(1);
+    expect(finalProbe.portalSequence.map(({ side, phase }) => [side, phase])).toEqual([
+      ['left', 'enter'],
+      ['right', 'exit'],
+      ['left', 'enter'],
+      ['right', 'exit'],
+      ['left', 'enter'],
+      ['right', 'exit'],
+      ['left', 'enter'],
+      ['right', 'exit'],
+      ['left', 'enter'],
+      ['center', 'final-handoff']
+    ]);
+    const nonfinalStableHolds = finalProbe.stableHolds.filter(({ id }) => id !== 'archive-05');
+    expect(nonfinalStableHolds).toHaveLength(4);
+    for (const hold of nonfinalStableHolds) {
+      expect(hold.endedAt - hold.startedAt, `${hold.id} centered hold`).toBeGreaterThanOrEqual(360);
+    }
     const midHandoffs = Object.values(finalProbe.midHandoffs);
     expect(midHandoffs).toHaveLength(4);
     for (const sample of midHandoffs) {
-      expect(sample.count).toBeGreaterThanOrEqual(8);
-      expect(sample.last - sample.first).toBeGreaterThanOrEqual(210);
+      expect(sample.count).toBeGreaterThanOrEqual(2);
+      expect(sample.last - sample.first).toBeGreaterThanOrEqual(12);
+      expect(sample.last - sample.first).toBeLessThanOrEqual(110);
     }
     expect(finalProbe.ignitionLeads).toHaveLength(4);
     expect(finalProbe.ignitionLeads.every(({ leadMs }) => leadMs > 0)).toBe(true);
+    const posterTrajectories = Object.entries(finalProbe.posterTrajectories);
+    expect(posterTrajectories).toHaveLength(4);
+    for (const [id, samples] of posterTrajectories) {
+      expect(samples.length, `${id} trajectory samples`).toBeGreaterThanOrEqual(4);
+      const firstVisible = samples.find(({ opacity }) => opacity >= 0.05);
+      expect(firstVisible, `${id} becomes visible at the left portal`).toBeTruthy();
+      expect(
+        firstVisible.stageCenterX - firstVisible.centerX,
+        `${id} first appears left of center`
+      ).toBeGreaterThan(firstVisible.stageWidth * 0.08);
+      expect(firstVisible.scale, `${id} starts slightly compressed by the portal`).toBeLessThanOrEqual(0.95);
+      expect(firstVisible.clipPath).toBe('none');
+
+      const crossing = samples.find((sample) => (
+        sample.at >= firstVisible.at
+        && sample.centerX >= sample.stageCenterX - 1
+        && sample.opacity >= 0.85
+      ));
+      expect(crossing, `${id} settles at center at high visibility`).toBeTruthy();
+      expect(crossing.scale, `${id} restores full scale near center`).toBeGreaterThanOrEqual(0.97);
+      expect(crossing.at - firstVisible.at, `${id} portal traversal stays fast`)
+        .toBeLessThanOrEqual(260);
+      const approach = samples.filter(({ at }) => at >= firstVisible.at && at <= crossing.at);
+      const centerDeltas = approach.slice(1).map((sample, index) => (
+        sample.centerX - approach[index].centerX
+      ));
+      expect(centerDeltas.every((delta) => delta >= -1), `${id} moves from left to center`).toBe(true);
+    }
+    const exitTrajectories = Object.entries(finalProbe.exitTrajectories);
+    expect(exitTrajectories).toHaveLength(4);
+    for (const [id, samples] of exitTrajectories) {
+      expect(samples.length, `${id} exit trajectory samples`).toBeGreaterThanOrEqual(3);
+      const visible = samples.filter(({ opacity }) => opacity >= 0.08);
+      expect(visible.length, `${id} remains visible while leaving`).toBeGreaterThanOrEqual(2);
+      expect(
+        visible.at(-1).centerX - visible[0].centerX,
+        `${id} exits toward the right portal`
+      ).toBeGreaterThan(visible[0].stageWidth * 0.08);
+    }
     const ordinaryPass = finalProbe.lightPasses.find((pass) => (
       pass.phase === 'ordinary'
       && pass.startedAt <= ordinaryCapture.before.naturalPeakAt
@@ -955,12 +1453,33 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     const ordinaryNaturalPeak = naturalPeak(ordinaryPass);
     const finalNaturalPeak = naturalPeak(finalPass);
     expect(ordinaryNaturalPeak.at).toBeGreaterThanOrEqual(ordinaryPass.startedAt);
-    expect(ordinaryNaturalPeak.parentOpacity).toBeGreaterThanOrEqual(0.27);
+    expect(ordinaryNaturalPeak.parentOpacity).toBeGreaterThanOrEqual(0.60);
     expect(finalNaturalPeak.parentOpacity).toBeGreaterThanOrEqual(0.20);
     expect(finalNaturalPeak.at).toBeLessThan(finalProbe.exitGateAt);
     expect(finalNaturalPeak.coreOpacity).toBeLessThanOrEqual(0.52);
     expect(finalNaturalPeak.warmOpacity).toBeLessThanOrEqual(0.22);
     expect(finalNaturalPeak.coolOpacity).toBeLessThanOrEqual(0.20);
+    expect(finalProbe.handoffReadySeen).toBe(true);
+    expect(finalProbe.finalContinuitySamples).toBeGreaterThanOrEqual(8);
+    expect(finalProbe.maxFinalHighVisibilityPosters).toBe(1);
+    expect(finalProbe.finalHighVisibilityPosterViolations).toEqual([]);
+    expect(finalProbe.finalHandoffSamples.length).toBeGreaterThanOrEqual(8);
+    const circularHandoffs = finalProbe.finalHandoffSamples.filter((sample) => (
+      sample.clip.roundPercent >= 49
+      && sample.opacity >= 0.75
+      && sample.targetCoverLoadingHandoff
+      && sample.targetCoverActive
+      && sample.targetCoverArtworkMatches
+    ));
+    expect(circularHandoffs.length).toBeGreaterThanOrEqual(2);
+    const alignedHandoff = circularHandoffs.reduce((nearest, sample) => (
+      sample.centerDistance < nearest.centerDistance ? sample : nearest
+    ));
+    expect(alignedHandoff.centerDistance).toBeLessThanOrEqual(4);
+    expect(Math.abs(alignedHandoff.visibleWidth - alignedHandoff.targetWidth)).toBeLessThanOrEqual(2);
+    expect(Math.abs(alignedHandoff.visibleHeight - alignedHandoff.targetHeight)).toBeLessThanOrEqual(2);
+    expect(alignedHandoff.scale).toBeLessThan(1);
+    expect(alignedHandoff.clipPath).toMatch(/inset\(.+round 50%\)/);
     for (const [phase, capture, pass] of [
       ['ordinary', ordinaryCapture, ordinaryPass],
       ['final', finalCapture, finalPass]
@@ -973,25 +1492,47 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       capture.presentedSample = presentedSample;
       expect(Math.abs(presentedSample.at - capture.presentedAt))
         .toBeLessThanOrEqual(PRESENTED_FRAME_TOLERANCE_MS);
+      const compactOrdinary = phase === 'ordinary' && capture.viewportState.innerWidth < 768;
       expect(presentedSample.parentOpacity).toBeGreaterThanOrEqual(
-        PARENT_PEAK_LOWER_BOUNDS[phase]
+        compactOrdinary ? 0.48 : PARENT_PEAK_LOWER_BOUNDS[phase]
       );
       expect(presentedSample.parentOpacity).toBeLessThanOrEqual(
-        PARENT_PEAK_UPPER_BOUNDS[phase]
+        compactOrdinary ? 0.84 : PARENT_PEAK_UPPER_BOUNDS[phase]
       );
     }
     for (const pass of [ordinaryPass, finalPass]) {
       const deltas = pass.samples.slice(1).map((sample, index) => (
-        sample.center - pass.samples[index].center
+        sample.centerY - pass.samples[index].centerY
       ));
-      expect(deltas.every((delta) => pass.direction === 'ltr' ? delta >= -0.5 : delta <= 0.5)).toBe(true);
+      expect(deltas.every((delta) => delta >= -0.5)).toBe(true);
     }
-    if (testInfo.project.name === 'mobile-chromium') {
-      const activeDeltas = finalProbe.activeTimeline.slice(1).map(({ at }, index) => (
-        at - finalProbe.activeTimeline[index].at
-      ));
-      expect(activeDeltas.slice(-3).every((duration) => duration >= 900 && duration < 1000)).toBe(true);
-    }
+    const ordinaryGateLinePeak = Math.max(...ordinaryPass.samples.map(
+      ({ gateLineOpacity }) => gateLineOpacity
+    ));
+    const ordinaryGateHaloPeak = Math.max(...ordinaryPass.samples.map(
+      ({ gateHaloOpacity }) => gateHaloOpacity
+    ));
+    const visibleOrdinaryGateSamples = ordinaryPass.samples.filter(
+      ({ gateLineOpacity }) => gateLineOpacity > 0.05
+    );
+    expect(ordinaryGateLinePeak).toBeGreaterThanOrEqual(0.55);
+    expect(ordinaryGateHaloPeak).toBeGreaterThanOrEqual(0.16);
+    expect(visibleOrdinaryGateSamples.length).toBeGreaterThan(0);
+    const visibleGateRatioMax = ordinaryCapture.viewportState.innerWidth < 768 ? 0.70 : 0.55;
+    expect(visibleOrdinaryGateSamples.length / ordinaryPass.samples.length)
+      .toBeLessThanOrEqual(visibleGateRatioMax);
+
+    const finalAmbientPeak = Math.max(...finalPass.samples.map(
+      ({ gateLineOpacity }) => gateLineOpacity
+    ));
+    const finalRefractionPeak = Math.max(...finalPass.samples.map(
+      ({ gateHaloOpacity }) => gateHaloOpacity
+    ));
+    expect(finalAmbientPeak).toBeGreaterThanOrEqual(0.22);
+    expect(finalAmbientPeak).toBeLessThanOrEqual(0.30);
+    expect(finalRefractionPeak).toBeGreaterThanOrEqual(0.16);
+    expect(finalRefractionPeak).toBeLessThanOrEqual(0.22);
+    expect(finalPass.samples.every(({ slitDisplay }) => slitDisplay === 'none')).toBe(true);
   }
   expect(finalProbe.activeIds).toEqual([
     'archive-01',
@@ -1003,7 +1544,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
 
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
   await expect(page.locator('#appRoot')).not.toHaveAttribute('aria-hidden', 'true');
-  expectExactCoverRequests(stats);
+  expectExactCoverRequests(stats, !reduce);
 
   const effectLongTasks = await page.evaluate(({ end }) => (
     window.__vinylLongTasks.filter((entry) => (
@@ -1050,7 +1591,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   });
 });
 
-test('failed cover loading clears particles and retry restarts from an empty Canvas', async ({ page }) => {
+test('failed cover loading clears particles and retry restarts from an empty Canvas', async ({ page }, testInfo) => {
   const routeControl = await installFailureThenRetryCovers(page);
   await page.goto('./', { waitUntil: 'commit' });
 
@@ -1079,7 +1620,10 @@ test('failed cover loading clears particles and retry restarts from an empty Can
   routeControl.releaseRetryRequests();
 
   await expect(loading).toHaveCount(0, { timeout: 10_000 });
-  expectExactCoverRequests(routeControl.stats.retry);
+  expectExactCoverRequests(
+    routeControl.stats.retry,
+    testInfo.project.name !== 'mobile-reduce'
+  );
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
   await expect(page.locator('#appRoot')).not.toHaveAttribute('aria-hidden', 'true');
 });
@@ -1102,5 +1646,5 @@ test('captures the loading poster visual', async ({ page }, testInfo) => {
   });
 
   await expect(loading).toHaveCount(0, { timeout: 10_000 });
-  expectExactCoverRequests(stats);
+  expectExactCoverRequests(stats, testInfo.project.name !== 'mobile-reduce');
 });

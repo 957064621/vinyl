@@ -12,26 +12,30 @@ export function getArchiveMetadata(tracks, index, audioStatus) {
 
   if (!track) {
     return {
-      number: '--',
+      song: '未抽取',
       release: '未抽取',
-      source: '档案库',
+      year: '----',
       state: '待机'
     };
   }
 
+  const releaseYear = String(track.releaseDate || '').match(/^\d{4}/)?.[0];
+
   return {
-    number: String(index + 1).padStart(2, '0'),
+    song: track.title || '未标注',
     release: track.album || '未标注',
-    source: track.recordingSource || '正式发行',
+    year: releaseYear || '待核对',
     state: AUDIO_STATE_LABELS[audioStatus] || '待机'
   };
 }
 
 export function createArchiveMetadata({ documentRef, tracks }) {
   const elements = {
-    number: documentRef.getElementById('archiveTrackNumber'),
+    song: documentRef.getElementById('archiveTrackSong')
+      || documentRef.getElementById('archiveTrackNumber'),
     release: documentRef.getElementById('archiveRelease'),
-    source: documentRef.getElementById('archiveSource'),
+    year: documentRef.getElementById('archiveYear')
+      || documentRef.getElementById('archiveSource'),
     state: documentRef.getElementById('archivePlaybackState')
   };
 

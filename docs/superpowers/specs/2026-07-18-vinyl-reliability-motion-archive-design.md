@@ -51,7 +51,7 @@ The page remains the actual lyric-drawing experience. It does not become a marke
 
 ### Content
 
-- The library currently contains 141 tracks across 23 releases.
+- The library currently contains 142 track references across 24 releases.
 - The audio object for `媚人.mp3` already exists in OSS and supports byte ranges.
 - The current lyric formatter may split and trim content after authors have supplied line breaks. This can silently remove a semantic line.
 
@@ -209,7 +209,7 @@ No other `粉钻` line changes.
 
 ### 媚人
 
-`媚人` is added as track 3 of `万兽之王演唱会录音`, with artist `薛之谦` and the existing OSS object `媚人.mp3`.
+`媚人` belongs to its own `媚人 - Single` release, dated `2026-07-17`, with artist `薛之谦`, the existing OSS object `媚人.mp3`, and the official `4896016816485.jpg` artwork. It must not carry `recordingSource` metadata. `万兽之王演唱会录音` is dated `2026` and contains only `粉钻` and `造物`.
 
 The approved six-line excerpt is:
 

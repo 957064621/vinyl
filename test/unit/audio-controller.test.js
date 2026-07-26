@@ -319,7 +319,27 @@ test('player and Media Session pause commands invalidate a loading controller at
   assert.notEqual(toggleStart, -1);
   assert.match(toggleSource, /controllerStatus === 'loading'/);
   assert.match(toggleSource, /audioController\.pause\(\)/);
-  assert.match(clickSource, /status !== 'playing' && status !== 'loading'/);
+  assert.match(clickSource, /status === 'playing'/);
+  assert.match(clickSource, /!playerToggleBtn\.classList\.contains\('is-playing'\)/);
+  assert.match(clickSource, /status !== 'loading'/);
+});
+
+test('a visible replay intent cancels an in-flight pause fade and restores media', () => {
+  const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+  const toggleStart = mainSource.indexOf('const toggleAudioState = async (play, options = {}) => {');
+  const toggleEnd = mainSource.indexOf("\n        playerToggleBtn.addEventListener('click'", toggleStart);
+  const toggleSource = mainSource.slice(toggleStart, toggleEnd);
+
+  assert.match(toggleSource, /if \(play && controllerStatus === 'playing'\)/);
+  assert.match(toggleSource, /cancelVolumeFade\(\)/);
+  assert.match(toggleSource, /audioEl\.playbackRate = 1/);
+  assert.match(toggleSource, /if \(canSetMediaVolume\) audioEl\.volume = 1/);
+  assert.match(toggleSource, /setPlayerToggleState\(true\)/);
+});
+
+test('the vinyl sheen has a true zero-rate resting state', () => {
+  const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+  assert.match(mainSource, /const sheenRate = clamped === 0 \? 0 : 0\.08 \+ normalized \* 1\.1/);
 });
 
 test('destroy removes every media element listener', async () => {

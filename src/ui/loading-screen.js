@@ -11,6 +11,10 @@ const VISUAL_SLOT_CLASSES = Object.freeze([
   'is-outgoing',
   'is-revealing',
   'is-scattering',
+  'is-entering',
+  'is-entering-from-portal',
+  'is-exiting',
+  'is-exiting-to-portal',
   'is-stable'
 ]);
 
@@ -113,7 +117,7 @@ const waitForSlitOpacityZero = (root, slit, {
   const handleAnimationEnd = (event) => {
     if (
       event.target !== slit
-      || !['loading-final-ltr', 'loading-final-rtl'].includes(event.animationName)
+      || event.animationName !== 'loading-final-tunnel'
     ) return;
     finish(true);
   };
@@ -177,6 +181,95 @@ export function createLoadingScreen(documentRef = document, {
   );
   let visualQueueError = null;
 
+  const clearFinalHandoff = () => {
+    delete root.dataset.handoffReady;
+    root.style.removeProperty('--poster-final-x');
+    root.style.removeProperty('--poster-final-y');
+    root.style.removeProperty('--poster-final-scale');
+    root.style.removeProperty('--poster-source-inset-top');
+    root.style.removeProperty('--poster-source-inset-right');
+    root.style.removeProperty('--poster-source-inset-bottom');
+    root.style.removeProperty('--poster-source-inset-left');
+    root.style.removeProperty('--poster-final-inset-top');
+    root.style.removeProperty('--poster-final-inset-right');
+    root.style.removeProperty('--poster-final-inset-bottom');
+    root.style.removeProperty('--poster-final-inset-left');
+
+    const targetCover = documentRef.querySelector('.vinyl-cover[data-loading-handoff="true"]');
+    if (targetCover) {
+      targetCover.classList.remove('is-active');
+      targetCover.style.removeProperty('background-image');
+      delete targetCover.dataset.loadingHandoff;
+    }
+  };
+
+  const prepareFinalHandoff = (profile, source) => {
+    clearFinalHandoff();
+    if (profile === 'reduce' || !source) return;
+
+    const sourceFrame = source.closest?.('.loading-frame') ?? source;
+    const target = documentRef.querySelector('.vinyl-sticker');
+    if (!target) return;
+
+    const sourceRect = sourceFrame.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const naturalWidth = Number(source.naturalWidth);
+    const naturalHeight = Number(source.naturalHeight);
+    if (
+      sourceRect.width <= 0
+      || sourceRect.height <= 0
+      || targetRect.width <= 0
+      || targetRect.height <= 0
+      || naturalWidth <= 0
+      || naturalHeight <= 0
+    ) return;
+
+    const containRatio = Math.min(
+      sourceRect.width / naturalWidth,
+      sourceRect.height / naturalHeight
+    );
+    const artworkWidth = naturalWidth * containRatio;
+    const artworkHeight = naturalHeight * containRatio;
+    const handoffSquare = Math.min(artworkWidth, artworkHeight);
+
+    const sourceCenterX = sourceRect.left + (sourceRect.width / 2);
+    const sourceCenterY = sourceRect.top + (sourceRect.height / 2);
+    const targetCenterX = targetRect.left + (targetRect.width / 2);
+    const targetCenterY = targetRect.top + (targetRect.height / 2);
+    const scale = Math.max(0.08, Math.min(
+      0.82,
+      targetRect.width / handoffSquare,
+      targetRect.height / handoffSquare
+    ));
+
+    const asPercent = (value, total) => `${((value / total) * 100).toFixed(4)}%`;
+    const sourceInsetX = Math.max(0, (sourceRect.width - artworkWidth) / 2);
+    const sourceInsetY = Math.max(0, (sourceRect.height - artworkHeight) / 2);
+    const finalInsetX = Math.max(0, (sourceRect.width - handoffSquare) / 2);
+    const finalInsetY = Math.max(0, (sourceRect.height - handoffSquare) / 2);
+
+    root.style.setProperty('--poster-final-x', `${targetCenterX - sourceCenterX}px`);
+    root.style.setProperty('--poster-final-y', `${targetCenterY - sourceCenterY}px`);
+    root.style.setProperty('--poster-final-scale', String(scale));
+    root.style.setProperty('--poster-source-inset-top', asPercent(sourceInsetY, sourceRect.height));
+    root.style.setProperty('--poster-source-inset-right', asPercent(sourceInsetX, sourceRect.width));
+    root.style.setProperty('--poster-source-inset-bottom', asPercent(sourceInsetY, sourceRect.height));
+    root.style.setProperty('--poster-source-inset-left', asPercent(sourceInsetX, sourceRect.width));
+    root.style.setProperty('--poster-final-inset-top', asPercent(finalInsetY, sourceRect.height));
+    root.style.setProperty('--poster-final-inset-right', asPercent(finalInsetX, sourceRect.width));
+    root.style.setProperty('--poster-final-inset-bottom', asPercent(finalInsetY, sourceRect.height));
+    root.style.setProperty('--poster-final-inset-left', asPercent(finalInsetX, sourceRect.width));
+
+    const targetCover = documentRef.querySelector('#vinylCoverA');
+    const artworkSource = source.currentSrc || source.src;
+    if (targetCover && artworkSource) {
+      targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
+      targetCover.dataset.loadingHandoff = 'true';
+      targetCover.classList.add('is-active');
+    }
+    root.dataset.handoffReady = 'true';
+  };
+
   let particleField;
   try {
     particleField = particleFactory({
@@ -194,6 +287,9 @@ export function createLoadingScreen(documentRef = document, {
     slit,
     particleField,
     profile: motionProfile,
+    onFinalScene({ image, profile }) {
+      prepareFinalHandoff(profile, image);
+    },
     onError(error) {
       visualQueueError ||= error;
     }
@@ -208,6 +304,13 @@ export function createLoadingScreen(documentRef = document, {
   let exitController = null;
   let controllersDestroyed = false;
   let destroyed = false;
+  let currentMotionProfile = motionProfile;
+
+  const applyMotionProfile = (nextProfile) => {
+    transition.setProfile(nextProfile);
+    currentMotionProfile = nextProfile;
+    if (nextProfile === 'reduce') clearFinalHandoff();
+  };
 
   const cancelExit = ({ clearFallback = false } = {}) => {
     exitGeneration += 1;
@@ -281,6 +384,7 @@ export function createLoadingScreen(documentRef = document, {
       delete root.dataset.errorKind;
       delete root.dataset.transitionSettled;
       delete root.dataset.finalSettled;
+      clearFinalHandoff();
       root.classList.remove('is-exiting', 'is-final-resolving');
       root.style.removeProperty('--final-resolve-ms');
       root.style.setProperty('--loading-progress', '0');
@@ -293,7 +397,11 @@ export function createLoadingScreen(documentRef = document, {
         delete slot.dataset.transitionOrder;
         delete slot.dataset.slitDirection;
         delete slot.dataset.motionProfile;
+        delete slot.dataset.portalSide;
+        delete slot.dataset.portalPhase;
         slot.style.removeProperty('--poster-handoff-ms');
+        slot.style.removeProperty('--poster-enter-ms');
+        slot.style.removeProperty('--poster-exit-ms');
         slot.classList.remove(...VISUAL_SLOT_CLASSES);
         slot.querySelector('figcaption')?.setAttribute('aria-hidden', 'true');
         slot.querySelector('img')?.remove();
@@ -323,6 +431,7 @@ export function createLoadingScreen(documentRef = document, {
       transition.freeze();
       particleField.clear();
       root.dataset.state = 'error';
+      clearFinalHandoff();
       const isVisualError = error instanceof VisualTransitionError;
       root.dataset.errorKind = isVisualError ? 'visual' : 'asset';
       const failures = error instanceof CriticalAssetError || Array.isArray(error.failures)
@@ -350,12 +459,16 @@ export function createLoadingScreen(documentRef = document, {
       };
       retry.focus();
     },
+    setProfile(nextProfile) {
+      if (destroyed) return;
+      applyMotionProfile(nextProfile);
+    },
     async playReadySequence(profile) {
       if (destroyed) return;
       root.dataset.state = 'ready';
       copy.textContent = '档案接入完成';
       try {
-        transition.setProfile(profile ?? motionProfile);
+        applyMotionProfile(profile ?? currentMotionProfile);
         await transition.finish();
         if (destroyed) return;
         if (visualQueueError) throw visualQueueError;
@@ -369,7 +482,7 @@ export function createLoadingScreen(documentRef = document, {
         throw new VisualTransitionError(visualQueueError || error);
       }
     },
-    async exit(profile) {
+    async exit(profile = currentMotionProfile) {
       if (destroyed) return;
       cancelExit();
       const exitToken = exitGeneration;

@@ -15,10 +15,17 @@ export function startCriticalAssetGate({
   const view = createView(documentRef, { motionProfile });
   const appRoot = documentRef.querySelector('#appRoot');
   const appShell = documentRef.querySelector('#appShell');
+  let currentMotionProfile = motionProfile;
   let resolveReady;
   const ready = new Promise((resolve) => {
     resolveReady = resolve;
   });
+
+  const setProfile = (nextProfile) => {
+    const result = view.setProfile?.(nextProfile);
+    currentMotionProfile = nextProfile;
+    return result;
+  };
 
   const run = async () => {
     view.reset();
@@ -29,11 +36,11 @@ export function startCriticalAssetGate({
         concurrency: 2,
         onProgress: (event) => view.setProgress(event)
       });
-      await view.playReadySequence(motionProfile);
+      await view.playReadySequence(currentMotionProfile);
       appRoot.removeAttribute('inert');
       appRoot.removeAttribute('aria-hidden');
       appShell.classList.add('is-ready');
-      await view.exit(motionProfile);
+      await view.exit(currentMotionProfile);
       resolveReady(results);
     } catch (error) {
       appRoot.setAttribute('inert', '');
@@ -46,5 +53,8 @@ export function startCriticalAssetGate({
   };
 
   void run();
+  Object.defineProperty(ready, 'setProfile', {
+    value: setProfile
+  });
   return ready;
 }

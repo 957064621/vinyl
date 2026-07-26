@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8');
+const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
 const archiveMarker = '/* Directional archive system */';
 const archiveStart = css.indexOf(archiveMarker);
 
@@ -190,10 +191,15 @@ test('the viewport uses only two directional projector fields', () => {
 test('fullscreen layers use a stable fallback and dynamic viewport height', () => {
   assert.doesNotMatch(css, /\b100lvh\b/);
 
-  for (const selector of ['.loading-screen', '.loading-light-slit', '.result-area', '.playlist-area']) {
+  for (const [selector, height] of [
+    ['.loading-screen', 100],
+    ['.loading-light-slit', 140],
+    ['.result-area', 100],
+    ['.playlist-area', 100]
+  ]) {
     assert.match(
       sourceRuleBody(selector),
-      /height:\s*100vh;\s*height:\s*100dvh;/,
+      new RegExp(`height:\\s*${height}vh;\\s*height:\\s*${height}dvh;`),
       `${selector} should fall back from vh to dvh`
     );
   }
@@ -205,7 +211,7 @@ test('terminal desktop, tablet, and mobile layout rules keep the stage bounded',
   const tablet = archiveMediaBody('(min-width: 768px) and (max-width: 1023px)');
   const mobile = archiveMediaBody('(max-width: 767px)');
 
-  assert.match(shell, /grid-template-columns:\s*minmax\(176px,\s*0\.8fr\)\s+minmax\(300px,\s*380px\)\s+minmax\(176px,\s*0\.8fr\)/);
+  assert.match(shell, /grid-template-columns:\s*minmax\(176px,\s*0\.8fr\)\s+minmax\(300px,\s*420px\)\s+minmax\(176px,\s*0\.8fr\)/);
   assert.match(shell, /grid-template-areas:\s*"header stage meta"\s*"header controls meta"/);
   assert.match(archiveRuleBody('.header'), /grid-area:\s*header/);
   assert.match(archiveRuleBody('.vinyl-wrapper'), /grid-area:\s*stage/);
@@ -220,7 +226,7 @@ test('terminal desktop, tablet, and mobile layout rules keep the stage bounded',
   assert.match(tablet, /column-gap:\s*clamp\(24px,\s*4vw,\s*40px\)/);
 
   assert.match(mobile, /\.app-shell\s*\{[\s\S]*grid-template-areas:\s*"header"\s*"stage"\s*"meta"\s*"controls"/);
-  assert.match(mobile, /\.turntable\s*\{[\s\S]*width:\s*min\(86vw,\s*min\(62svh,\s*340px\)\)/);
+  assert.match(mobile, /\.turntable\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);
   assert.match(mobile, /\.play-btn\s*\{[\s\S]*max-width:\s*100%/);
   assert.match(mobile, /\.btn-label-viewport,[\s\S]*\.btn-text\s*\{[\s\S]*max-width:\s*100%/);
 });
@@ -344,6 +350,125 @@ test('archive transitions are composited and reduce states are instant', () => {
   assert.match(archiveRuleBody('body.is-track-transitioning .playlist-content'), /filter:\s*none/);
   assert.match(archiveRuleBody('body.is-track-transitioning .playlist-content'), /transition:\s*transform\s+0\.24s\s+var\(--continuity-ease\),\s*opacity\s+0\.24s\s+var\(--continuity-ease\)/);
   assert.match(archiveRuleBody('.player-track-bg'), /transition:\s*none/);
+});
+
+test('linear timing is limited to physical rotation, progress sync, and reduced-motion fades', () => {
+  const linearCssDeclarations = [...css.matchAll(
+    /(?:transition|animation)\s*:[^;\n]*\blinear\b[^;\n]*;/g
+  )].map((match) => match[0].replace(/\s+/g, ' ').trim());
+  const declarationCounts = Object.fromEntries(
+    [...new Set(linearCssDeclarations)].map((declaration) => [
+      declaration,
+      linearCssDeclarations.filter((candidate) => candidate === declaration).length
+    ])
+  );
+
+  assert.deepEqual(declarationCounts, {
+    'transition: opacity 120ms linear;': 2,
+    'transition: transform 0.2s linear;': 2,
+    'transition: opacity 120ms linear !important;': 2
+  });
+
+  const linearJavaScriptEasings = [...mainSource.matchAll(/easing:\s*['"]linear['"]/g)];
+  assert.equal(linearJavaScriptEasings.length, 2);
+  assert.match(mainSource, /const spinAnimation[\s\S]*?easing:\s*'linear'/);
+  assert.match(mainSource, /const sheenAnimation[\s\S]*?easing:\s*'linear'/);
+});
+
+test('controls reserve a stable three-column rail and keep time inside the player', () => {
+  const controls = archiveRuleBody('.dynamic-island');
+  const player = archiveRuleBody('.player-pill');
+  const track = archiveRuleBody('.player-track-wrap');
+  const time = archiveRuleBody('.player-time');
+  const mobile = archiveMediaBody('(max-width: 767px)');
+
+  assert.match(controls, /--control-rail-width:\s*calc\(\(var\(--side-control-size\) \* 2\) \+ var\(--player-slot\) \+ \(var\(--side-control-gap\) \* 2\)\)/);
+  assert.match(controls, /z-index:\s*130/);
+  assert.match(player, /grid-template-columns:\s*auto\s+minmax\(0,\s*1fr\)\s+max-content/);
+  assert.match(track, /width:\s*auto/);
+  assert.match(track, /min-width:\s*0/);
+  assert.match(time, /min-inline-size:\s*5ch/);
+  assert.match(time, /white-space:\s*nowrap/);
+  assert.match(time, /font-variant-numeric:\s*tabular-nums/);
+  assert.match(mobile, /--mobile-content-rail:\s*min\(calc\(100vw - 32px\),\s*340px\)/);
+  assert.match(mobile, /--side-control-size:\s*44px/);
+  assert.match(mobile, /\.vinyl-wrapper\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);
+  assert.match(mobile, /\.archive-track-meta\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);
+  assert.match(mobile, /\.dynamic-island\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);
+});
+
+test('overlays and playlist use cover-driven polarized light without animated blur', () => {
+  const overlayLight = archiveRuleBody('.result-area::before,\n        .playlist-area::before');
+  const selected = archiveRuleBody('.playlist-item.is-current');
+  const selectedGlow = archiveRuleBody('.playlist-item.is-current::before');
+  const selectedLine = archiveRuleBody('.playlist-item.is-current::after');
+  const identity = archiveRuleBody('.playlist-album-identity');
+  const drift = blockBody(archiveCss, '@keyframes overlay-polarized-drift {');
+  const reducedLight = archiveRuleBody('html[data-motion-profile="reduce"] .result-area.is-visible::before,\n        html[data-motion-profile="reduce"] .playlist-area.is-visible::before');
+  const pointerLight = archiveRuleBody('.pointer-light');
+
+  assert.match(overlayLight, /var\(--cover-a\) 72%/);
+  assert.match(overlayLight, /var\(--cover-b\) 68%/);
+  assert.match(overlayLight, /filter:\s*blur\(42px\)/);
+  assert.match(reducedLight, /opacity:\s*0\.18/);
+  assert.match(reducedLight, /transform:\s*none/);
+  assert.match(selected, /background:\s*transparent/);
+  assert.doesNotMatch(selected, /var\(--archive-red\)/);
+  assert.match(selectedGlow, /playlist-current-breathe/);
+  assert.match(selectedGlow, /filter:\s*blur\(11px\)/);
+  assert.match(selectedLine, /var\(--cover-a\)/);
+  assert.match(selectedLine, /var\(--cover-b\)/);
+  assert.match(identity, /display:\s*grid/);
+  assert.match(pointerLight, /radial-gradient/);
+  assert.match(pointerLight, /var\(--pointer-x,\s*50vw\)/);
+  assert.match(pointerLight, /var\(--pointer-y,\s*50vh\)/);
+  assert.match(pointerLight, /mix-blend-mode:\s*screen/);
+  assert.doesNotMatch(pointerLight, /clip-path/);
+  assert.doesNotMatch(pointerLight, /\btransform\s*:/);
+  assert.doesNotMatch(pointerLight, /\bfilter\s*:/);
+  assert.doesNotMatch(drift, /\bfilter\s*:/);
+  assert.doesNotMatch(drift, /\bbox-shadow\s*:/);
+});
+
+test('dual loading portals prelight on their first rendered frame and peak before poster travel', () => {
+  const portal = archiveRuleBody('.loading-light-slit[data-portal-side="left"],\n        .loading-light-slit[data-portal-side="right"]');
+  const core = archiveRuleBody('.loading-light-slit[data-portal-side="left"] .loading-light-core,\n        .loading-light-slit[data-portal-side="right"] .loading-light-core');
+  const volumeBeam = archiveRuleBody('.loading-light-slit[data-portal-side="left"]::before,\n        .loading-light-slit[data-portal-side="right"]::before');
+  const leftVolumeBeam = archiveRuleBody('.loading-light-slit[data-portal-side="left"]::before');
+  const leftPulse = blockBody(archiveCss, '@keyframes loading-left-portal-pulse {');
+  const rightPulse = blockBody(archiveCss, '@keyframes loading-right-portal-pulse {');
+  const corePulse = blockBody(archiveCss, '@keyframes loading-portal-core-pulse {');
+  const leftRail = blockBody(archiveCss, '@keyframes loading-left-portal-rail-pulse {');
+  const volumePulse = blockBody(archiveCss, '@keyframes loading-portal-volume-pulse {');
+
+  assert.match(portal, /width:\s*clamp\(54px,\s*6\.8vw,\s*88px\)/);
+  assert.match(core, /width:\s*3px/);
+  assert.match(core, /box-shadow:[\s\S]*rgba\(255, 253, 244, 0\.88\)/);
+  assert.match(volumeBeam, /width:\s*min\(38vw,\s*390px\)/);
+  assert.match(volumeBeam, /filter:\s*blur\(11px\)/);
+  assert.match(volumeBeam, /loading-portal-volume-pulse/);
+  assert.match(leftVolumeBeam, /linear-gradient\(\s*90deg/);
+  assert.match(leftVolumeBeam, /transform-origin:\s*left center/);
+  assert.match(
+    archiveCss,
+    /\.loading-light-slit\[data-portal-side="right"\]::before\s*\{[^}]*right:\s*50%;[^}]*linear-gradient\(\s*270deg[^}]*transform-origin:\s*right center/s
+  );
+  assert.match(
+    archiveCss,
+    /\.loading-light-slit\[data-portal-side="right"\]::before,\s*\.loading-light-slit\[data-portal-side="right"\]::after\s*\{[^}]*mask-image:\s*linear-gradient\(270deg/s
+  );
+  assert.match(
+    archiveCss,
+    /\.loading-screen\[data-portal-side\] \.loading-stage::after\s*\{[^}]*width:\s*clamp\(68px,\s*8vw,\s*104px\)/s
+  );
+  assert.match(leftPulse, /0%\s*\{\s*opacity:\s*0\.38/);
+  assert.match(rightPulse, /0%\s*\{\s*opacity:\s*0\.36/);
+  assert.match(corePulse, /0%\s*\{\s*opacity:\s*0\.82/);
+  assert.match(leftRail, /0%\s*\{\s*opacity:\s*0\.02/);
+  assert.match(leftPulse, /24%\s*\{\s*opacity:\s*0\.92/);
+  assert.match(rightPulse, /26%\s*\{\s*opacity:\s*0\.9/);
+  assert.match(volumePulse, /26%\s*\{\s*opacity:\s*0\.66/);
+  assert.doesNotMatch(`${leftPulse}${rightPulse}${corePulse}${leftRail}${volumePulse}`, /\blinear\b/);
 });
 
 test('obsolete loading chrome stays removed from the visual layer', () => {

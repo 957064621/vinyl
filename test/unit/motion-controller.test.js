@@ -6,6 +6,7 @@ import {
   animateWithCleanup,
   createMotionController,
   detectMotionProfile,
+  MOTION_TOKENS,
   tweenWithCleanup
 } from '../../src/motion/motion-controller.js';
 import { createAppTransitions } from '../../src/app/transitions.js';
@@ -36,6 +37,52 @@ test('rejects an unknown motion profile', () => {
     () => createMotionController({ profile: 'cinematic', transitions: {} }),
     /Unknown motion profile: cinematic/
   );
+});
+
+test('setProfile validates, settles active work, and updates future command tokens', async () => {
+  const cleanup = createDeferred();
+  const events = [];
+  const contexts = [];
+  const motion = createMotionController({
+    profile: 'full',
+    transitions: {
+      draw: ({ signal, profile, tokens }) => new Promise((resolve) => {
+        contexts.push({ profile, tokens });
+        signal.addEventListener('abort', async () => {
+          events.push(signal.reason);
+          await cleanup.promise;
+          resolve();
+        }, { once: true });
+      }),
+      openOverlay: async (context) => contexts.push(context)
+    }
+  });
+
+  const draw = motion.draw(2);
+  await Promise.resolve();
+  assert.equal(contexts[0].profile, 'full');
+  assert.equal(contexts[0].tokens, MOTION_TOKENS.full);
+
+  const profileChange = motion.setProfile('reduce');
+  let profileChangeSettled = false;
+  void profileChange.then(() => { profileChangeSettled = true; });
+  assert.equal(motion.profile, 'reduce');
+  assert.throws(() => motion.setProfile('cinematic'), /Unknown motion profile: cinematic/);
+  assert.equal(motion.profile, 'reduce');
+  await Promise.resolve();
+  assert.equal(profileChangeSettled, false);
+  assert.equal(motion.isActive(), true);
+
+  const open = motion.openOverlay('lyrics');
+  cleanup.resolve();
+
+  assert.deepEqual(await draw, { status: 'cancelled', name: 'draw' });
+  await profileChange;
+  assert.deepEqual(await open, { status: 'completed', name: 'open:lyrics' });
+  assert.deepEqual(events, ['motion profile changed']);
+  assert.equal(contexts[1].profile, 'reduce');
+  assert.equal(contexts[1].tokens, MOTION_TOKENS.reduce);
+  assert.equal(motion.isActive(), false);
 });
 
 test('runs one transition at a time and settles the interrupted promise', async () => {
@@ -168,16 +215,18 @@ test('allows semantic headless track changes while the document is hidden', asyn
   const motion = createMotionController({
     profile: 'compact',
     transitions: {
-      switchTrack: async ({ targetIndex, headless }) => events.push([targetIndex, headless])
+      switchTrack: async ({ targetIndex, headless, showLyrics }) => {
+        events.push([targetIndex, headless, showLyrics]);
+      }
     }
   });
 
   motion.setDocumentVisible(false);
   assert.deepEqual(
-    await motion.switchTrack(4, { headless: true }),
+    await motion.switchTrack(4, { headless: true, showLyrics: true }),
     { status: 'completed', name: 'switch-track' }
   );
-  assert.deepEqual(events, [[4, true]]);
+  assert.deepEqual(events, [[4, true, false]]);
 });
 
 test('starts a queued headless switch after decorative cleanup during backgrounding', async () => {
@@ -230,6 +279,7 @@ test('does not allow caller options to replace controller-owned switch context',
 
   await motion.switchTrack(4, {
     headless: true,
+    showLyrics: true,
     targetIndex: 99,
     profile: 'reduce',
     tokens: { enter: 999 },
@@ -238,6 +288,7 @@ test('does not allow caller options to replace controller-owned switch context',
 
   assert.equal(received.targetIndex, 4);
   assert.equal(received.headless, true);
+  assert.equal(received.showLyrics, false);
   assert.equal(received.profile, 'compact');
   assert.notEqual(received.signal, suppliedSignal);
   assert.equal(received.tokens.enter, 280);
@@ -499,7 +550,12 @@ test('a play rejection resets the turntable and remains recoverable by the calle
   assert.equal(fakes.events[0][0], 'closeAll');
   assert.equal(fakes.events[1][0], 'pause');
   assert.equal(fakes.events.some(([name]) => name === 'reset'), true);
-  assert.equal(fakes.events.at(-1)[0], 'reset');
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
+  assert.equal(
+    fakes.events.findIndex(([name]) => name === 'reset')
+      < fakes.events.findIndex(([name, label]) => name === 'label' && label === '再次抽取'),
+    true
+  );
 });
 
 test('a load rejection resets the turntable and remains recoverable by the caller', async () => {
@@ -514,10 +570,15 @@ test('a load rejection resets the turntable and remains recoverable by the calle
     tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
   }), (error) => error === loadError);
 
-  assert.equal(fakes.events.at(-1)[0], 'reset');
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
+  assert.equal(
+    fakes.events.findIndex(([name]) => name === 'reset')
+      < fakes.events.findIndex(([name, label]) => name === 'label' && label === '再次抽取'),
+    true
+  );
 });
 
-test('a live false load resets and aborts before the final draw label', async () => {
+test('a live false load resets and settles the recovery draw label', async () => {
   const fakes = makeTransitionFakes({ loadResult: false });
   const transitions = createAppTransitions(fakes);
   const signal = new AbortController().signal;
@@ -530,11 +591,15 @@ test('a live false load resets and aborts before the final draw label', async ()
   }), /Audio load did not complete/);
 
   assert.equal(signal.aborted, false);
-  assert.equal(fakes.events.at(-1)[0], 'reset');
-  assert.equal(fakes.events.some(([name, label]) => name === 'label' && label === '再次抽取'), false);
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
+  assert.equal(
+    fakes.events.findIndex(([name]) => name === 'reset')
+      < fakes.events.findIndex(([name, label]) => name === 'label' && label === '再次抽取'),
+    true
+  );
 });
 
-test('a live false play resets and aborts before the final draw label', async () => {
+test('a live false play resets and settles the recovery draw label', async () => {
   const fakes = makeTransitionFakes({ playResult: false });
   const transitions = createAppTransitions(fakes);
   const signal = new AbortController().signal;
@@ -547,15 +612,19 @@ test('a live false play resets and aborts before the final draw label', async ()
   }), /Audio playback did not start/);
 
   assert.equal(signal.aborted, false);
-  assert.equal(fakes.events.at(-1)[0], 'reset');
-  assert.equal(fakes.events.some(([name, label]) => name === 'label' && label === '再次抽取'), false);
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
+  assert.equal(
+    fakes.events.findIndex(([name]) => name === 'reset')
+      < fakes.events.findIndex(([name, label]) => name === 'label' && label === '再次抽取'),
+    true
+  );
 });
 
 for (const [operation, options, expectedError] of [
   ['load', { loadResult: false }, /Audio load did not complete/],
   ['play', { playResult: false }, /Audio playback did not start/]
 ]) {
-  test(`a live false ${operation} aborts a track switch before overlay restore`, async () => {
+  test(`a live false ${operation} recovers the label before aborting a track switch restore`, async () => {
     const fakes = makeTransitionFakes(options);
     const transitions = createAppTransitions(fakes);
 
@@ -566,7 +635,12 @@ for (const [operation, options, expectedError] of [
       tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
     }), expectedError);
 
-    assert.equal(fakes.events.at(-1)[0], 'reset');
+    assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
+    assert.equal(
+      fakes.events.findIndex(([name]) => name === 'reset')
+        < fakes.events.findIndex(([name, label]) => name === 'label' && label === '再次抽取'),
+      true
+    );
     assert.equal(fakes.events.some(([name]) => name === 'restore'), false);
   });
 }
@@ -608,6 +682,27 @@ test('a track switch snapshots its overlay before pausing and restores it after 
     fakes.events.map(([name]) => name),
     ['closeAll', 'pause', 'select', 'load', 'refresh', 'play', 'restore']
   );
+});
+
+test('a playlist-directed track switch replaces the playlist with lyrics after playback', async () => {
+  const fakes = makeTransitionFakes();
+  const transitions = createAppTransitions(fakes);
+
+  await transitions.switchTrack({
+    signal: new AbortController().signal,
+    targetIndex: 5,
+    profile: 'full',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 16 },
+    showLyrics: true
+  });
+
+  assert.deepEqual(
+    fakes.events.map(([name]) => name),
+    ['closeAll', 'pause', 'select', 'load', 'play', 'open']
+  );
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['open', 'lyrics']);
+  assert.equal(fakes.events.some(([name]) => name === 'refresh'), false);
+  assert.equal(fakes.events.some(([name]) => name === 'restore'), false);
 });
 
 test('the composition root routes player commands through exclusive motion ownership', () => {

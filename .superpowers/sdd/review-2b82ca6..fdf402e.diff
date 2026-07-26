@@ -1,0 +1,2400 @@
+# Review package: 2b82ca6079fe51e0ad42915d88a1ad5d238ce059..fdf402e
+
+## Commits
+fdf402e fix: harden archive style review findings
+4e28340 feat: apply directional light archive styling
+
+## Files changed
+ src/style.css                      | 1112 +++++++++++++++++++++++++++++-------
+ test/unit/archive-styles.test.js   |  210 +++++++
+ test/unit/draw-button-flow.test.js |    3 +
+ 3 files changed, 1112 insertions(+), 213 deletions(-)
+
+## Diff
+diff --git a/src/style.css b/src/style.css
+index e3f0107..49b8e52 100644
+--- a/src/style.css
++++ b/src/style.css
+@@ -1,82 +1,86 @@
+         :root {
+-            --bg-base: #060910;
+-            --bg-surface: #0d1421;
+-            --text-main: #f7fbff;
+-            --text-muted: rgba(170, 187, 213, 0.78);
+-            --edge-light: rgba(205, 229, 255, 0.2);
+-            --accent-blue: #b7ddff;
+-            --accent-rose: #ff9ab0;
+-            --glass-fill: rgba(12, 18, 29, 0.44);
+-            --glass-fill-strong: rgba(11, 17, 28, 0.58);
+-            --glass-border: rgba(224, 239, 255, 0.18);
+-            --glass-highlight: rgba(255, 255, 255, 0.22);
+-            --stage-shadow: 0 28px 72px rgba(0, 0, 0, 0.48);
+-            --damping: cubic-bezier(0.16, 1, 0.3, 1);
+-            --hero-ease: cubic-bezier(0.32, 0.72, 0, 1);
+-            --fluid-ease: cubic-bezier(0.22, 1, 0.36, 1);
+-            --soft-spring: cubic-bezier(0.2, 1.08, 0.22, 1);
+-            --button-swap-ease: cubic-bezier(0.2, 0.86, 0.18, 1);
+-            --button-settle-ease: cubic-bezier(0.22, 1, 0.36, 1);
+-            --control-slide-ease: cubic-bezier(0.16, 1, 0.3, 1);
+-            --control-orbit-ease: cubic-bezier(0.18, 1.18, 0.2, 1);
+-            --control-drift-in-ease: cubic-bezier(0.24, 0.82, 0.18, 1);
+-            --control-drift-out-ease: cubic-bezier(0.28, 0.72, 0.18, 1);
++            --archive-void: #070808;
++            --archive-graphite: #151819;
++            --archive-slate: #222526;
++            --archive-silver: #aeb6b9;
++            --archive-projector: #f1f2ee;
++            --archive-red: #a43b42;
++            --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
++            --font-title: "Songti SC", STSong, "Noto Serif CJK SC", SimSun, serif;
++            --bg-base: var(--archive-void);
++            --bg-surface: var(--archive-graphite);
++            --text-main: var(--archive-projector);
++            --text-muted: color-mix(in srgb, var(--archive-silver) 80%, transparent);
++            --edge-light: color-mix(in srgb, var(--archive-silver) 24%, transparent);
++            --accent-blue: var(--archive-silver);
++            --accent-rose: var(--archive-red);
++            --glass-fill: color-mix(in srgb, var(--archive-graphite) 94%, transparent);
++            --glass-fill-strong: color-mix(in srgb, var(--archive-slate) 96%, transparent);
++            --glass-border: color-mix(in srgb, var(--archive-silver) 28%, transparent);
++            --glass-highlight: color-mix(in srgb, var(--archive-projector) 18%, transparent);
++            --stage-shadow: 0 24px 52px rgba(0, 0, 0, 0.44);
++            --continuity-ease: cubic-bezier(0.32, 0.72, 0, 1);
++            --crossfade-ease: cubic-bezier(0.42, 0, 0.58, 1);
++            --damping: var(--continuity-ease);
++            --hero-ease: var(--continuity-ease);
++            --fluid-ease: var(--continuity-ease);
++            --soft-spring: var(--continuity-ease);
++            --button-swap-ease: var(--continuity-ease);
++            --button-settle-ease: var(--continuity-ease);
++            --control-slide-ease: var(--continuity-ease);
++            --control-orbit-ease: var(--continuity-ease);
++            --control-drift-in-ease: var(--continuity-ease);
++            --control-drift-out-ease: var(--continuity-ease);
+             --lyric-ios-offset: 0px;
+             --playlist-lift: -3.8vh;
+             --stage-lift: clamp(38px, 6.6vh, 70px);
+             --loading-hero-lift: clamp(20px, 4.5vh, 44px);
+-            --playlist-breathe-ease: cubic-bezier(0.38, 0, 0.62, 1);
+             --playlist-edge-fade: 22px;
+             --safe-top: env(safe-area-inset-top, 0px);
+             --safe-bottom: env(safe-area-inset-bottom, 0px);
+-            --app-bg:
+-                linear-gradient(180deg, rgba(6, 9, 16, 0.18), rgba(6, 9, 16, 0.8)),
+-                radial-gradient(72% 58% at 50% 34%, color-mix(in srgb, var(--cover-a) 22%, transparent) 0%, transparent 70%),
+-                radial-gradient(56% 52% at 18% 78%, color-mix(in srgb, var(--cover-b) 18%, transparent) 0%, transparent 66%),
+-                radial-gradient(54% 48% at 88% 18%, color-mix(in srgb, var(--cover-a) 15%, transparent) 0%, transparent 64%),
+-                linear-gradient(180deg, #0a111c 0%, #060910 50%, #04060b 100%);
+-            --cover-a: #b7ddff;
+-            --cover-b: #ff9ab0;
+-            --cover-accent: #e0efff;
+-            --cover-deep: #121a28;
++            --app-bg: linear-gradient(148deg, var(--archive-void) 0%, var(--archive-graphite) 54%, var(--archive-void) 100%);
++            --cover-a: var(--archive-silver);
++            --cover-b: var(--archive-slate);
++            --cover-accent: var(--archive-projector);
++            --cover-deep: var(--archive-graphite);
+             --hero-bg: none;
+             --cover-art-url: none;
+             color-scheme: dark;
+             transition:
+-                --cover-a 0.82s var(--fluid-ease),
+-                --cover-b 0.82s var(--fluid-ease),
+-                --cover-accent 0.82s var(--fluid-ease),
+-                --cover-deep 0.82s var(--fluid-ease);
++                --cover-a 0.82s var(--crossfade-ease),
++                --cover-b 0.82s var(--crossfade-ease),
++                --cover-accent 0.82s var(--crossfade-ease),
++                --cover-deep 0.82s var(--crossfade-ease);
+         }
+ 
+         /* 封面驱动的动态主色：注册为 <color> 才能在抽取时平滑过渡。
+            默认值与原有蓝/玫瑰一致，未抽取前视觉不变。 */
+         @property --cover-a {
+             syntax: "<color>";
+             inherits: true;
+-            initial-value: #b7ddff;
++            initial-value: #aeb6b9;
+         }
+         @property --cover-b {
+             syntax: "<color>";
+             inherits: true;
+-            initial-value: #ff9ab0;
++            initial-value: #222526;
+         }
+         @property --cover-accent {
+             syntax: "<color>";
+             inherits: true;
+-            initial-value: #e0efff;
++            initial-value: #f1f2ee;
+         }
+         @property --cover-deep {
+             syntax: "<color>";
+             inherits: true;
+-            initial-value: #121a28;
++            initial-value: #151819;
+         }
+         @property --btn-flow-angle {
+             syntax: "<angle>";
+             inherits: false;
+             initial-value: 0deg;
+         }
+         @property --btn-flow-full-cycle {
+             syntax: "<time>";
+             inherits: false;
+             initial-value: 7200ms;
+@@ -103,107 +107,91 @@
+             clip: rect(0, 0, 0, 0) !important;
+             white-space: nowrap !important;
+             border: 0 !important;
+         }
+ 
+         html {
+             width: 100%;
+             height: 100%;
+             overflow: hidden;
+             overscroll-behavior: none;
+-            background: #070a12;
++            background: var(--archive-void);
+         }
+ 
+         body {
+-            font-family: "Manrope", "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
++            font-family: var(--font-ui);
+             color: var(--text-main);
+             position: fixed;
+             inset: 0;
+             width: 100vw;
+             height: 100%;
+             display: flex;
+             flex-direction: column;
+             align-items: center;
+             justify-content: center;
+             padding: 24px;
+             padding-top: max(24px, env(safe-area-inset-top));
+             padding-bottom: max(24px, env(safe-area-inset-bottom));
+             overflow: hidden;
+             overscroll-behavior: none;
+-            background-color: #060910;
++            background-color: var(--archive-void);
+             background: var(--app-bg);
+             isolation: isolate;
+         }
+ 
+         @supports (-webkit-touch-callout: none) {
+             :root {
+                 --lyric-ios-offset: clamp(8px, calc(env(safe-area-inset-top) * 0.45), 16px);
+             }
+         }
+ 
+         body::before {
+             content: "";
+             position: fixed;
+-            top: 0;
+-            left: 0;
+-            width: 100vw;
+-            height: 100lvh;
++            top: -28vh;
++            left: -28vw;
++            width: 126vw;
++            height: 138vh;
+             pointer-events: none;
+-            opacity: 0.2;
+             z-index: -1;
+-            background-image:
+-                radial-gradient(circle at 18% 24%, rgba(214, 236, 255, 0.22) 0 0.7px, transparent 1.4px),
+-                radial-gradient(circle at 78% 34%, rgba(255, 180, 200, 0.16) 0 0.65px, transparent 1.35px),
+-                radial-gradient(circle at 52% 78%, rgba(208, 232, 255, 0.16) 0 0.55px, transparent 1.3px),
+-                linear-gradient(120deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+-                linear-gradient(60deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+-            background-size: 164px 164px, 220px 220px, 280px 280px, 96px 96px, 96px 96px;
+-            background-position: 0 0, 32px 18px, -18px 42px, 0 0, 0 0;
+-            mask-image: radial-gradient(circle at 50% 34%, black 0%, transparent 68%);
+-            -webkit-mask-image: radial-gradient(circle at 50% 34%, black 0%, transparent 68%);
+-            animation: ambient-dust-drift 18s ease-in-out infinite alternate;
++            background:
++                conic-gradient(from 12deg at 4% 2%, transparent 0 26deg, color-mix(in srgb, var(--cover-accent) 14%, transparent) 32deg 58deg, transparent 66deg),
++                linear-gradient(126deg, transparent 0 18%, color-mix(in srgb, var(--cover-a) 24%, transparent) 35%, color-mix(in srgb, var(--cover-accent) 10%, transparent) 55%, transparent 79%);
++            clip-path: polygon(0 0, 32% 0, 88% 100%, 34% 100%);
++            -webkit-mask-image: linear-gradient(128deg, #000 8%, rgba(0, 0, 0, 0.74) 48%, transparent 90%);
++            mask-image: linear-gradient(128deg, #000 8%, rgba(0, 0, 0, 0.74) 48%, transparent 90%);
++            opacity: 0.44;
++            transform: rotate(-7deg);
+         }
+ 
+         body::after {
+             content: "";
+             position: fixed;
+-            top: 0;
+-            left: 0;
+-            width: 100vw;
+-            height: 100lvh;
++            top: -30vh;
++            right: -34vw;
++            width: 112vw;
++            height: 132vh;
+             pointer-events: none;
+             z-index: -2;
+-            -webkit-transform: translateZ(0);
+-            transform: translateZ(0);
+             background:
+-                radial-gradient(68% 52% at 50% 30%, color-mix(in srgb, var(--cover-accent) 26%, transparent) 0%, transparent 70%),
+-                radial-gradient(56% 46% at 18% 78%, color-mix(in srgb, var(--cover-b) 14%, transparent) 0%, transparent 72%),
+-                radial-gradient(58% 44% at 88% 18%, color-mix(in srgb, var(--cover-a) 13%, transparent) 0%, transparent 68%),
+-                linear-gradient(180deg, color-mix(in srgb, var(--cover-deep) 54%, #070a12) 0%, #060910 56%, #04060b 100%);
+-            background-size: auto;
+-            background-position: center;
+-            background-repeat: no-repeat;
+-            filter: saturate(1.08) brightness(0.9);
+-            opacity: 0.92;
+-            will-change: transform, opacity;
+-            animation: ambient-veil-shift 20s ease-in-out infinite alternate;
++                conic-gradient(from 166deg at 96% 4%, transparent 0 28deg, color-mix(in srgb, var(--cover-b) 16%, transparent) 34deg 58deg, transparent 68deg),
++                linear-gradient(228deg, transparent 0 22%, color-mix(in srgb, var(--cover-b) 18%, transparent) 43%, color-mix(in srgb, var(--cover-accent) 7%, transparent) 60%, transparent 82%);
++            clip-path: polygon(68% 0, 100% 0, 100% 100%, 12% 100%);
++            -webkit-mask-image: linear-gradient(228deg, #000 10%, rgba(0, 0, 0, 0.56) 50%, transparent 92%);
++            mask-image: linear-gradient(228deg, #000 10%, rgba(0, 0, 0, 0.56) 50%, transparent 92%);
++            opacity: 0.2;
++            transform: rotate(5deg);
+         }
+ 
+         body.has-lyric-overlay::after,
+         body.has-playlist-overlay::after {
+-            opacity: 0.9;
+-            filter: saturate(0.98) brightness(0.62);
+-        }
+-
+-        body::before,
+-        body::after {
+-            background-color: #060910;
++            opacity: 0.1;
+         }
+ 
+         .app-root {
+             display: contents;
+         }
+ 
+         .loading-screen {
+             --loading-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+             --loading-handoff-ease: cubic-bezier(0.42, 0, 0.58, 1);
+             --loading-light-ease: cubic-bezier(0.4, 0, 0.2, 1);
+@@ -211,21 +199,22 @@
+             --poster-handoff-ms: 820ms;
+             --slit-duration: 941ms;
+             --final-resolve-ms: 1100ms;
+             box-sizing: border-box;
+             position: fixed;
+             inset: 0;
+             z-index: 1000;
+             display: grid;
+             place-items: center;
+             width: 100vw;
+-            height: 100lvh;
++            height: 100vh;
++            height: 100dvh;
+             padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+             overflow: hidden;
+             background: #070a12;
+             opacity: 1;
+             transition: opacity 680ms var(--loading-settle-ease);
+         }
+ 
+         .loading-screen.is-exiting {
+             opacity: 0;
+             pointer-events: none;
+@@ -366,21 +355,22 @@
+             height: 100%;
+             pointer-events: none;
+         }
+ 
+         .loading-light-slit {
+             position: absolute;
+             top: 50%;
+             left: 50%;
+             z-index: 4;
+             width: 100vw;
+-            height: 100lvh;
++            height: 100vh;
++            height: 100dvh;
+             opacity: 0;
+             pointer-events: none;
+             transform: translate3d(-50%, -50%, 0);
+             transform-origin: center;
+         }
+ 
+         .loading-light-slit > span {
+             position: absolute;
+             top: 0;
+             bottom: 0;
+@@ -811,33 +801,33 @@
+             bottom: -16px;
+             width: 74px;
+             height: 1px;
+             transform: translateX(-50%);
+             background: linear-gradient(90deg, transparent, rgba(212, 234, 255, 0.52), transparent);
+             opacity: 0.64;
+         }
+ 
+         .header h1 {
+             font-size: clamp(28px, 6vw, 36px);
+-            font-family: "Iowan Old Style", Baskerville, "Times New Roman", "Songti SC", STSong, serif;
++            font-family: var(--font-title);
+             font-weight: 600;
+-            letter-spacing: 0.14em;
++            letter-spacing: 0;
+             margin-bottom: 10px;
+             text-shadow:
+                 0 12px 26px rgba(0, 0, 0, 0.38),
+                 0 0 18px rgba(180, 222, 255, 0.12);
+         }
+ 
+         .header p {
+             color: rgba(184, 199, 222, 0.72);
+             font-size: 13px;
+-            letter-spacing: 0.08em;
++            letter-spacing: 0;
+         }
+ 
+         .vinyl-wrapper {
+             position: relative;
+             display: flex;
+             flex-direction: column;
+             align-items: center;
+             perspective: 1000px;
+             width: min(100%, 440px);
+             margin-top: -14px;
+@@ -874,21 +864,20 @@
+             box-shadow:
+                 var(--stage-shadow),
+                 0 0 0px rgba(109, 187, 255, 0),
+                 inset 0 1px 0 rgba(255, 255, 255, 0.13),
+                 inset 0 -16px 28px rgba(0, 0, 0, 0.2),
+                 inset 0 0 0 1px rgba(205, 226, 255, 0.13);
+             display: flex;
+             justify-content: center;
+             align-items: center;
+             transition: transform 0.6s var(--damping), box-shadow 0.6s var(--damping);
+-            will-change: transform;
+         }
+ 
+         .turntable::before {
+             content: "";
+             position: absolute;
+             inset: 10px;
+             border-radius: 20px;
+             background:
+                 linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 36%),
+                 radial-gradient(circle at 28% 18%, rgba(190, 222, 255, 0.11), transparent 38%);
+@@ -937,41 +926,39 @@
+             box-shadow: 
+                 0 16px 28px rgba(0, 0, 0, 0.48),
+                 0 30px 54px rgba(0, 0, 0, 0.38),
+                 0 0 24px rgba(132, 195, 255, 0.1),
+                 inset 10px 12px 24px rgba(255, 255, 255, 0.03),
+                 inset -18px -20px 28px rgba(0, 0, 0, 0.38),
+                 inset 0 0 0 1px var(--edge-light);
+ 
+             transform: translateZ(0) scale(1);
+             transition: transform 0.6s var(--damping), box-shadow 0.6s var(--damping);
+-            will-change: transform;
+ 
+             display: flex;
+             justify-content: center;
+             align-items: center;
+         }
+ 
+         .tonearm {
+             position: absolute;
+             top: -8px;
+             right: -30px;
+             width: 186px;
+             height: 14px;
+             border-radius: 999px;
+             transform-origin: calc(100% - 12px) 7px;
+             transform: rotate(var(--arm-angle, -38deg));
+             background: linear-gradient(90deg, #cfd9ee 0%, #aeb9cf 58%, #838ea5 100%);
+             box-shadow: 0 6px 12px rgba(0, 0, 0, 0.34);
+             z-index: 12;
+             pointer-events: none;
+-            will-change: transform;
+         }
+ 
+         .tonearm-dock {
+             position: absolute;
+             top: 2px;
+             right: 3px;
+             width: 34px;
+             height: 20px;
+             border-radius: 7px;
+             background: linear-gradient(160deg, #273246, #111a2b);
+@@ -1071,21 +1058,20 @@
+                     rgba(255, 255, 255, 0.085) 43%,
+                     rgba(214, 234, 255, 0.17) 49.5%,
+                     rgba(255, 255, 255, 0.06) 56%,
+                     transparent 69%),
+                 radial-gradient(circle at 70% 76%, rgba(181, 221, 255, 0.1), transparent 40%),
+                 radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.07), transparent 36%);
+             -webkit-mask-image: radial-gradient(circle, transparent 27%, #000 30.5%);
+             mask-image: radial-gradient(circle, transparent 27%, #000 30.5%);
+             mix-blend-mode: screen;
+             pointer-events: none;
+-            will-change: opacity, transform;
+             animation: vinyl-glare-breathe 9s ease-in-out infinite alternate;
+         }
+ 
+         @keyframes vinyl-glare-breathe {
+             0%   { opacity: 0.7;  transform: translate(-50%, -50%) rotate(-1.6deg); }
+             100% { opacity: 1;    transform: translate(-50%, -50%) rotate(1.6deg); }
+         }
+ 
+         .vinyl-record::after {
+             content: "";
+@@ -1124,21 +1110,20 @@
+             inset: 0;
+             border-radius: 50%;
+             background-position: center;
+             background-size: 101% 101%;
+             background-repeat: no-repeat;
+             opacity: 0;
+             transform: scale(1.018) rotate(-0.8deg);
+             z-index: 0;
+             image-rendering: auto;
+             transition: opacity 0.82s var(--fluid-ease), transform 0.98s var(--fluid-ease);
+-            will-change: opacity, transform;
+             backface-visibility: hidden;
+             -webkit-backface-visibility: hidden;
+         }
+ 
+         .vinyl-cover.is-active {
+             opacity: 1;
+             transform: scale(1) rotate(0deg);
+         }
+ 
+         .vinyl-sheen {
+@@ -1153,21 +1138,20 @@
+                     rgba(181, 231, 255, 0.28) 52deg,
+                     transparent 92deg,
+                     transparent 210deg,
+                     rgba(255, 255, 255, 0.1) 248deg,
+                     transparent 286deg
+                 );
+             mix-blend-mode: screen;
+             opacity: 0.03;
+             pointer-events: none;
+             z-index: 2;
+-            will-change: transform, opacity;
+         }
+ 
+         .vinyl-sticker::before {
+             content: "";
+             position: absolute;
+             inset: 0;
+             border-radius: 50%;
+             background:
+                 radial-gradient(circle at 50% 50%, transparent 0 23%, rgba(6, 9, 16, 0.18) 24%, transparent 31%),
+                 linear-gradient(145deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 48%);
+@@ -1203,21 +1187,20 @@
+             --island-lift: 0px;
+             --control-rail-top: calc(100% + 12px);
+             --side-control-size: 48px;
+             --side-control-rail-offset: 3px;
+             --player-enter-y: -14px;
+             --player-exit-y: -10px;
+             width: calc(var(--play-width) + var(--player-slot) + var(--player-gap));
+             min-height: var(--control-height);
+             transform: translate3d(0, var(--island-lift), 0);
+             transition: transform 0.46s var(--fluid-ease);
+-            will-change: transform;
+         }
+ 
+         .dynamic-island.is-overlay-control-visible {
+             z-index: 118;
+         }
+ 
+         body.has-lyric-overlay .dynamic-island.is-overlay-control-visible .lyric-toggle-btn,
+         body.has-lyric-overlay .dynamic-island.is-overlay-control-visible .playlist-toggle-btn {
+             opacity: 0;
+             pointer-events: none;
+@@ -1290,44 +1273,41 @@
+             height: 48px;
+             margin: 0;
+             width: 136px;
+             position: relative;
+             overflow: visible;
+             isolation: isolate;
+             background:
+                 radial-gradient(circle at 35% 0%, rgba(255, 255, 255, 0.15), transparent 42%),
+                 linear-gradient(145deg, rgba(255, 255, 255, 0.105), rgba(255, 255, 255, 0.03)),
+                 var(--glass-fill);
+-            -webkit-backdrop-filter: blur(12px) saturate(1.36);
+-            backdrop-filter: blur(12px) saturate(1.36);
+             display: flex;
+             justify-content: center;
+             cursor: pointer;
+             align-items: center;
+             font-family: inherit;
+             border: 1px solid var(--glass-border);
+             font-size: 15px;
+             font-weight: 500;
+-            letter-spacing: 0.09em;
++            letter-spacing: 0;
+             color: rgba(255, 255, 255, 0.95);
+             border-radius: 999px;
+             box-shadow: 
+                 0 16px 32px rgba(0, 0, 0, 0.35),
+                 0 0 18px rgba(154, 211, 255, 0.055),
+                 inset 0 1px 1px rgba(255, 255, 255, 0.22),
+                 inset 0 -9px 18px rgba(0, 0, 0, 0.16);
+             transition:
+                 transform 0.72s var(--control-drift-in-ease),
+                 background 0.52s var(--fluid-ease),
+                 box-shadow 0.52s var(--fluid-ease),
+                 opacity 0.36s ease;
+-            will-change: transform;
+             z-index: 2;
+             transform-origin: 50% 50%;
+             -webkit-tap-highlight-color: transparent;
+             user-select: none;
+             flex-shrink: 0;
+             --button-y: 0px;
+             --button-scale: 1;
+             transform: translate3d(var(--play-shift), var(--button-y), 0) scale3d(var(--button-scale), var(--button-scale), 1);
+             -webkit-transform: translate3d(var(--play-shift), var(--button-y), 0) scale3d(var(--button-scale), var(--button-scale), 1);
+             -webkit-backface-visibility: hidden;
+@@ -1435,50 +1415,20 @@
+         }
+ 
+         .play-btn[data-busy] .btn-sheen::before,
+         body.has-lyric-overlay .btn-sheen::before,
+         body.has-playlist-overlay .btn-sheen::before,
+         #loadingScreen ~ #appRoot .btn-sheen::before {
+             animation: none;
+             opacity: 0;
+         }
+ 
+-        .btn-sheen::after {
+-            content: "";
+-            position: absolute;
+-            top: -40%;
+-            left: 0;
+-            width: 56%;
+-            height: 180%;
+-            background: linear-gradient(100deg,
+-                transparent 0%,
+-                rgba(255, 255, 255, 0.05) 28%,
+-                rgba(255, 255, 255, 0.26) 50%,
+-                rgba(255, 255, 255, 0.05) 72%,
+-                transparent 100%);
+-            filter: blur(3px);
+-            opacity: 0;
+-            transform: translate3d(-150%, 0, 0) skewX(-12deg);
+-            animation: btn-sheen-sweep 6.6s linear infinite;
+-            will-change: transform, opacity;
+-        }
+-
+-        /* 匀速滑行避免顿挫；亮度走钟形包络（淡入→中点最亮→淡出），边缘不再生硬弹出 */
+-        @keyframes btn-sheen-sweep {
+-            0%, 62%  { transform: translate3d(-150%, 0, 0) skewX(-12deg); opacity: 0; }
+-            69%      { opacity: 0.5; }
+-            75%      { opacity: 1; }
+-            81%      { opacity: 0.45; }
+-            88%      { transform: translate3d(250%, 0, 0) skewX(-12deg); opacity: 0; }
+-            100%     { transform: translate3d(250%, 0, 0) skewX(-12deg); opacity: 0; }
+-        }
+-
+         @media (hover: hover) and (pointer: fine) {
+             .play-btn:hover {
+                 background:
+                     radial-gradient(circle at 35% 0%, rgba(255, 255, 255, 0.18), transparent 42%),
+                     linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04)),
+                     rgba(14, 22, 36, 0.56);
+                 box-shadow: 
+                     0 18px 34px rgba(0, 0, 0, 0.36),
+                     0 0 20px rgba(181, 222, 255, 0.1),
+                     inset 0 1px 1px rgba(255, 255, 255, 0.28);
+@@ -1544,26 +1494,25 @@
+         }
+ 
+         .btn-text,
+         .btn-text-ghost {
+             display: inline-flex;
+             align-items: center;
+             justify-content: center;
+             width: 100%;
+             color: inherit;
+             font: inherit;
+-            letter-spacing: inherit;
++            letter-spacing: 0;
+             line-height: 1.25;
+             white-space: nowrap;
+             transform: translateZ(0);
+             transform-origin: 50% 50%;
+-            will-change: transform, opacity, filter;
+             -webkit-font-smoothing: antialiased;
+             text-rendering: geometricPrecision;
+         }
+ 
+         .btn-text {
+             position: relative;
+             z-index: 2;
+         }
+ 
+         .btn-text-ghost {
+@@ -1596,76 +1545,72 @@
+         .btn-text.is-blur-in,
+         .btn-text-ghost.is-blur-in {
+             animation: btn-blur-in 0.44s var(--button-swap-ease) both;
+         }
+ 
+         .result-area {
+             position: fixed;
+             top: 0;
+             left: 0;
+             width: 100vw;
+-            height: 100lvh;
++            height: 100vh;
++            height: 100dvh;
+             text-align: center;
+             display: flex;
+             flex-direction: column;
+             justify-content: center;
+             align-items: center;
+             padding: 28px;
+             padding-top: max(28px, calc(env(safe-area-inset-top) + 18px));
+             padding-bottom: max(14vh, calc(env(safe-area-inset-bottom) + 72px));
+             background:
+                 radial-gradient(82% 58% at 50% 30%, color-mix(in srgb, var(--cover-accent) 4%, transparent), transparent 72%),
+                 radial-gradient(64% 42% at 50% 88%, color-mix(in srgb, var(--cover-b) 2%, transparent), transparent 70%),
+                 color-mix(in srgb, var(--cover-deep) 24%, rgba(3, 5, 10, 0.62));
+-            backdrop-filter: blur(18px) saturate(0.92) brightness(0.76);
+-            -webkit-backdrop-filter: blur(18px) saturate(0.92) brightness(0.76);
+             pointer-events: none;
+             overflow: hidden;
+             opacity: 0;
+             transform: translateZ(0);
+             -webkit-transform: translateZ(0);
+             transition: opacity 0.4s var(--hero-ease);
+-            will-change: opacity;
+             z-index: 108;
+             -webkit-backface-visibility: hidden;
+             backface-visibility: hidden;
+         }
+ 
+         .result-area.is-visible {
+             pointer-events: auto;
+             cursor: pointer;
+         }
+ 
+         .playlist-area {
+             position: fixed;
+             top: 0;
+             left: 0;
+             width: 100vw;
+-            height: 100lvh;
++            height: 100vh;
++            height: 100dvh;
+             text-align: center;
+             display: flex;
+             flex-direction: column;
+             justify-content: center;
+             align-items: center;
+             padding: 28px;
+             padding-top: max(28px, calc(env(safe-area-inset-top) + 18px));
+             padding-bottom: max(20vh, calc(env(safe-area-inset-bottom) + 96px));
+             background: rgba(3, 5, 10, 0.58);
+-            backdrop-filter: none;
+-            -webkit-backdrop-filter: none;
+             pointer-events: none;
+             overflow: hidden;
+             opacity: 0;
+             transform: translateZ(0);
+             -webkit-transform: translateZ(0);
+             transition: opacity 0.4s var(--hero-ease);
+-            will-change: opacity;
+             z-index: 110;
+             -webkit-backface-visibility: hidden;
+             backface-visibility: hidden;
+         }
+ 
+         .playlist-area.is-visible {
+             pointer-events: auto;
+             cursor: pointer;
+         }
+ 
+@@ -1682,45 +1627,42 @@
+             color: rgba(250, 253, 255, 0.98);
+             background:
+                 radial-gradient(circle at 24% 12%, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.08) 34%, transparent 62%),
+                 linear-gradient(145deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055)),
+                 rgba(15, 22, 35, 0.78);
+             box-shadow:
+                 0 14px 32px rgba(0, 0, 0, 0.46),
+                 0 0 0 1px rgba(255, 255, 255, 0.11) inset,
+                 inset 0 1px 0 rgba(255, 255, 255, 0.34),
+                 inset 0 -10px 18px rgba(0, 0, 0, 0.16);
+-            backdrop-filter: blur(18px) saturate(1.42);
+-            -webkit-backdrop-filter: blur(18px) saturate(1.42);
+             display: inline-flex;
+             align-items: center;
+             justify-content: center;
+             gap: 6px;
+             font-family: inherit;
+             font-size: 14px;
+             font-weight: 700;
+-            letter-spacing: 0.04em;
++            letter-spacing: 0;
+             cursor: pointer;
+             -webkit-tap-highlight-color: transparent;
+             touch-action: manipulation;
+             user-select: none;
+             opacity: 0;
+             filter: blur(3px);
+             transform: translate3d(8px, -8px, 0) scale(0.94);
+             transition:
+                 transform 0.42s var(--fluid-ease),
+                 filter 0.42s var(--fluid-ease),
+                 border-color 0.34s var(--damping),
+                 background 0.34s var(--damping),
+                 box-shadow 0.34s var(--damping),
+                 opacity 0.34s var(--fluid-ease);
+-            will-change: transform, opacity, filter;
+         }
+ 
+         .result-area.is-visible .overlay-close-btn,
+         .playlist-area.is-visible .overlay-close-btn {
+             opacity: 1;
+             filter: blur(0);
+             transform: translateZ(0) scale(1);
+             transition-delay: 0.08s;
+             pointer-events: auto;
+         }
+@@ -1794,22 +1736,20 @@
+         }
+ 
+         .playlist-area::after {
+             content: "";
+             position: absolute;
+             inset: 0;
+             background:
+                 radial-gradient(78% 54% at 50% 20%, color-mix(in srgb, var(--cover-accent) 7%, transparent), transparent 72%),
+                 radial-gradient(64% 46% at 50% 92%, color-mix(in srgb, var(--cover-b) 4%, transparent), transparent 74%),
+                 linear-gradient(180deg, rgba(3, 5, 10, 0.7), color-mix(in srgb, var(--cover-deep) 18%, rgba(3, 5, 10, 0.9)));
+-            backdrop-filter: blur(10px) saturate(0.98);
+-            -webkit-backdrop-filter: blur(10px) saturate(0.98);
+             pointer-events: none;
+             z-index: 1;
+         }
+ 
+         .playlist-area.is-visible::before {
+             animation: playlist-backdrop-drift 8s var(--playlist-breathe-ease) infinite alternate;
+         }
+ 
+         .playlist-content {
+             position: relative;
+@@ -1820,22 +1760,20 @@
+             border-radius: 24px;
+             background:
+                 radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--cover-accent) 9%, transparent), transparent 42%),
+                 linear-gradient(180deg, rgba(24, 34, 50, 0.4), rgba(7, 11, 20, 0.46));
+             border: 1px solid color-mix(in srgb, var(--cover-accent) 22%, rgba(224, 239, 255, 0.14));
+             box-shadow:
+                 0 24px 58px rgba(0, 0, 0, 0.44),
+                 0 0 34px color-mix(in srgb, var(--cover-accent) 8%, transparent),
+                 inset 0 1px 1px rgba(255, 255, 255, 0.095),
+                 inset 0 -18px 28px rgba(0, 0, 0, 0.12);
+-            backdrop-filter: blur(18px) saturate(1.12);
+-            -webkit-backdrop-filter: blur(18px) saturate(1.12);
+             overflow: visible;
+             opacity: 0;
+             transform: translateY(calc(var(--playlist-lift) - var(--lyric-ios-offset)));
+         }
+ 
+         body.is-track-transitioning .playlist-content {
+             filter: saturate(0.96) brightness(0.88);
+             transform: translateY(calc(var(--playlist-lift) - var(--lyric-ios-offset) + 4px)) scale(0.992);
+             transition:
+                 transform 0.42s var(--fluid-ease),
+@@ -1861,23 +1799,23 @@
+             position: absolute;
+             left: 18px;
+             right: 18px;
+             top: 0;
+             height: 1px;
+             background: linear-gradient(90deg, transparent, rgba(240, 248, 255, 0.42), transparent);
+             pointer-events: none;
+         }
+ 
+         .playlist-title {
+-            font-family: "Iowan Old Style", Baskerville, "Times New Roman", "Songti SC", STSong, serif;
++            font-family: var(--font-ui);
+             font-size: clamp(24px, 4.5vw, 30px);
+-            letter-spacing: 0.1em;
++            letter-spacing: 0;
+             color: rgba(236, 244, 255, 0.95);
+             margin-bottom: 10px;
+             text-shadow: 0 10px 22px rgba(0, 0, 0, 0.36);
+         }
+ 
+         .playlist-mode-wrap {
+             display: flex;
+             justify-content: center;
+             margin-bottom: 12px;
+             padding: 0 2px;
+@@ -1917,21 +1855,21 @@
+         }
+ 
+         .mode-icon svg {
+             width: 14px;
+             height: 14px;
+             display: block;
+         }
+ 
+         .mode-label {
+             font-size: 12px;
+-            letter-spacing: 0.08em;
++            letter-spacing: 0;
+             white-space: nowrap;
+             line-height: 1;
+         }
+ 
+         @media (hover: hover) and (pointer: fine) {
+             .playlist-mode-switch:hover {
+                 transform: translateY(-1px);
+                 border-color: rgba(192, 221, 255, 0.5);
+                 background: rgba(255, 255, 255, 0.065);
+                 box-shadow: 0 10px 18px rgba(90, 147, 224, 0.18), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+@@ -2034,28 +1972,28 @@
+             object-fit: cover;
+         }
+ 
+         .playlist-album-title {
+             min-width: 0;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             white-space: nowrap;
+             font-size: 13px;
+             font-weight: 700;
+-            letter-spacing: 0.08em;
++            letter-spacing: 0;
+             text-shadow: 0 0 14px rgba(184, 219, 255, 0.18);
+         }
+ 
+         .playlist-album-meta {
+             flex-shrink: 0;
+             font-size: 11px;
+-            letter-spacing: 0.04em;
++            letter-spacing: 0;
+             color: rgba(181, 202, 232, 0.62);
+         }
+ 
+         .playlist-group.is-current-group .playlist-album-title {
+             color: rgba(249, 252, 255, 0.98);
+             text-shadow:
+                 0 0 16px color-mix(in srgb, var(--cover-accent) 42%, transparent),
+                 0 8px 18px rgba(0, 0, 0, 0.28);
+         }
+ 
+@@ -2111,28 +2049,28 @@
+ 
+         .playlist-item > * {
+             position: relative;
+             z-index: 1;
+         }
+ 
+         .playlist-index {
+             font-size: 12px;
+             font-variant-numeric: tabular-nums;
+             color: rgba(179, 198, 228, 0.72);
+-            letter-spacing: 0.08em;
++            letter-spacing: 0;
+             min-width: 24px;
+         }
+ 
+         .playlist-song {
+             flex: 1;
+             font-size: 15px;
+-            letter-spacing: 0.05em;
++            letter-spacing: 0;
+             line-height: 1.3;
+             min-width: 0;
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
+         }
+ 
+         .playlist-item.is-current {
+             color: rgba(248, 252, 255, 0.99);
+             background:
+@@ -2210,43 +2148,40 @@
+             top: calc(var(--control-rail-top) + var(--side-control-rail-offset));
+             width: var(--side-control-size);
+             height: var(--side-control-size);
+             display: flex;
+             align-items: center;
+             justify-content: center;
+             background:
+                 radial-gradient(circle at 34% 12%, rgba(255, 255, 255, 0.15), transparent 44%),
+                 linear-gradient(145deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.026)),
+                 var(--glass-fill);
+-            backdrop-filter: blur(12px) saturate(1.34);
+-            -webkit-backdrop-filter: blur(12px) saturate(1.34);
+             border: 1px solid var(--glass-border);
+             color: rgba(255, 255, 255, 0.95);
+             padding: 0;
+             border-radius: 50%;
+             font-size: 0;
+             font-family: inherit;
+             font-weight: 500;
+             letter-spacing: 0;
+             cursor: pointer;
+             z-index: 25;
+             opacity: 0;
+             pointer-events: none;
+             transform: translate3d(var(--toggle-x), var(--toggle-y), 0) scale(var(--toggle-scale));
+             transition: transform 0.48s var(--fluid-ease), opacity 0.42s var(--fluid-ease), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
+             box-shadow: 
+                 0 14px 28px rgba(0, 0, 0, 0.32),
+                 0 0 16px rgba(181, 222, 255, 0.055),
+                 inset 0 1px 1px rgba(255, 255, 255, 0.2);
+             user-select: none;
+             -webkit-tap-highlight-color: transparent;
+-            will-change: transform, opacity;
+             backface-visibility: hidden;
+             -webkit-backface-visibility: hidden;
+         }
+ 
+         .lyric-toggle-btn::before,
+         .playlist-toggle-btn::before {
+             content: "";
+             position: absolute;
+             inset: -8px;
+             border-radius: inherit;
+@@ -2325,28 +2260,26 @@
+                 inset 0 1px 2px rgba(0, 0, 0, 0.2);
+             transition: transform 0.18s var(--fluid-ease), background 0.4s var(--damping), box-shadow 0.4s var(--damping);
+         }
+ 
+         .toast {
+             position: fixed;
+             top: 50%;
+             left: 50%;
+             transform: translate(-50%, -40%) scale(0.95);
+             background: rgba(24, 30, 42, 0.95);
+-            -webkit-backdrop-filter: blur(12px);
+-            backdrop-filter: blur(12px);
+             padding: 14px 28px;
+             border-radius: 999px;
+             color: #fff;
+             font-size: 15px;
+             font-weight: 500;
+-            letter-spacing: 0.05em;
++            letter-spacing: 0;
+             box-shadow: 0 16px 32px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+             border: 1px solid rgba(255, 255, 255, 0.1);
+             opacity: 0;
+             pointer-events: none;
+             transition: all 0.4s var(--hero-ease);
+             z-index: 100;
+         }
+         .toast.is-visible {
+             opacity: 1;
+             transform: translate(-50%, -50%) scale(1);
+@@ -2362,21 +2295,20 @@
+             background:
+                 radial-gradient(ellipse at center, color-mix(in srgb, var(--cover-a) 6%, transparent) 0%, color-mix(in srgb, var(--cover-b) 3%, transparent) 18%, color-mix(in srgb, var(--cover-a) 1%, transparent) 42%, transparent 68%),
+                 linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--cover-a) 0.5%, transparent) 32%, color-mix(in srgb, var(--cover-a) 2.8%, transparent) 50%, color-mix(in srgb, var(--cover-b) 0.5%, transparent) 68%, transparent 100%);
+             transform: translate3d(-154%, -50%, 0) rotate(-12deg) scaleY(1.08);
+             opacity: 0;
+             filter: blur(18px);
+             mix-blend-mode: soft-light;
+             pointer-events: none;
+             -webkit-mask-image: radial-gradient(ellipse at center, #000 0%, rgba(0, 0, 0, 0.82) 34%, transparent 72%);
+             mask-image: radial-gradient(ellipse at center, #000 0%, rgba(0, 0, 0, 0.82) 34%, transparent 72%);
+-            will-change: transform, opacity;
+         }
+ 
+         .result-area.is-visible::before {
+             animation: lyric-sheen 1.55s cubic-bezier(0.18, 1, 0.24, 1) 1;
+         }
+ 
+         .result-area::after {
+             content: "";
+             position: absolute;
+             left: 50%;
+@@ -2406,21 +2338,21 @@
+             pointer-events: auto;
+         }
+ 
+         .result-dismiss-hint {
+             position: absolute;
+             left: 50%;
+             top: max(18px, calc(env(safe-area-inset-top) + 8px));
+             transform: translateX(-50%) translateY(8px);
+             color: rgba(225, 238, 255, 0.54);
+             font-size: 11px;
+-            letter-spacing: 0.16em;
++            letter-spacing: 0;
+             text-transform: uppercase;
+             opacity: 0;
+             transition: opacity 0.45s var(--hero-ease), transform 0.45s var(--hero-ease);
+             pointer-events: none;
+             z-index: 3;
+             white-space: nowrap;
+         }
+ 
+         .result-area.show-dismiss-hint .result-dismiss-hint,
+         .playlist-area.show-dismiss-hint .result-dismiss-hint {
+@@ -2438,77 +2370,71 @@
+             font-weight: 560;
+             line-height: 1.56;
+             color: var(--text-main);
+             margin-bottom: 16px;
+             opacity: 0;
+             transform: translateY(20px);
+             letter-spacing: 0;
+             text-shadow:
+                 0 12px 26px rgba(0, 0, 0, 0.58),
+                 0 0 18px rgba(199, 228, 255, 0.08);
+-            will-change: transform, opacity;
+             max-width: min(92vw, 760px);
+         }
+ 
+         .lyric-line {
+             display: block;
+             margin: 4px 0;
+             opacity: 0;
+             transform: translateY(14px);
+-            will-change: transform, opacity;
+         }
+ 
+         .song-name {
+-            font-family: "Iowan Old Style", Baskerville, "Times New Roman", "Songti SC", STSong, serif;
++            font-family: var(--font-ui);
+             font-size: clamp(20px, 4vw, 28px);
+             color: rgba(204, 224, 247, 0.88);
+-            letter-spacing: 0.1em;
++            letter-spacing: 0;
+             opacity: 0;
+             transform: translateY(20px);
+-            will-change: transform, opacity;
+             text-shadow: 0 0 16px color-mix(in srgb, var(--cover-a) 30%, transparent);
+         }
+ 
+         .player-pill {
+             position: absolute;
+             top: var(--control-rail-top);
+             left: 50%;
+             display: flex;
+             align-items: center;
+             gap: 12px;
+             margin-top: 0;
+             margin-left: 0;
+             padding: 6px 14px 6px 5px;
+             border-radius: 999px;
+             background:
+                 linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.022)),
+                 var(--glass-fill);
+             border: 1px solid var(--glass-border);
+-            backdrop-filter: blur(14px) saturate(1.36);
+-            -webkit-backdrop-filter: blur(14px) saturate(1.36);
+             box-shadow:
+                 0 14px 30px rgba(0, 0, 0, 0.34),
+                 0 0 18px rgba(154, 211, 255, 0.055),
+                 inset 0 1px 1px rgba(255, 255, 255, 0.14);
+             opacity: 0;
+             width: var(--player-slot);
+             max-width: 292px;
+             min-width: 0;
+             overflow: visible;
+             pointer-events: none;
+             transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
+             -webkit-transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
+             transform-origin: center top;
+             transition:
+                 opacity 0.42s var(--fluid-ease),
+                 transform 0.74s var(--control-drift-in-ease);
+-            will-change: transform, opacity;
+             isolation: isolate;
+             flex-shrink: 0;
+             order: 2;
+             z-index: 1;
+             -webkit-backface-visibility: hidden;
+             backface-visibility: hidden;
+         }
+ 
+         .player-pill::before,
+         .player-pill::after {
+@@ -2733,21 +2659,20 @@
+         .player-track-fill {
+             width: 100%;
+             height: 100%;
+             background: linear-gradient(90deg, color-mix(in srgb, var(--cover-accent) 88%, #f8fbff), color-mix(in srgb, var(--cover-b) 64%, var(--cover-a)));
+             border-radius: 6px;
+             box-shadow:
+                 0 0 14px color-mix(in srgb, var(--cover-accent) 58%, transparent),
+                 0 0 2px rgba(255, 255, 255, 0.4) inset;
+             transform: translate3d(-100%, 0, 0);
+             transition: transform 0.2s linear;
+-            will-change: transform;
+         }
+ 
+         .player-time {
+             font-size: 13px;
+             font-variant-numeric: tabular-nums;
+             color: rgba(255, 255, 255, 0.8);
+             font-weight: 600;
+             width: 34px;
+             text-align: right;
+             user-select: none;
+@@ -2879,42 +2804,20 @@
+                 filter: blur(0.18px) saturate(1.02);
+                 transform: translate3d(0, -0.1px, 0) scale(0.998);
+             }
+             100% {
+                 opacity: 1;
+                 filter: blur(0) saturate(1);
+                 transform: translate3d(0, 0, 0) scale(1);
+             }
+         }
+ 
+-        @keyframes ambient-dust-drift {
+-            0% {
+-                background-position: 0 0, 32px 18px, -18px 42px, 0 0, 0 0;
+-                opacity: 0.16;
+-            }
+-            100% {
+-                background-position: 16px -22px, 18px 42px, 8px 18px, 10px 6px, -8px 4px;
+-                opacity: 0.22;
+-            }
+-        }
+-
+-        @keyframes ambient-veil-shift {
+-            0% {
+-                transform: translate3d(0, 0, 0) scale(1);
+-                opacity: 1;
+-            }
+-            100% {
+-                transform: translate3d(0, -10px, 0) scale(1.015);
+-                opacity: 0.92;
+-            }
+-        }
+-
+         @keyframes hero-breathe {
+             0%, 100% {
+                 box-shadow:
+                     0 40px 80px rgba(0, 0, 0, 0.55),
+                     0 0 64px rgba(106, 187, 255, 0.38),
+                     inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+             }
+             50% {
+                 box-shadow:
+                     0 46px 92px rgba(0, 0, 0, 0.62),
+@@ -3005,56 +2908,48 @@
+                 margin-top: -28px;
+                 margin-bottom: 26px;
+             }
+ 
+             .header h1 {
+                 font-size: clamp(27px, 8vw, 34px);
+             }
+ 
+             .header p {
+                 font-size: 12px;
+-                letter-spacing: 0.06em;
++                letter-spacing: 0;
+             }
+ 
+             .result-area {
+                 padding: 22px;
+                 padding-top: max(76px, calc(env(safe-area-inset-top) + 64px));
+                 padding-bottom: max(16vh, calc(env(safe-area-inset-bottom) + 84px));
+-                backdrop-filter: blur(14px) saturate(0.95) brightness(0.78);
+-                -webkit-backdrop-filter: blur(14px) saturate(0.95) brightness(0.78);
+                 transition: opacity 0.28s var(--hero-ease), transform 0.36s var(--hero-ease);
+-                will-change: opacity, transform;
+             }
+ 
+             .playlist-area {
+                 padding: 18px;
+                 padding-top: max(74px, calc(env(safe-area-inset-top) + 62px));
+                 padding-bottom: max(18vh, calc(env(safe-area-inset-bottom) + 88px));
+-                backdrop-filter: none;
+-                -webkit-backdrop-filter: none;
+                 transition: opacity 0.28s var(--hero-ease), transform 0.36s var(--hero-ease);
+-                will-change: opacity, transform;
+             }
+ 
+             .playlist-area::before {
+                 inset: -36px;
+                 opacity: 0.42;
+                 filter: blur(18px) saturate(0.96) brightness(0.42);
+                 animation: none;
+             }
+ 
+             .playlist-area::after {
+                 background:
+                     radial-gradient(78% 48% at 50% 18%, color-mix(in srgb, var(--cover-accent) 5%, transparent), transparent 72%),
+                     linear-gradient(180deg, rgba(3, 5, 10, 0.72), color-mix(in srgb, var(--cover-deep) 16%, rgba(3, 5, 10, 0.92)));
+-                backdrop-filter: none;
+-                -webkit-backdrop-filter: none;
+             }
+ 
+             .result-area.is-visible::before {
+                 filter: blur(12px);
+                 animation: lyric-sheen 1.35s cubic-bezier(0.18, 1, 0.24, 1) 1;
+             }
+ 
+             .overlay-close-btn {
+                 top: max(14px, calc(env(safe-area-inset-top) + 10px));
+                 right: max(14px, calc(env(safe-area-inset-right) + 12px));
+@@ -3063,21 +2958,21 @@
+                 padding: 0 14px 0 11px;
+                 font-size: 13px;
+             }
+ 
+             .result-content {
+                 transform: translateY(calc(-4vh - var(--lyric-ios-offset)));
+             }
+ 
+             .result-dismiss-hint {
+                 font-size: 10px;
+-                letter-spacing: 0.14em;
++                letter-spacing: 0;
+                 top: max(18px, calc(env(safe-area-inset-top) + 12px));
+                 left: 22px;
+                 right: 96px;
+                 transform: translateY(8px);
+                 text-align: left;
+             }
+ 
+             .result-area.show-dismiss-hint .result-dismiss-hint,
+             .playlist-area.show-dismiss-hint .result-dismiss-hint {
+                 transform: translateY(0);
+@@ -3161,22 +3056,20 @@
+             .playlist-toggle-btn svg {
+                 width: 17px;
+                 height: 17px;
+             }
+ 
+             .playlist-content {
+                 width: min(93vw, 520px);
+                 max-height: min(67vh, 560px);
+                 padding: 16px 12px 10px;
+                 border-radius: 20px;
+-                backdrop-filter: blur(12px) saturate(1.04);
+-                -webkit-backdrop-filter: blur(12px) saturate(1.04);
+             }
+ 
+             .lyric-text {
+                 font-size: clamp(21px, 6.4vw, 29px);
+                 line-height: 1.55;
+             }
+ 
+             .playlist-list {
+                 max-height: min(50vh, 410px);
+                 gap: 7px;
+@@ -3238,21 +3131,20 @@
+                 gap: 8px;
+                 padding: 5px 10px 5px 0;
+                 border-width: 1px;
+                 opacity: 0;
+                 transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
+                 -webkit-transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
+                 transform-origin: center top;
+                 transition:
+                     opacity 0.34s var(--fluid-ease),
+                     transform 0.64s var(--control-drift-in-ease);
+-                will-change: transform, opacity;
+             }
+ 
+             .dynamic-island.is-split .player-pill {
+                 opacity: 1;
+                 transform: translate3d(-50%, 0, 0) scale(1);
+                 -webkit-transform: translate3d(-50%, 0, 0) scale(1);
+             }
+ 
+             .player-pill > * {
+                 transform: translate3d(-5px, 0, 0);
+@@ -3323,26 +3215,20 @@
+             .dynamic-island.is-opening .play-btn,
+             .dynamic-island.is-collapsing .play-btn,
+             .play-btn::before,
+             .play-btn::after,
+             .lyric-toggle-btn.is-visible::before,
+             .playlist-toggle-btn.is-visible::before,
+             .dynamic-island.is-split .player-pill::after {
+                 animation: none !important;
+             }
+ 
+-            .result-area,
+-            .playlist-area {
+-                backdrop-filter: blur(12px) saturate(1.05);
+-                -webkit-backdrop-filter: blur(12px) saturate(1.05);
+-            }
+-
+             .result-area.is-visible .overlay-close-btn,
+             .playlist-area.is-visible .overlay-close-btn {
+                 opacity: 1 !important;
+                 filter: none !important;
+                 transform: translateZ(0) scale(1) !important;
+                 transition-delay: 0s !important;
+             }
+ 
+             .loading-screen {
+                 transition: opacity 120ms linear !important;
+@@ -3376,10 +3262,810 @@
+             .lyric-toggle-btn::before,
+             .playlist-toggle-btn::before {
+                 animation: none !important;
+                 transition: none !important;
+             }
+ 
+             .btn-sheen::before {
+                 opacity: 0 !important;
+             }
+         }
++
++        /* Directional archive system */
++        .loading-screen {
++            background: var(--archive-void);
++        }
++
++        .app-shell {
++            width: min(100%, 1160px);
++            min-height: min(680px, calc(100svh - 48px));
++            display: grid;
++            grid-template-columns: minmax(176px, 0.8fr) minmax(300px, 380px) minmax(176px, 0.8fr);
++            grid-template-rows: auto auto;
++            grid-template-areas:
++                "header stage meta"
++                "header controls meta";
++            align-items: center;
++            column-gap: clamp(28px, 5vw, 72px);
++            row-gap: 24px;
++            margin-top: 0;
++            transition: opacity 0.72s var(--continuity-ease), transform 0.72s var(--continuity-ease);
++        }
++
++        body.has-lyric-overlay .header,
++        body.has-lyric-overlay .vinyl-wrapper,
++        body.has-playlist-overlay .header,
++        body.has-playlist-overlay .vinyl-wrapper,
++        body.has-playlist-overlay .dynamic-island {
++            filter: none;
++            opacity: 0.3;
++        }
++
++        .header {
++            grid-area: header;
++            align-self: center;
++            max-width: 230px;
++            margin: 0;
++            text-align: left;
++            transition: transform 0.32s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
++        }
++
++        .header::after {
++            left: 0;
++            bottom: -14px;
++            width: 64px;
++            transform: none;
++            background: linear-gradient(90deg, var(--archive-red), transparent);
++            opacity: 0.72;
++        }
++
++        .header h1 {
++            font-family: var(--font-title);
++            font-size: 32px;
++            font-weight: 600;
++            line-height: 1.2;
++            color: var(--archive-projector);
++            text-shadow: none;
++        }
++
++        .header p {
++            max-width: 20em;
++            color: var(--archive-silver);
++            font-size: 13px;
++            line-height: 1.6;
++        }
++
++        .vinyl-wrapper {
++            grid-area: stage;
++            width: min(100%, 380px);
++            margin: 0;
++            perspective: none;
++            transition: transform 0.32s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
++        }
++
++        .vinyl-wrapper::before,
++        .turntable::before,
++        .turntable::after {
++            display: none;
++        }
++
++        .turntable {
++            width: min(78vw, 340px);
++            height: min(78vw, 340px);
++            padding: 0;
++            border-radius: 0;
++            background: transparent;
++            box-shadow: none;
++            transition: transform 0.52s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
++        }
++
++        .turntable.is-playing,
++        body.is-track-transitioning .turntable {
++            box-shadow: none;
++        }
++
++        body.is-track-transitioning .turntable {
++            transform: translateY(-1px) scale(0.992);
++        }
++
++        .vinyl-record {
++            width: min(68vw, 292px);
++            background:
++                radial-gradient(circle at 42% 28%, color-mix(in srgb, var(--cover-accent) 12%, transparent), transparent 28%),
++                radial-gradient(circle at 50% 50%, var(--archive-slate) 0 18%, transparent 18.5%),
++                var(--archive-void);
++            box-shadow:
++                0 18px 32px rgba(0, 0, 0, 0.48),
++                0 34px 56px rgba(0, 0, 0, 0.34),
++                inset 0 0 0 1px color-mix(in srgb, var(--archive-silver) 18%, transparent);
++            transition: transform 0.52s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
++        }
++
++        .vinyl-grooves {
++            background: repeating-radial-gradient(
++                color-mix(in srgb, var(--archive-slate) 88%, #000) 0 1px,
++                var(--archive-void) 1.5px 3px,
++                color-mix(in srgb, var(--archive-graphite) 86%, #000) 3.5px 4.5px
++            );
++        }
++
++        .vinyl-highlight {
++            width: min(68vw, 292px);
++            height: min(68vw, 292px);
++            background: linear-gradient(122deg, transparent 38%, color-mix(in srgb, var(--archive-projector) 16%, transparent) 49%, transparent 61%);
++            mix-blend-mode: screen;
++            opacity: 0.62;
++            animation: none;
++        }
++
++        .vinyl-sticker {
++            background: var(--archive-graphite);
++            box-shadow:
++                0 12px 20px rgba(0, 0, 0, 0.48),
++                inset 0 0 0 1px color-mix(in srgb, var(--archive-silver) 16%, transparent);
++        }
++
++        .vinyl-cover {
++            transition: opacity 0.82s var(--crossfade-ease), transform 0.82s var(--continuity-ease);
++        }
++
++        .tonearm {
++            background: linear-gradient(90deg, var(--archive-projector), var(--archive-silver) 58%, var(--archive-slate));
++            box-shadow: 0 5px 10px rgba(0, 0, 0, 0.36);
++        }
++
++        .tonearm-dock {
++            background: linear-gradient(160deg, var(--archive-slate), var(--archive-void));
++            box-shadow: 0 7px 14px rgba(0, 0, 0, 0.42), inset 0 0 0 1px color-mix(in srgb, var(--archive-silver) 16%, transparent);
++            transition: opacity 0.32s var(--continuity-ease);
++        }
++
++        .archive-track-meta {
++            grid-area: meta;
++            display: grid;
++            width: min(100%, 236px);
++            margin: 0;
++            padding: 0 0 0 18px;
++            border-left: 1px solid color-mix(in srgb, var(--archive-silver) 24%, transparent);
++            color: var(--archive-silver);
++            font-family: var(--font-ui);
++            font-size: 12px;
++            line-height: 1.45;
++        }
++
++        .archive-track-meta > div {
++            display: grid;
++            grid-template-columns: 3.25em minmax(0, 1fr);
++            gap: 12px;
++            min-width: 0;
++            padding: 9px 0;
++            border-bottom: 1px solid color-mix(in srgb, var(--archive-silver) 14%, transparent);
++        }
++
++        .archive-track-meta dt {
++            color: color-mix(in srgb, var(--archive-silver) 72%, transparent);
++            font-weight: 500;
++        }
++
++        .archive-track-meta dd {
++            min-width: 0;
++            color: var(--archive-projector);
++            font-weight: 600;
++            overflow: hidden;
++            text-overflow: ellipsis;
++            white-space: nowrap;
++        }
++
++        .archive-track-meta > div:last-child dd {
++            color: var(--archive-red);
++        }
++
++        .dynamic-island {
++            grid-area: controls;
++            justify-self: center;
++            width: min(100%, calc(var(--play-width) + var(--player-slot) + var(--player-gap)));
++            margin: 0;
++            transition: transform 0.32s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
++        }
++
++        .dynamic-island::before,
++        .play-btn::after,
++        .btn-sheen::after {
++            display: none;
++        }
++
++        .play-btn {
++            max-width: 100%;
++            background: var(--archive-graphite);
++            border-color: color-mix(in srgb, var(--archive-silver) 34%, transparent);
++            color: var(--archive-projector);
++            box-shadow:
++                0 12px 22px rgba(0, 0, 0, 0.28),
++                inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 10%, transparent);
++            transition: transform 0.42s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        .play-btn::before {
++            background: linear-gradient(118deg, color-mix(in srgb, var(--cover-accent) 12%, transparent), transparent 42%);
++            opacity: 0.7;
++            transition: opacity 0.32s var(--continuity-ease), transform 0.32s var(--continuity-ease);
++        }
++
++        .dynamic-island.is-opening .play-btn,
++        .dynamic-island.is-collapsing .play-btn {
++            transition: transform 0.42s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        .dynamic-island.is-opening .play-btn::before,
++        .dynamic-island.is-collapsing .play-btn::before,
++        .play-btn.is-text-swapping::before,
++        .play-btn.is-text-swapping::after,
++        .btn-text.is-blur-out,
++        .btn-text.is-blur-in,
++        .btn-text-ghost.is-blur-in {
++            animation: none;
++            filter: none;
++        }
++
++        @media (hover: hover) and (pointer: fine) {
++            .play-btn:hover,
++            .lyric-toggle-btn.is-visible:hover,
++            .playlist-toggle-btn.is-visible:hover,
++            .result-area.is-visible .overlay-close-btn:hover,
++            .playlist-area.is-visible .overlay-close-btn:hover,
++            .playlist-mode-switch:hover {
++                background: var(--archive-slate);
++                border-color: color-mix(in srgb, var(--archive-projector) 46%, transparent);
++                box-shadow:
++                    0 14px 24px rgba(0, 0, 0, 0.32),
++                    inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 16%, transparent);
++            }
++
++            .player-ctrl-btn:hover {
++                background: var(--archive-projector);
++                border-color: var(--archive-projector);
++                color: var(--archive-void);
++                box-shadow: 0 7px 14px rgba(0, 0, 0, 0.3);
++                transform: translateY(-1px) scale(1.02);
++            }
++
++            .audio-status .audio-retry:not(:disabled):hover {
++                background: var(--archive-slate);
++                border-color: var(--archive-projector);
++                color: var(--archive-projector);
++                box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
++            }
++        }
++
++        .play-btn:active {
++            background: var(--archive-void);
++            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
++        }
++
++        .player-ctrl-btn:active {
++            background: var(--archive-silver);
++            border-color: var(--archive-silver);
++            color: var(--archive-void);
++            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
++            transform: scale(0.94);
++        }
++
++        .lyric-toggle-btn.is-visible:active,
++        .playlist-toggle-btn.is-visible:active,
++        .result-area.is-visible .overlay-close-btn:active,
++        .playlist-area.is-visible .overlay-close-btn:active,
++        .playlist-mode-switch:active,
++        .audio-status .audio-retry:not(:disabled):active {
++            background: var(--archive-void);
++            border-color: color-mix(in srgb, var(--archive-silver) 52%, transparent);
++            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
++        }
++
++        .player-pill {
++            background: var(--archive-slate);
++            border-color: color-mix(in srgb, var(--archive-silver) 30%, transparent);
++            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.32);
++            transition: opacity 0.32s var(--continuity-ease), transform 0.52s var(--continuity-ease);
++        }
++
++        .player-pill::before {
++            background: linear-gradient(112deg, color-mix(in srgb, var(--archive-projector) 13%, transparent), transparent 46%);
++            opacity: 0.48;
++        }
++
++        .player-pill::after,
++        .dynamic-island.is-split .player-pill::after {
++            display: none;
++            animation: none;
++        }
++
++        .player-ctrl-btn {
++            background: var(--archive-projector);
++            border-color: var(--archive-projector);
++            color: var(--archive-void);
++            box-shadow: 0 5px 12px rgba(0, 0, 0, 0.26);
++            transition: transform 0.18s var(--continuity-ease), opacity 0.18s var(--continuity-ease);
++        }
++
++        .player-ctrl-btn svg {
++            transition: transform 0.18s var(--continuity-ease), opacity 0.18s var(--continuity-ease);
++        }
++
++        .player-track-bg {
++            background: var(--archive-void);
++            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.46), 0 0 0 1px color-mix(in srgb, var(--archive-silver) 16%, transparent);
++            transition: none;
++        }
++
++        .player-track-fill {
++            background: linear-gradient(90deg, var(--archive-projector), var(--archive-silver));
++            box-shadow: none;
++            transition: transform 0.2s linear;
++        }
++
++        .lyric-toggle-btn,
++        .playlist-toggle-btn,
++        .overlay-close-btn {
++            background: var(--archive-slate);
++            border-color: color-mix(in srgb, var(--archive-silver) 32%, transparent);
++            color: var(--archive-projector);
++            box-shadow: 0 9px 18px rgba(0, 0, 0, 0.3);
++            filter: none;
++            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        .lyric-toggle-btn::before,
++        .playlist-toggle-btn::before,
++        .lyric-toggle-btn.is-visible::before,
++        .playlist-toggle-btn.is-visible::before {
++            display: none;
++            animation: none;
++        }
++
++        .playlist-mode-switch {
++            background: var(--archive-graphite);
++            border-color: color-mix(in srgb, var(--archive-silver) 28%, transparent);
++            color: var(--archive-projector);
++            box-shadow: 0 8px 14px rgba(0, 0, 0, 0.28);
++            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        .mode-icon {
++            color: var(--archive-silver);
++        }
++
++        .audio-status {
++            border-color: color-mix(in srgb, var(--archive-red) 56%, transparent);
++            border-left-color: var(--archive-red);
++            border-radius: 6px;
++            background: var(--archive-graphite);
++            color: var(--archive-projector);
++            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.32);
++        }
++
++        .audio-retry {
++            border-color: color-mix(in srgb, var(--archive-silver) 42%, transparent);
++            border-radius: 6px;
++            background: var(--archive-slate);
++            color: var(--archive-projector);
++            box-shadow: none;
++            transition: transform 0.16s var(--continuity-ease), opacity 0.16s var(--continuity-ease);
++        }
++
++        .audio-retry:disabled {
++            background: var(--archive-graphite);
++            border-color: color-mix(in srgb, var(--archive-silver) 24%, transparent);
++            color: var(--archive-silver);
++        }
++
++        .play-btn:focus-visible,
++        .player-ctrl-btn:focus-visible,
++        .lyric-toggle-btn:focus-visible,
++        .playlist-toggle-btn:focus-visible,
++        .overlay-close-btn:focus-visible,
++        .playlist-mode-switch:focus-visible,
++        .audio-status .audio-retry:focus-visible {
++            outline: 2px solid var(--archive-projector);
++            outline-offset: 3px;
++        }
++
++        .result-area,
++        .playlist-area {
++            background: color-mix(in srgb, var(--archive-void) 96%, transparent);
++            transition: opacity 0.24s var(--crossfade-ease), transform 0.24s var(--continuity-ease);
++        }
++
++        .result-area::before,
++        .result-area::after,
++        .playlist-area::before,
++        .playlist-area::after,
++        .playlist-area.is-visible::before,
++        .result-area.is-visible::before {
++            display: none;
++            animation: none;
++        }
++
++        .result-content {
++            transform: translateY(calc(-4vh - var(--lyric-ios-offset)));
++        }
++
++        .lyric-text {
++            max-width: min(88vw, 700px);
++            margin-bottom: 14px;
++            color: var(--archive-projector);
++            font-family: var(--font-title);
++            font-size: 30px;
++            font-weight: 500;
++            line-height: 1.62;
++            text-shadow: 0 8px 20px rgba(0, 0, 0, 0.38);
++        }
++
++        .song-name {
++            color: var(--archive-silver);
++            font-family: var(--font-ui);
++            font-size: 18px;
++            font-weight: 600;
++            text-shadow: none;
++        }
++
++        .playlist-content {
++            border-radius: 6px;
++            background: var(--archive-graphite);
++            border-color: color-mix(in srgb, var(--archive-silver) 26%, transparent);
++            box-shadow: 0 22px 44px rgba(0, 0, 0, 0.38);
++            filter: none;
++            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        body.is-track-transitioning .playlist-content {
++            filter: none;
++            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        .playlist-list {
++            filter: none;
++            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        .playlist-content::before {
++            left: 14px;
++            right: 14px;
++            background: linear-gradient(90deg, var(--archive-red), transparent);
++        }
++
++        .playlist-group::before {
++            border-radius: 6px;
++        }
++
++        .playlist-title,
++        .playlist-album-title,
++        .playlist-song,
++        .playlist-album-meta,
++        .playlist-index,
++        .mode-label {
++            font-family: var(--font-ui);
++            text-shadow: none;
++        }
++
++        .playlist-title {
++            color: var(--archive-projector);
++            font-size: 26px;
++        }
++
++        .playlist-item {
++            border-radius: 4px;
++            background: transparent;
++            box-shadow: none;
++            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        .playlist-item.is-current {
++            border-left: 2px solid var(--archive-red);
++            background: color-mix(in srgb, var(--archive-red) 12%, transparent);
++            box-shadow: none;
++        }
++
++        .playlist-item.is-current::before,
++        .playlist-item.is-current::after {
++            opacity: 0;
++            animation: none;
++        }
++
++        .playlist-item.is-current .playlist-index,
++        .playlist-item.is-current .playlist-song {
++            color: var(--archive-projector);
++            text-shadow: none;
++        }
++
++        .playlist-item.is-current .playlist-index {
++            color: var(--archive-red);
++        }
++
++        .toast {
++            border-radius: 6px;
++            background: var(--archive-slate);
++            color: var(--archive-projector);
++            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.34);
++            transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
++        }
++
++        body.is-track-transitioning::before {
++            animation: archive-beam-pass 720ms var(--continuity-ease) 1 both;
++        }
++
++        @keyframes archive-beam-pass {
++            0% {
++                opacity: 0.22;
++                transform: translate3d(-5vw, -2vh, 0) rotate(-7deg);
++            }
++            54% {
++                opacity: 0.62;
++                transform: translate3d(2vw, 1vh, 0) rotate(-7deg);
++            }
++            100% {
++                opacity: 0.44;
++                transform: rotate(-7deg);
++            }
++        }
++
++        html[data-motion-profile="compact"] body::before,
++        html[data-motion-profile="compact"] body::after {
++            animation: none;
++            filter: none;
++            box-shadow: none;
++            opacity: 0.18;
++        }
++
++        html[data-motion-profile="reduce"] body::before,
++        html[data-motion-profile="reduce"] body::after {
++            animation: none;
++            filter: none;
++            box-shadow: none;
++            opacity: 0.12;
++        }
++
++        @media (min-width: 768px) and (max-width: 1023px) {
++            .app-shell {
++                width: min(100%, 860px);
++                grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
++                grid-template-rows: auto auto auto;
++                grid-template-areas:
++                    "header stage"
++                    "meta stage"
++                    "controls stage";
++                column-gap: clamp(24px, 4vw, 40px);
++                row-gap: 18px;
++            }
++
++            .header,
++            .archive-track-meta,
++            .dynamic-island {
++                justify-self: start;
++            }
++
++            .archive-track-meta {
++                width: min(100%, 280px);
++                padding: 0;
++                border-top: 0;
++                border-left: 0;
++            }
++
++            .dynamic-island {
++                width: min(100%, 306px);
++            }
++
++            .vinyl-wrapper {
++                width: min(100%, 340px);
++            }
++        }
++
++        @media (max-width: 767px) {
++            body {
++                justify-content: flex-start;
++                padding: max(18px, env(safe-area-inset-top)) 16px max(22px, env(safe-area-inset-bottom));
++            }
++
++            .app-shell {
++                width: min(100%, 440px);
++                min-height: 0;
++                grid-template-columns: minmax(0, 1fr);
++                grid-template-rows: auto auto auto auto;
++                grid-template-areas:
++                    "header"
++                    "stage"
++                    "meta"
++                    "controls";
++                justify-items: center;
++                row-gap: 18px;
++                margin: 0;
++                padding: 8px 0 38px;
++            }
++
++            .header {
++                max-width: min(100%, 320px);
++                margin: 0;
++                text-align: center;
++            }
++
++            .header::after {
++                left: 50%;
++                transform: translateX(-50%);
++            }
++
++            .header h1 {
++                font-family: var(--font-title);
++                font-size: 28px;
++            }
++
++            .vinyl-wrapper {
++                width: min(100%, 340px);
++            }
++
++            .turntable {
++                width: min(86vw, min(62svh, 340px));
++                height: min(86vw, min(62svh, 340px));
++            }
++
++            .vinyl-record,
++            .vinyl-highlight {
++                width: min(74vw, min(54svh, 292px));
++                height: min(74vw, min(54svh, 292px));
++            }
++
++            .archive-track-meta {
++                width: min(100%, 344px);
++                padding: 8px 0 0;
++                border-top: 1px solid color-mix(in srgb, var(--archive-silver) 22%, transparent);
++                border-left: 0;
++            }
++
++            .archive-track-meta > div {
++                grid-template-columns: 3.25em minmax(0, 1fr);
++                padding: 8px 0;
++            }
++
++            .dynamic-island {
++                width: min(100%, 306px);
++                min-height: 48px;
++            }
++
++            .play-btn {
++                max-width: 100%;
++            }
++
++            .btn-label-viewport,
++            .btn-text {
++                min-width: 0;
++                max-width: 100%;
++            }
++
++            .player-pill {
++                max-width: min(100%, 190px);
++            }
++
++            .lyric-text {
++                font-family: var(--font-title);
++                font-size: 25px;
++                line-height: 1.58;
++            }
++
++            .playlist-content {
++                width: min(93vw, 520px);
++                max-height: min(67vh, 560px);
++                border-radius: 6px;
++            }
++        }
++
++        @media (prefers-reduced-motion: reduce) {
++            body::before,
++            body::after {
++                animation: none !important;
++                filter: none !important;
++                box-shadow: none !important;
++                transform: none !important;
++            }
++
++            .header,
++            .vinyl-wrapper,
++            .turntable,
++            .vinyl-record,
++            .vinyl-cover,
++            .vinyl-highlight,
++            .tonearm,
++            .tonearm-dock,
++            .dynamic-island,
++            .play-btn,
++            .play-btn::before,
++            .btn-text,
++            .btn-text-ghost,
++            .player-pill,
++            .player-ctrl-btn,
++            .player-ctrl-btn svg,
++            .player-track-bg,
++            .player-track-fill,
++            .lyric-toggle-btn,
++            .playlist-toggle-btn,
++            .overlay-close-btn,
++            .audio-status,
++            .audio-retry,
++            .result-area,
++            .playlist-area,
++            .result-content,
++            .result-dismiss-hint,
++            .lyric-line,
++            .lyric-text,
++            .song-name,
++            .playlist-content,
++            .playlist-list,
++            .playlist-item,
++            .playlist-mode-switch,
++            .toast,
++            .result-area::before,
++            .result-area::after,
++            .playlist-area::before,
++            .playlist-area::after,
++            .vinyl-highlight,
++            .dynamic-island.is-split .player-pill::after {
++                animation: none !important;
++                filter: none !important;
++                transition: none !important;
++                transition-delay: 0s !important;
++            }
++
++            body.is-track-transitioning::before,
++            body.is-track-transitioning .turntable {
++                animation: none !important;
++                transform: none !important;
++            }
++        }
++
++        html[data-motion-profile="reduce"] .header,
++        html[data-motion-profile="reduce"] .vinyl-wrapper,
++        html[data-motion-profile="reduce"] .turntable,
++        html[data-motion-profile="reduce"] .vinyl-record,
++        html[data-motion-profile="reduce"] .vinyl-cover,
++        html[data-motion-profile="reduce"] .vinyl-highlight,
++        html[data-motion-profile="reduce"] .tonearm,
++        html[data-motion-profile="reduce"] .tonearm-dock,
++        html[data-motion-profile="reduce"] .dynamic-island,
++        html[data-motion-profile="reduce"] .play-btn,
++        html[data-motion-profile="reduce"] .play-btn::before,
++        html[data-motion-profile="reduce"] .btn-text,
++        html[data-motion-profile="reduce"] .btn-text-ghost,
++        html[data-motion-profile="reduce"] .player-pill,
++        html[data-motion-profile="reduce"] .player-ctrl-btn,
++        html[data-motion-profile="reduce"] .player-ctrl-btn svg,
++        html[data-motion-profile="reduce"] .player-track-bg,
++        html[data-motion-profile="reduce"] .player-track-fill,
++        html[data-motion-profile="reduce"] .lyric-toggle-btn,
++        html[data-motion-profile="reduce"] .playlist-toggle-btn,
++        html[data-motion-profile="reduce"] .overlay-close-btn,
++        html[data-motion-profile="reduce"] .audio-status,
++        html[data-motion-profile="reduce"] .audio-retry,
++        html[data-motion-profile="reduce"] .result-area,
++        html[data-motion-profile="reduce"] .playlist-area,
++        html[data-motion-profile="reduce"] .result-content,
++        html[data-motion-profile="reduce"] .result-dismiss-hint,
++        html[data-motion-profile="reduce"] .lyric-line,
++        html[data-motion-profile="reduce"] .lyric-text,
++        html[data-motion-profile="reduce"] .song-name,
++        html[data-motion-profile="reduce"] .playlist-content,
++        html[data-motion-profile="reduce"] .playlist-list,
++        html[data-motion-profile="reduce"] .playlist-item,
++        html[data-motion-profile="reduce"] .playlist-mode-switch,
++        html[data-motion-profile="reduce"] .toast,
++        html[data-motion-profile="reduce"] .result-area::before,
++        html[data-motion-profile="reduce"] .result-area::after,
++        html[data-motion-profile="reduce"] .playlist-area::before,
++        html[data-motion-profile="reduce"] .playlist-area::after,
++        html[data-motion-profile="reduce"] .dynamic-island.is-split .player-pill::after {
++            animation: none !important;
++            filter: none !important;
++            transition: none !important;
++            transition-delay: 0s !important;
++        }
++
++        html[data-motion-profile="reduce"] body.is-track-transitioning::before,
++        html[data-motion-profile="reduce"] body.is-track-transitioning .turntable {
++            animation: none !important;
++            transform: none !important;
++        }
+diff --git a/test/unit/archive-styles.test.js b/test/unit/archive-styles.test.js
+new file mode 100644
+index 0000000..074bb81
+--- /dev/null
++++ b/test/unit/archive-styles.test.js
+@@ -0,0 +1,210 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { readFileSync } from 'node:fs';
++
++const css = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8');
++const archiveMarker = '/* Directional archive system */';
++const archiveStart = css.indexOf(archiveMarker);
++
++assert.notEqual(archiveStart, -1, 'missing terminal directional archive section');
++
++const archiveCss = css.slice(archiveStart);
++
++const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++
++const blockBody = (source, marker) => {
++  const start = source.indexOf(marker);
++  assert.notEqual(start, -1, `missing CSS block: ${marker}`);
++
++  const open = source.indexOf('{', start);
++  assert.notEqual(open, -1, `missing opening brace: ${marker}`);
++
++  let depth = 0;
++  for (let index = open; index < source.length; index += 1) {
++    if (source[index] === '{') depth += 1;
++    if (source[index] === '}') depth -= 1;
++    if (depth === 0) return source.slice(open + 1, index);
++  }
++
++  assert.fail(`unterminated CSS block: ${marker}`);
++};
++
++const exactRuleBody = (source, selector) => {
++  const matcher = new RegExp(`(?:^|\\n)\\s*${escapeRegExp(selector)}\\s*\\{`, 'm');
++  const match = matcher.exec(source);
++  assert.ok(match, `missing exact CSS rule: ${selector}`);
++  const selectorStart = match.index + match[0].indexOf(selector);
++
++  const open = source.indexOf('{', selectorStart);
++  let depth = 0;
++  for (let index = open; index < source.length; index += 1) {
++    if (source[index] === '{') depth += 1;
++    if (source[index] === '}') depth -= 1;
++    if (depth === 0) return source.slice(open + 1, index);
++  }
++
++  assert.fail(`unterminated CSS rule: ${selector}`);
++};
++
++const sourceRuleBody = (selector) => exactRuleBody(css, selector);
++const archiveRuleBody = (selector) => exactRuleBody(archiveCss, selector);
++const archiveMediaBody = (query) => blockBody(archiveCss, `@media ${query} {`);
++
++const transitionProperties = (declaration) => {
++  const value = declaration.trim().replace(/\s*!important\b/g, '');
++  if (value === 'none') return ['none'];
++
++  return [...value.matchAll(/(?:^|,)\s*([a-z-]+)\s+(?=(?:\d|var\())/g)]
++    .map((match) => match[1]);
++};
++
++test('archive palette and typography use the fixed neutral system', () => {
++  const root = blockBody(css, ':root {');
++  const expectedTokens = {
++    '--archive-void': '#070808',
++    '--archive-graphite': '#151819',
++    '--archive-slate': '#222526',
++    '--archive-silver': '#aeb6b9',
++    '--archive-projector': '#f1f2ee',
++    '--archive-red': '#a43b42'
++  };
++
++  for (const [token, value] of Object.entries(expectedTokens)) {
++    assert.match(root, new RegExp(`${token}:\\s*${value};`), `missing ${token}`);
++  }
++
++  const letterSpacingValues = [...css.matchAll(/\bletter-spacing\s*:\s*([^;}]+)/g)]
++    .map((match) => match[1].trim().replace(/\s*!important$/, ''));
++  assert.ok(letterSpacingValues.length > 0, 'expected explicit zero-spacing typography rules');
++  assert.ok(
++    letterSpacingValues.every((value) => value === '0' || value === 'inherit'),
++    `nonzero letter-spacing declarations remain: ${letterSpacingValues.filter((value) => value !== '0' && value !== 'inherit').join(', ')}`
++  );
++
++  assert.match(archiveRuleBody('.header h1'), /font-family:\s*var\(--font-title\)/);
++  assert.match(archiveRuleBody('.lyric-text'), /font-family:\s*var\(--font-title\)/);
++  assert.match(archiveRuleBody('.archive-track-meta'), /font-family:\s*var\(--font-ui\)/);
++});
++
++test('the viewport uses only two directional projector fields', () => {
++  const fields = [sourceRuleBody('body::before'), sourceRuleBody('body::after')];
++
++  for (const field of fields) {
++    assert.match(field, /position:\s*fixed/);
++    assert.match(field, /(?:linear-gradient|conic-gradient)\(/);
++    assert.match(field, /clip-path:\s*polygon\(/);
++    assert.match(field, /(?:-webkit-)?mask-image:\s*linear-gradient\(/);
++    assert.doesNotMatch(field, /radial-gradient\(/);
++  }
++
++  assert.doesNotMatch(css, /\bambient-dust-drift\b/);
++  assert.doesNotMatch(css, /\bambient-veil-shift\b/);
++  assert.doesNotMatch(css, /\bbtn-sheen-sweep\b/);
++  assert.doesNotMatch(css, /(?:-webkit-)?backdrop-filter\s*:/);
++  assert.doesNotMatch(css, /\bwill-change\s*:/);
++});
++
++test('fullscreen layers use a stable fallback and dynamic viewport height', () => {
++  assert.doesNotMatch(css, /\b100lvh\b/);
++
++  for (const selector of ['.loading-screen', '.loading-light-slit', '.result-area', '.playlist-area']) {
++    assert.match(
++      sourceRuleBody(selector),
++      /height:\s*100vh;\s*height:\s*100dvh;/,
++      `${selector} should fall back from vh to dvh`
++    );
++  }
++});
++
++test('terminal desktop, tablet, and mobile layout rules keep the stage bounded', () => {
++  const shell = archiveRuleBody('.app-shell');
++  const turntable = archiveRuleBody('.turntable');
++  const tablet = archiveMediaBody('(min-width: 768px) and (max-width: 1023px)');
++  const mobile = archiveMediaBody('(max-width: 767px)');
++
++  assert.match(shell, /grid-template-columns:\s*minmax\(176px,\s*0\.8fr\)\s+minmax\(300px,\s*380px\)\s+minmax\(176px,\s*0\.8fr\)/);
++  assert.match(shell, /grid-template-areas:\s*"header stage meta"\s*"header controls meta"/);
++  assert.match(archiveRuleBody('.header'), /grid-area:\s*header/);
++  assert.match(archiveRuleBody('.vinyl-wrapper'), /grid-area:\s*stage/);
++  assert.match(archiveRuleBody('.archive-track-meta'), /grid-area:\s*meta/);
++  assert.match(archiveRuleBody('.dynamic-island'), /grid-area:\s*controls/);
++  assert.match(turntable, /border-radius:\s*0/);
++  assert.match(turntable, /background:\s*transparent/);
++  assert.match(turntable, /box-shadow:\s*none/);
++
++  assert.match(tablet, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(280px,\s*340px\)/);
++  assert.match(tablet, /grid-template-areas:\s*"header stage"\s*"meta stage"\s*"controls stage"/);
++  assert.match(tablet, /column-gap:\s*clamp\(24px,\s*4vw,\s*40px\)/);
++
++  assert.match(mobile, /\.app-shell\s*\{[\s\S]*grid-template-areas:\s*"header"\s*"stage"\s*"meta"\s*"controls"/);
++  assert.match(mobile, /\.turntable\s*\{[\s\S]*width:\s*min\(86vw,\s*min\(62svh,\s*340px\)\)/);
++  assert.match(mobile, /\.play-btn\s*\{[\s\S]*max-width:\s*100%/);
++  assert.match(mobile, /\.btn-label-viewport,[\s\S]*\.btn-text\s*\{[\s\S]*max-width:\s*100%/);
++});
++
++test('terminal interaction and error states use the archive palette with compact radii', () => {
++  const hover = archiveMediaBody('(hover: hover) and (pointer: fine)');
++  const audioStatus = archiveRuleBody('.audio-status');
++  const audioRetry = archiveRuleBody('.audio-retry');
++  const groupCover = archiveRuleBody('.playlist-group::before');
++
++  assert.match(audioStatus, /border-left-color:\s*var\(--archive-red\)/);
++  assert.match(audioStatus, /background:\s*var\(--archive-graphite\)/);
++  assert.match(audioStatus, /color:\s*var\(--archive-projector\)/);
++  assert.match(audioRetry, /border-color:\s*color-mix\(in srgb,\s*var\(--archive-silver\)/);
++  assert.match(audioRetry, /background:\s*var\(--archive-slate\)/);
++  assert.match(audioRetry, /color:\s*var\(--archive-projector\)/);
++  assert.match(hover, /\.audio-status \.audio-retry:not\(:disabled\):hover\s*\{[\s\S]*border-color:\s*var\(--archive-projector\)/);
++  assert.match(archiveCss, /\.audio-status \.audio-retry:focus-visible\s*\{[\s\S]*outline:\s*2px solid var\(--archive-projector\)/);
++  assert.match(archiveCss, /\.result-area\.is-visible \.overlay-close-btn:active,[\s\S]*\.audio-status \.audio-retry:not\(:disabled\):active\s*\{[\s\S]*background:\s*var\(--archive-void\)/);
++  assert.doesNotMatch(archiveCss, /rgba\(255,\s*151,\s*135/);
++  assert.match(groupCover, /border-radius:\s*6px/);
++
++  const fixedRadii = [...archiveCss.matchAll(/\bborder-radius\s*:\s*(\d+)px/g)]
++    .map((match) => Number(match[1]));
++  assert.ok(fixedRadii.length > 0, 'expected terminal fixed-radius rules');
++  assert.ok(fixedRadii.every((radius) => radius <= 8), `terminal panel/tile radius exceeds 8px: ${fixedRadii.join(', ')}`);
++});
++
++test('archive transitions are composited and reduce states are instant', () => {
++  const compactBeam = blockBody(archiveCss, 'html[data-motion-profile="compact"] body::before,');
++  const reduceBeam = blockBody(archiveCss, 'html[data-motion-profile="reduce"] body::before,');
++  const reducedMedia = archiveMediaBody('(prefers-reduced-motion: reduce)');
++  const reducedProfile = blockBody(archiveCss, 'html[data-motion-profile="reduce"] .header,');
++  const transitionValues = [...archiveCss.matchAll(/\btransition\s*:\s*([\s\S]*?);/g)]
++    .map((match) => match[1]);
++  const properties = transitionValues.flatMap(transitionProperties);
++
++  for (const profile of [compactBeam, reduceBeam]) {
++    assert.match(profile, /animation:\s*none/);
++    assert.match(profile, /filter:\s*none/);
++    assert.match(profile, /box-shadow:\s*none/);
++  }
++
++  for (const selector of ['.turntable', '.vinyl-record', '.play-btn', '.result-area', '.playlist-area', '.lyric-text']) {
++    assert.match(reducedMedia, new RegExp(selector.replaceAll('.', '\\.')));
++    assert.match(archiveCss, new RegExp(`html\\[data-motion-profile="reduce"\\] ${selector.replaceAll('.', '\\.')}`));
++  }
++
++  for (const reduced of [reducedMedia, reducedProfile]) {
++    assert.match(reduced, /animation:\s*none\s*!important/);
++    assert.match(reduced, /filter:\s*none\s*!important/);
++    assert.match(reduced, /transition:\s*none\s*!important/);
++  }
++
++  assert.ok(properties.length > 0, 'expected archive transition declarations');
++  assert.ok(
++    properties.every((property) => ['opacity', 'transform', 'none'].includes(property)),
++    `archive transitions include non-composited properties: ${properties.join(', ')}`
++  );
++  assert.doesNotMatch(archiveCss, /\btransition(?:-property)?\s*:\s*all\b/);
++  assert.match(archiveRuleBody('.vinyl-cover'), /transition:\s*opacity\s+0\.82s\s+var\(--crossfade-ease\),\s*transform\s+0\.82s\s+var\(--continuity-ease\)/);
++  assert.match(archiveRuleBody('.tonearm-dock'), /transition:\s*opacity\s+0\.32s\s+var\(--continuity-ease\)/);
++  assert.match(archiveRuleBody('body.is-track-transitioning .playlist-content'), /filter:\s*none/);
++  assert.match(archiveRuleBody('body.is-track-transitioning .playlist-content'), /transition:\s*transform\s+0\.24s\s+var\(--continuity-ease\),\s*opacity\s+0\.24s\s+var\(--continuity-ease\)/);
++  assert.match(archiveRuleBody('.player-track-bg'), /transition:\s*none/);
++});
++
++test('obsolete loading chrome stays removed from the visual layer', () => {
++  assert.doesNotMatch(css, /\.loading-progress-rail\b/);
++});
+diff --git a/test/unit/draw-button-flow.test.js b/test/unit/draw-button-flow.test.js
+index 074f116..0ef1d44 100644
+--- a/test/unit/draw-button-flow.test.js
++++ b/test/unit/draw-button-flow.test.js
+@@ -20,21 +20,24 @@ const capabilityGateBody = () => {
+   for (let index = open; index < css.length; index += 1) {
+     if (css[index] === '{') depth += 1;
+     if (css[index] === '}') depth -= 1;
+     if (depth === 0) return css.slice(open + 1, index);
+   }
+   assert.fail('unterminated perimeter capability gate');
+ };
+ 
+ test('draw button perimeter flow is a masked one-pixel cool-light trace', () => {
+   const flow = ruleBody('.btn-sheen::before');
++  const button = css.match(/(?:^|\n)\s*\.play-btn\s*\{([^}]+)\}/)?.[1];
+ 
++  assert.ok(button, 'missing base .play-btn rule');
++  assert.match(button, /letter-spacing:\s*0/);
+   assert.match(css, /@property\s+--btn-flow-angle\s*\{[\s\S]*?syntax:\s*"<angle>"/);
+   assert.match(css, /@property\s+--btn-flow-full-cycle\s*\{[\s\S]*?syntax:\s*"<time>"[\s\S]*?initial-value:\s*7200ms/);
+   assert.match(css, /@property\s+--btn-flow-compact-cycle\s*\{[\s\S]*?syntax:\s*"<time>"[\s\S]*?initial-value:\s*9600ms/);
+   assert.match(flow, /--btn-flow-full-cycle:\s*unsupported/);
+   assert.match(flow, /--btn-flow-compact-cycle:\s*unsupported/);
+   assert.match(flow, /content:\s*""/);
+   assert.match(flow, /position:\s*absolute/);
+   assert.match(flow, /inset:\s*0/);
+   assert.match(flow, /padding:\s*1px/);
+   assert.match(flow, /border-radius:\s*inherit/);

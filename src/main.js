@@ -1,6 +1,7 @@
 import {
     COVER_BASE_URL,
     COVER_ROTATION_FILES,
+    lyricTextByTitle,
     releases,
     lyricsPool
 } from './data.js';
@@ -23,7 +24,7 @@ import { createAppTransitions } from './app/transitions.js';
 import { createArchiveMetadata } from './ui/archive-metadata.js';
 
 const motionProfile = detectMotionProfile();
-startCriticalAssetGate({
+const criticalAssetGate = startCriticalAssetGate({
     motionProfile
 });
 
@@ -40,6 +41,7 @@ startCriticalAssetGate({
         const copyToast = document.getElementById('copyToast');
 
         const dynamicIsland = document.getElementById('dynamicIsland');
+        const playerPill = document.getElementById('playerPill');
         const playerToggleBtn = document.getElementById('playerToggleBtn');
         const trackWrap = document.getElementById('trackWrap');
         const trackFill = document.getElementById('trackFill');
@@ -144,11 +146,17 @@ startCriticalAssetGate({
         };
 
         const canUseWebAnimations = typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function';
-        const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const reducedMotionQuery = window.matchMedia
+            ? window.matchMedia('(prefers-reduced-motion: reduce)')
+            : null;
+        const drawButtonPointerQuery = window.matchMedia
+            ? window.matchMedia('(hover: hover) and (pointer: fine)')
+            : null;
+        let prefersReducedMotion = Boolean(reducedMotionQuery?.matches);
         const isCoarsePointer = window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
         const shouldUseCompactOverlayMotion = playbackPlatform.isIOS || isCoarsePointer;
         const shouldUseCompactPlaylistMotion = playbackPlatform.isIOS || isCoarsePointer;
-        const shouldUseLeanPlaylistMotion = prefersReducedMotion;
+        const shouldUseLeanPlaylistMotion = () => prefersReducedMotion;
         const overlayCardDuration = shouldUseCompactOverlayMotion ? 420 : 560;
         const overlayLyricDuration = shouldUseCompactOverlayMotion ? 560 : 740;
         const overlaySongDuration = shouldUseCompactOverlayMotion ? 500 : 660;
@@ -186,9 +194,195 @@ startCriticalAssetGate({
             });
         };
 
-        const motionFiltersEnabled = matchMedia('(hover: hover) and (pointer: fine)').matches && !prefersReducedMotion;
+        const motionFiltersEnabled = () => (
+            matchMedia('(hover: hover) and (pointer: fine)').matches && !prefersReducedMotion
+        );
+
+        const pointerLight = document.createElement('div');
+        pointerLight.className = 'pointer-light';
+        pointerLight.setAttribute('aria-hidden', 'true');
+        document.body.append(pointerLight);
+
+        let pointerLightFrame = null;
+        let pointerLightTarget = null;
+        let pointerLightCurrent = null;
+        const hidePointerLight = () => {
+            pointerLightTarget = null;
+            pointerLightCurrent = null;
+            if (pointerLightFrame !== null) cancelAnimationFrame(pointerLightFrame);
+            pointerLightFrame = null;
+            pointerLight.classList.remove('is-visible');
+        };
+        const renderPointerLight = () => {
+            pointerLightFrame = null;
+            if (!pointerLightTarget || !motionFiltersEnabled() || document.visibilityState !== 'visible') {
+                hidePointerLight();
+                return;
+            }
+
+            const { x, y } = pointerLightTarget;
+            if (!pointerLightCurrent) pointerLightCurrent = { x, y };
+            pointerLightCurrent.x += (x - pointerLightCurrent.x) * 0.2;
+            pointerLightCurrent.y += (y - pointerLightCurrent.y) * 0.2;
+            pointerLight.style.setProperty('--pointer-x', `${pointerLightCurrent.x.toFixed(2)}px`);
+            pointerLight.style.setProperty('--pointer-y', `${pointerLightCurrent.y.toFixed(2)}px`);
+            pointerLight.classList.add('is-visible');
+
+            if (
+                Math.abs(x - pointerLightCurrent.x) > 0.08
+                || Math.abs(y - pointerLightCurrent.y) > 0.08
+            ) {
+                pointerLightFrame = requestAnimationFrame(renderPointerLight);
+            }
+        };
+        const queuePointerLight = (event) => {
+            if (event.pointerType && event.pointerType !== 'mouse') return;
+            if (!motionFiltersEnabled()) {
+                hidePointerLight();
+                return;
+            }
+
+            pointerLightTarget = { x: event.clientX, y: event.clientY };
+            if (pointerLightFrame === null) pointerLightFrame = requestAnimationFrame(renderPointerLight);
+        };
+
+        const DRAW_BUTTON_SPOT_DEFAULT_X = 35;
+        const DRAW_BUTTON_SPOT_DEFAULT_Y = 0;
+        const DRAW_BUTTON_SPOT_EASE = 0.22;
+        const DRAW_BUTTON_SPOT_FADE_EASE = 0.16;
+        const DRAW_BUTTON_SPOT_STOP_THRESHOLD = 0.06;
+        const DRAW_BUTTON_SPOT_FADE_STOP_THRESHOLD = 0.004;
+        let drawButtonSpotFrame = null;
+        let drawButtonSpotPhase = 'idle';
+        let drawButtonSpotCurrentX = DRAW_BUTTON_SPOT_DEFAULT_X;
+        let drawButtonSpotCurrentY = DRAW_BUTTON_SPOT_DEFAULT_Y;
+        let drawButtonSpotTargetX = DRAW_BUTTON_SPOT_DEFAULT_X;
+        let drawButtonSpotTargetY = DRAW_BUTTON_SPOT_DEFAULT_Y;
+        let drawButtonSpotCurrentStrength = 0;
+        let drawButtonSpotTargetStrength = 0;
+
+        const canUseDrawButtonSpotlight = () => (
+            Boolean(drawButtonPointerQuery?.matches)
+            && !prefersReducedMotion
+            && !playButton.hasAttribute('data-busy')
+            && document.documentElement.dataset.motionProfile === 'full'
+            && document.visibilityState === 'visible'
+        );
+
+        const resetDrawButtonSpotlight = () => {
+            drawButtonSpotPhase = 'idle';
+            drawButtonSpotCurrentX = DRAW_BUTTON_SPOT_DEFAULT_X;
+            drawButtonSpotCurrentY = DRAW_BUTTON_SPOT_DEFAULT_Y;
+            drawButtonSpotTargetX = DRAW_BUTTON_SPOT_DEFAULT_X;
+            drawButtonSpotTargetY = DRAW_BUTTON_SPOT_DEFAULT_Y;
+            drawButtonSpotCurrentStrength = 0;
+            drawButtonSpotTargetStrength = 0;
+            if (drawButtonSpotFrame !== null) cancelAnimationFrame(drawButtonSpotFrame);
+            drawButtonSpotFrame = null;
+            playButton.style.removeProperty('--btn-spot-x');
+            playButton.style.removeProperty('--btn-spot-y');
+            playButton.style.removeProperty('--btn-spot-strength');
+        };
+
+        const writeDrawButtonSpotlight = () => {
+            playButton.style.setProperty('--btn-spot-x', `${drawButtonSpotCurrentX.toFixed(2)}%`);
+            playButton.style.setProperty('--btn-spot-y', `${drawButtonSpotCurrentY.toFixed(2)}%`);
+            playButton.style.setProperty('--btn-spot-strength', `${(drawButtonSpotCurrentStrength * 100).toFixed(2)}%`);
+        };
+
+        const renderDrawButtonSpotlight = () => {
+            drawButtonSpotFrame = null;
+            if (drawButtonSpotPhase === 'idle' || !canUseDrawButtonSpotlight()) {
+                resetDrawButtonSpotlight();
+                return;
+            }
+
+            drawButtonSpotCurrentX += (drawButtonSpotTargetX - drawButtonSpotCurrentX) * DRAW_BUTTON_SPOT_EASE;
+            drawButtonSpotCurrentY += (drawButtonSpotTargetY - drawButtonSpotCurrentY) * DRAW_BUTTON_SPOT_EASE;
+            drawButtonSpotCurrentStrength += (
+                drawButtonSpotTargetStrength - drawButtonSpotCurrentStrength
+            ) * DRAW_BUTTON_SPOT_FADE_EASE;
+            const remainingX = Math.abs(drawButtonSpotTargetX - drawButtonSpotCurrentX);
+            const remainingY = Math.abs(drawButtonSpotTargetY - drawButtonSpotCurrentY);
+            const remainingStrength = Math.abs(drawButtonSpotTargetStrength - drawButtonSpotCurrentStrength);
+
+            if (Math.max(remainingX, remainingY) <= DRAW_BUTTON_SPOT_STOP_THRESHOLD) {
+                drawButtonSpotCurrentX = drawButtonSpotTargetX;
+                drawButtonSpotCurrentY = drawButtonSpotTargetY;
+            }
+            if (remainingStrength <= DRAW_BUTTON_SPOT_FADE_STOP_THRESHOLD) {
+                drawButtonSpotCurrentStrength = drawButtonSpotTargetStrength;
+            }
+
+            writeDrawButtonSpotlight();
+
+            if (
+                Math.max(remainingX, remainingY) > DRAW_BUTTON_SPOT_STOP_THRESHOLD
+                || remainingStrength > DRAW_BUTTON_SPOT_FADE_STOP_THRESHOLD
+            ) {
+                drawButtonSpotFrame = requestAnimationFrame(renderDrawButtonSpotlight);
+                return;
+            }
+
+            if (drawButtonSpotPhase === 'leaving') resetDrawButtonSpotlight();
+        };
+
+        const queueDrawButtonSpotlight = (event) => {
+            if ((event.pointerType && event.pointerType !== 'mouse') || !canUseDrawButtonSpotlight()) {
+                resetDrawButtonSpotlight();
+                return;
+            }
+
+            const rect = playButton.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+            if (drawButtonSpotPhase === 'idle') writeDrawButtonSpotlight();
+            drawButtonSpotPhase = 'tracking';
+            drawButtonSpotTargetX = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100));
+            drawButtonSpotTargetY = Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100));
+            drawButtonSpotTargetStrength = 1;
+            if (drawButtonSpotFrame === null) {
+                drawButtonSpotFrame = requestAnimationFrame(renderDrawButtonSpotlight);
+            }
+        };
+
+        const releaseDrawButtonSpotlight = () => {
+            if (drawButtonSpotPhase === 'idle') return;
+            drawButtonSpotPhase = 'leaving';
+            drawButtonSpotTargetX = DRAW_BUTTON_SPOT_DEFAULT_X;
+            drawButtonSpotTargetY = DRAW_BUTTON_SPOT_DEFAULT_Y;
+            drawButtonSpotTargetStrength = 0;
+            if (drawButtonSpotFrame === null) {
+                drawButtonSpotFrame = requestAnimationFrame(renderDrawButtonSpotlight);
+            }
+        };
+
+        const releasePointerEffects = () => {
+            hidePointerLight();
+            releaseDrawButtonSpotlight();
+        };
+
+        const resetPointerEffects = () => {
+            hidePointerLight();
+            resetDrawButtonSpotlight();
+        };
+
+        document.addEventListener('pointermove', queuePointerLight, { passive: true });
+        document.addEventListener('pointerleave', releasePointerEffects);
+        window.addEventListener('blur', resetPointerEffects);
+        playButton.addEventListener('pointerenter', queueDrawButtonSpotlight, { passive: true });
+        playButton.addEventListener('pointermove', queueDrawButtonSpotlight, { passive: true });
+        playButton.addEventListener('pointerleave', releaseDrawButtonSpotlight);
+        playButton.addEventListener('pointercancel', resetDrawButtonSpotlight);
+        const syncDrawButtonPointerCapability = () => {
+            if (!canUseDrawButtonSpotlight()) resetDrawButtonSpotlight();
+        };
+        if (typeof drawButtonPointerQuery?.addEventListener === 'function') {
+            drawButtonPointerQuery.addEventListener('change', syncDrawButtonPointerCapability);
+        } else {
+            drawButtonPointerQuery?.addListener?.(syncDrawButtonPointerCapability);
+        }
         const normalizeMotionKeyframes = (keyframes) => {
-            if (motionFiltersEnabled || !Array.isArray(keyframes)) return keyframes;
+            if (motionFiltersEnabled() || !Array.isArray(keyframes)) return keyframes;
 
             return keyframes.map((frame) => {
                 if (!frame || typeof frame !== 'object' || !('filter' in frame)) return frame;
@@ -203,8 +397,8 @@ startCriticalAssetGate({
                 const motionOptions = prefersReducedMotion
                     ? {
                         ...options,
-                        duration: Math.min(Number(options?.duration) || 180, 180),
-                        delay: Math.min(Number(options?.delay) || 0, 40),
+                        duration: Math.min(Math.max(0, Number(options?.duration) || 0), 180),
+                        delay: Math.min(Math.max(0, Number(options?.delay) || 0), 40),
                         easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
                     }
                     : options;
@@ -253,7 +447,8 @@ startCriticalAssetGate({
 
         const getCoverSrcByLyricIndex = (index) => {
             const track = getTrackByIndex(index);
-            return track?.coverOssUrl || track?.sourceArtworkUrl || getFallbackCoverSrcByLyricIndex(index);
+            if (track) return track.coverOssUrl || track.sourceArtworkUrl || '';
+            return getFallbackCoverSrcByLyricIndex(index);
         };
 
         const toInlineCoverProxySrc = (src = '') => src;
@@ -280,11 +475,11 @@ startCriticalAssetGate({
             cancelActiveVolumeFade = null;
         };
 
-        const stopAndFadeOutAudio = async (duration = 800, options = {}) => {
+        const stopAndFadeOutAudio = async (duration = 420, options = {}) => {
             const { disableControl = true } = options;
             if (audioEl.paused) {
                 cancelVolumeFade();
-                isAudioPlaying = false;
+                audioController.pause();
                 setPlayerToggleState(false);
                 playerToggleBtn.classList.remove('is-disabled');
                 return;
@@ -307,7 +502,6 @@ startCriticalAssetGate({
                     if (settled) return;
                     settled = true;
                     cleanup();
-                    isAudioPlaying = false;
                     audioController.pause();
                     audioEl.playbackRate = 1;
                     if (canSetMediaVolume) audioEl.volume = 1;
@@ -370,22 +564,27 @@ startCriticalAssetGate({
 
             if (targetRate > 0) {
                 turntable.classList.add('is-playing');
-                spinAnimation.play();
-                sheenAnimation.play();
+                if (!prefersReducedMotion) {
+                    spinAnimation.play();
+                    sheenAnimation.play();
+                }
             }
 
-            await animateRate({
+            const result = await animateRate({
                 from: currentPlaybackRate,
                 to: targetRate,
                 duration,
                 easing
             });
 
+            if (result.status !== 'completed') return result;
+
             if (targetRate <= 0 && !isAudioPlaying && !isDrawing && !isTrackSwitching) {
                 spinAnimation.pause();
                 sheenAnimation.pause();
                 turntable.classList.remove('is-playing');
             }
+            return result;
         };
 
         const cancelTurntableMotion = () => {
@@ -396,12 +595,15 @@ startCriticalAssetGate({
 
         const resetRejectedPlaybackVisual = () => {
             cancelTurntableMotion();
+            isAudioPlaying = false;
             turntable.classList.remove('is-playing');
             spinAnimation.pause();
             sheenAnimation.pause();
             spinAnimation.playbackRate = 0;
             updateSheenByRate(0);
             setTonearmAngle(ARM_REST_ANGLE);
+            playerToggleBtn.classList.remove('is-disabled');
+            setPlayerToggleState(false);
         };
 
         const renderAudioState = ({ status, error }) => {
@@ -437,7 +639,6 @@ startCriticalAssetGate({
             }
 
             if (status !== 'paused' && status !== 'ready' && status !== 'error') return;
-            const wasPlaying = isAudioPlaying;
             isAudioPlaying = false;
             setPlayerToggleState(false);
 
@@ -445,16 +646,16 @@ startCriticalAssetGate({
                 resetRejectedPlaybackVisual();
                 return;
             }
-            if (wasPlaying && !suppressPlaybackMotion && !isDrawing && !isTrackSwitching) {
+            if (!suppressPlaybackMotion && !isDrawing && !isTrackSwitching) {
                 void animateTurntableToTargetRate({
                     targetRate: 0,
-                    duration: 2200,
+                    duration: 1080,
                     easing: (t) => 1 - Math.pow(1 - t, 4)
                 });
                 void animateTonearm({
                     from: getCurrentArmAngle(),
                     to: ARM_REST_ANGLE,
-                    duration: 1200,
+                    duration: 760,
                     easing: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
                 });
             }
@@ -488,9 +689,21 @@ startCriticalAssetGate({
         });
 
         const toggleAudioState = async (play, options = {}) => {
-            const { skipMotion = false, stopDuration = 800 } = options;
+            const { skipMotion = false, stopDuration = 420 } = options;
             const controllerStatus = audioController.getState().status;
-            if (play ? controllerStatus === 'playing' : !['loading', 'playing'].includes(controllerStatus)) return;
+
+            if (play && controllerStatus === 'playing') {
+                cancelVolumeFade();
+                audioEl.playbackRate = 1;
+                if (canSetMediaVolume) audioEl.volume = 1;
+                playerToggleBtn.classList.remove('is-disabled');
+                setPlayerToggleState(true);
+                return true;
+            }
+            if (!play && !['loading', 'playing'].includes(controllerStatus)) {
+                resetRejectedPlaybackVisual();
+                return true;
+            }
 
             cancelVolumeFade();
             suppressPlaybackMotion = skipMotion;
@@ -500,8 +713,12 @@ startCriticalAssetGate({
                     if (canSetMediaVolume) audioEl.volume = 1;
                     playerToggleBtn.classList.remove('is-disabled');
                     try {
-                        return await audioController.play();
+                        const played = await audioController.play();
+                        if (!played) resetRejectedPlaybackVisual();
+                        return played;
                     } catch (error) {
+                        audioController.pause();
+                        resetRejectedPlaybackVisual();
                         console.warn('[vinyl] Audio playback failed.', {
                             song: audioController.getState().track?.title,
                             message: error.message
@@ -512,10 +729,12 @@ startCriticalAssetGate({
 
                 if (controllerStatus === 'loading') {
                     audioController.pause();
+                    resetRejectedPlaybackVisual();
                     return true;
                 }
 
                 await stopAndFadeOutAudio(stopDuration, { disableControl: false });
+                if (skipMotion) resetRejectedPlaybackVisual();
                 return true;
             } finally {
                 suppressPlaybackMotion = false;
@@ -524,9 +743,12 @@ startCriticalAssetGate({
 
         playerToggleBtn.addEventListener('click', () => {
             const { status } = audioController.getState();
+            const shouldPlay = status === 'playing'
+                ? !playerToggleBtn.classList.contains('is-playing')
+                : status !== 'loading';
             void runDirectPlaybackCommand(
                 'player toggle',
-                () => toggleAudioState(status !== 'playing' && status !== 'loading')
+                () => toggleAudioState(shouldPlay)
             );
         });
 
@@ -687,7 +909,15 @@ startCriticalAssetGate({
             return pickRandomLyricIndex(currentLyricIndex);
         };
 
-        const spinAnimation = safeAnimate(vinyl, [
+        const createPersistentAnimation = (element, keyframes, options) => {
+            if (canUseWebAnimations && typeof element.animate === 'function') {
+                return element.animate(normalizeMotionKeyframes(keyframes), options);
+            }
+            applyFinalKeyframe(element, keyframes);
+            return createNoopAnimation();
+        };
+
+        const spinAnimation = createPersistentAnimation(vinyl, [
             { transform: 'translateZ(0) rotate(0deg)' },
             { transform: 'translateZ(0) rotate(360deg)' }
         ], {
@@ -699,7 +929,7 @@ startCriticalAssetGate({
         spinAnimation.pause();
 
         // 极弱反光层：常态低速，提速阶段增强，减速后回归克制。
-        const sheenAnimation = safeAnimate(vinylSheen, [
+        const sheenAnimation = createPersistentAnimation(vinylSheen, [
             { transform: 'rotate(0deg)' },
             { transform: 'rotate(360deg)' }
         ], {
@@ -714,8 +944,8 @@ startCriticalAssetGate({
             const clamped = Math.max(0, Math.min(5.2, rate));
             const normalized = clamped / 5.2;
             const opacity = 0.03 + normalized * 0.1;
-            const sheenRate = 0.08 + normalized * 1.1;
-            vinylSheen.style.opacity = opacity.toFixed(3);
+            const sheenRate = clamped === 0 ? 0 : 0.08 + normalized * 1.1;
+            vinylSheen.style.opacity = prefersReducedMotion ? '0' : opacity.toFixed(3);
             sheenAnimation.playbackRate = sheenRate;
         };
 
@@ -788,11 +1018,22 @@ startCriticalAssetGate({
             signal
         });
 
+        const setInteractiveState = (element, interactive) => {
+            element.toggleAttribute('inert', !interactive);
+            if (interactive) element.removeAttribute('aria-hidden');
+            else element.setAttribute('aria-hidden', 'true');
+        };
+
         const setFloatingButtonsVisible = (visible) => {
             const shouldShow = visible && currentLyricIndex !== -1;
-            lyricToggleBtn.classList.toggle('is-visible', shouldShow);
-            playlistToggleBtn.classList.toggle('is-visible', shouldShow);
+            [lyricToggleBtn, playlistToggleBtn].forEach((button) => {
+                button.classList.toggle('is-visible', shouldShow);
+                button.tabIndex = shouldShow ? 0 : -1;
+                if (shouldShow) button.removeAttribute('aria-hidden');
+                else button.setAttribute('aria-hidden', 'true');
+            });
         };
+        setFloatingButtonsVisible(false);
 
         const setOverlayControlsVisible = (visible) => {
             dynamicIsland.classList.toggle('is-overlay-control-visible', visible);
@@ -807,6 +1048,7 @@ startCriticalAssetGate({
         let controlMotionTimer = null;
         const setControlSplit = (split) => {
             const wasSplit = dynamicIsland.classList.contains('is-split');
+            setInteractiveState(playerPill, split);
             if (wasSplit === split) return;
 
             if (controlMotionTimer) clearTimeout(controlMotionTimer);
@@ -819,6 +1061,7 @@ startCriticalAssetGate({
                 controlMotionTimer = null;
             }, split ? 860 : 700);
         };
+        setControlSplit(false);
 
         const scrollPlaylistToCurrentTrack = (behavior = 'smooth') => {
             if (!playlistList || currentLyricIndex === -1) return;
@@ -826,7 +1069,7 @@ startCriticalAssetGate({
             const currentItem = playlistList.querySelector(`.playlist-item[data-index="${currentLyricIndex}"]`);
             if (!currentItem) return;
 
-            const scrollBehavior = shouldUseCompactPlaylistMotion || shouldUseLeanPlaylistMotion ? 'auto' : behavior;
+            const scrollBehavior = shouldUseCompactPlaylistMotion || shouldUseLeanPlaylistMotion() ? 'auto' : behavior;
 
             const listRect = playlistList.getBoundingClientRect();
             const itemRect = currentItem.getBoundingClientRect();
@@ -870,9 +1113,10 @@ startCriticalAssetGate({
         });
 
         const setCoverArtworkUrl = (artworkSrc) => {
-            rootStyle.setProperty('--cover-art-url', `url("${artworkSrc}")`);
+            const artworkValue = artworkSrc ? `url("${artworkSrc}")` : 'none';
+            rootStyle.setProperty('--cover-art-url', artworkValue);
             if (document.body) {
-                document.body.style.setProperty('--cover-art-url', `url("${artworkSrc}")`);
+                document.body.style.setProperty('--cover-art-url', artworkValue);
             }
         };
 
@@ -1011,13 +1255,25 @@ startCriticalAssetGate({
             if (!coverLayerA || !coverLayerB) return '';
 
             const requestId = ++coverSwapRequestId;
+            setCoverPalette(getTrackPaletteByIndex(index));
             const { artworkSrc, palette } = await primeCoverVisual(index);
-            if (requestId !== coverSwapRequestId || !artworkSrc) return artworkSrc;
+            if (requestId !== coverSwapRequestId) return artworkSrc;
+
+            setCoverPalette(palette);
+            setCoverArtworkUrl(artworkSrc);
+            if (!artworkSrc) {
+                [coverLayerA, coverLayerB].forEach((layer) => {
+                    layer.classList.remove('is-active');
+                    layer.style.backgroundImage = '';
+                });
+                activeCoverLayer = coverLayerA;
+                document.body.dataset.coverState = 'neutral';
+                return '';
+            }
 
             const incoming = activeCoverLayer === coverLayerA ? coverLayerB : coverLayerA;
             incoming.style.backgroundImage = `url("${artworkSrc}")`;
-            setCoverPalette(palette);
-            setCoverArtworkUrl(artworkSrc);
+            delete document.body.dataset.coverState;
             incoming.classList.add('is-active');
             activeCoverLayer.classList.remove('is-active');
             activeCoverLayer = incoming;
@@ -1056,6 +1312,26 @@ startCriticalAssetGate({
             });
         };
 
+        const syncEditableLyrics = (nextLyrics = lyricTextByTitle) => {
+            for (const track of lyricsPool) {
+                const nextText = nextLyrics?.[track.title];
+                if (typeof nextText !== 'string' || nextText.length === 0) continue;
+                track.text = nextText;
+                track.needsLyric = false;
+            }
+
+            if (currentLyricIndex < 0) return;
+            const currentTrack = lyricsPool[currentLyricIndex];
+            lyricEl.innerHTML = renderLyricLinesHTML(currentTrack.text);
+            if (resultArea.classList.contains('is-visible')) {
+                revealLyricContentImmediately();
+            }
+        };
+
+        window.addEventListener('vinyl:lyrics-updated', (event) => {
+            syncEditableLyrics(event.detail);
+        });
+
         const createAudioTrackByIndex = (index) => {
             const song = lyricsPool[index];
             if (!song) throw new RangeError(`Unknown track index: ${index}`);
@@ -1065,11 +1341,11 @@ startCriticalAssetGate({
                 ...song,
                 title: stripSongMarks(song.song),
                 musicOssUrl: song.musicOssUrl,
-                artwork: [{
+                artwork: artworkSrc ? [{
                     src: artworkSrc,
                     sizes: '512x512',
                     type: getArtworkType(artworkSrc)
-                }]
+                }] : []
             };
         };
 
@@ -1103,8 +1379,19 @@ startCriticalAssetGate({
             releases,
             tracks: lyricsPool,
             getCoverCandidates: (release) => {
-                const fallback = release.coverOssUrl;
+                const fallback = release.coverOssUrl || release.sourceArtworkUrl;
                 if (!fallback) return null;
+
+                let isOssArtwork = false;
+                try {
+                    isOssArtwork = new URL(fallback).hostname.endsWith('.aliyuncs.com');
+                } catch {
+                    isOssArtwork = false;
+                }
+
+                if (!isOssArtwork) {
+                    return { src: fallback, srcset: '', fallback };
+                }
 
                 return {
                     src: ossImageDerivative(fallback, 480),
@@ -1114,7 +1401,10 @@ startCriticalAssetGate({
             },
             onSelect: createPlaylistSelectionGuard({
                 isLocked: () => false,
-                onSelect: (index) => switchToTrackWithTransition(index, { stopDuration: 320 })
+                onSelect: (index) => switchToTrackWithTransition(index, {
+                    stopDuration: 320,
+                    showLyrics: true
+                })
             })
         });
 
@@ -1184,6 +1474,10 @@ startCriticalAssetGate({
         document.documentElement.toggleAttribute('data-document-hidden', document.hidden);
         document.addEventListener('visibilitychange', () => {
             document.documentElement.toggleAttribute('data-document-hidden', document.hidden);
+            if (document.hidden) {
+                hidePointerLight();
+                resetDrawButtonSpotlight();
+            }
             motion.setDocumentVisible(!document.hidden);
             if (document.visibilityState !== 'visible' || currentLyricIndex === -1) return;
 
@@ -1202,6 +1496,7 @@ startCriticalAssetGate({
             lyricAnimations = [];
             resultArea.classList.remove('is-visible');
             resultArea.classList.remove('show-dismiss-hint');
+            setInteractiveState(resultArea, false);
             document.body.classList.remove('has-lyric-overlay');
             setOverlayControlsVisible(false);
             resultArea.style.opacity = '0';
@@ -1223,6 +1518,7 @@ startCriticalAssetGate({
             playlistAnimations = [];
             playlistArea.classList.remove('is-visible');
             playlistArea.classList.remove('show-dismiss-hint');
+            setInteractiveState(playlistArea, false);
             document.body.classList.remove('has-playlist-overlay');
             setOverlayControlsVisible(false);
             playlistArea.style.opacity = '0';
@@ -1233,6 +1529,13 @@ startCriticalAssetGate({
             playlistContent.style.opacity = '0';
             playlistContent.style.transform = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) + 20px))';
             playlistContent.style.filter = '';
+        };
+
+        const revealPlaylistItems = () => {
+            Array.from(playlistList.querySelectorAll('.playlist-item')).forEach((item) => {
+                item.style.opacity = '1';
+                item.style.transform = 'translateY(0) scale(1)';
+            });
         };
 
         const animateLyricIn = ({ showOverlayControls = true } = {}) => {
@@ -1296,7 +1599,7 @@ startCriticalAssetGate({
             setControlSplit(true);
             setOverlayControlsVisible(false);
 
-            const useContentOnlyMotion = shouldUseCompactPlaylistMotion || shouldUseLeanPlaylistMotion;
+            const useContentOnlyMotion = shouldUseCompactPlaylistMotion || shouldUseLeanPlaylistMotion();
             const cardAnim = useContentOnlyMotion
                 ? null
                 : safeAnimate(playlistArea, [
@@ -1323,10 +1626,7 @@ startCriticalAssetGate({
             });
 
             const playlistItems = Array.from(playlistList.querySelectorAll('.playlist-item'));
-            playlistItems.forEach((item) => {
-                item.style.opacity = '1';
-                item.style.transform = 'translateY(0) scale(1)';
-            });
+            revealPlaylistItems();
 
             playlistAnimations = [cardAnim, contentAnim].filter(Boolean);
             if (useContentOnlyMotion) return;
@@ -1447,24 +1747,132 @@ startCriticalAssetGate({
         );
 
         let lastOverlaySnapshot = null;
+        const overlayFocusOrigin = new Map();
         const snapshotOverlays = () => ({
             lyrics: resultArea.classList.contains('is-visible'),
             playlist: playlistArea.classList.contains('is-visible'),
             split: dynamicIsland.classList.contains('is-split')
         });
+        const resetInactiveOverlay = (isLyrics) => {
+            if (isLyrics && playlistArea.classList.contains('is-visible')) {
+                resetPlaylistVisual();
+            }
+            if (!isLyrics && resultArea.classList.contains('is-visible')) {
+                resetResultVisual();
+            }
+        };
+
+        const primeOverlayOpen = (kind) => {
+            const isLyrics = kind === 'lyrics';
+            const element = isLyrics ? resultArea : playlistArea;
+            const content = isLyrics ? lyricEl : playlistContent;
+
+            element.style.opacity = '0';
+            element.style.transform = 'translateY(8px)';
+            content.style.opacity = '0';
+            content.style.transform = isLyrics
+                ? 'translateY(16px) scale(0.995)'
+                : PLAYLIST_CONTENT_ENTER_START_TRANSFORM;
+
+            if (!isLyrics) return;
+            songEl.style.opacity = '0';
+            songEl.style.transform = 'translateY(12px)';
+            Array.from(lyricEl.querySelectorAll('.lyric-line')).forEach((line) => {
+                line.style.opacity = '0';
+                line.style.transform = 'translateY(14px) scale(0.99)';
+            });
+        };
+
+        const rememberOverlayFocusOrigin = (kind, element) => {
+            const activeElement = document.activeElement;
+            if (
+                activeElement
+                && activeElement !== document.body
+                && !element.contains(activeElement)
+            ) {
+                overlayFocusOrigin.set(kind, activeElement);
+            }
+        };
+
+        const focusWithoutScroll = (element) => {
+            if (!element?.isConnected || element.closest?.('[inert]')) return;
+            try {
+                element.focus({ preventScroll: true });
+            } catch {
+                element.focus();
+            }
+        };
+
+        const settleOverlayOpen = (kind) => {
+            const isLyrics = kind === 'lyrics';
+            const element = isLyrics ? resultArea : playlistArea;
+            const content = isLyrics ? lyricEl : playlistContent;
+            const closeButton = isLyrics ? lyricCloseBtn : playlistCloseBtn;
+            const focusOrigin = overlayFocusOrigin.get(kind);
+
+            setInteractiveState(element, true);
+            element.style.opacity = '1';
+            element.style.transform = 'translateY(0)';
+            content.style.opacity = '1';
+            content.style.transform = isLyrics ? 'translateY(0)' : PLAYLIST_CONTENT_REST_TRANSFORM;
+            content.style.filter = '';
+            closeButton.style.opacity = '';
+            closeButton.style.transform = '';
+            closeButton.style.filter = '';
+            if (isLyrics) {
+                revealLyricContentImmediately();
+            } else {
+                revealPlaylistItems();
+            }
+            setControlSplit(true);
+            setOverlayControlsVisible(isLyrics);
+
+            if (
+                document.visibilityState === 'visible'
+                && (document.activeElement === document.body || document.activeElement === focusOrigin)
+            ) {
+                focusWithoutScroll(closeButton);
+            }
+        };
+
+        const settleOverlayClosed = (kind, restoreFocus) => {
+            const isLyrics = kind === 'lyrics';
+            const element = isLyrics ? resultArea : playlistArea;
+            const focusOrigin = overlayFocusOrigin.get(kind);
+
+            if (isLyrics) resetResultVisual();
+            else resetPlaylistVisual();
+            if (resultArea.classList.contains('is-visible')) setOverlayControlsVisible(true);
+            else setFloatingButtonsVisible(true);
+
+            if (
+                restoreFocus
+                && (element.contains(document.activeElement) || document.activeElement === document.body)
+            ) {
+                focusWithoutScroll(focusOrigin);
+            }
+        };
+
+        setInteractiveState(resultArea, false);
+        setInteractiveState(playlistArea, false);
 
         const overlays = {
             async open(kind, { signal, duration, profile }) {
+                const isLyrics = kind === 'lyrics';
+                resetInactiveOverlay(isLyrics);
                 if (kind === 'playlist') {
                     playlist.ensureRendered();
                     playlist.setActive(currentLyricIndex);
+                    revealPlaylistItems();
                     scrollPlaylistToCurrentTrack('auto');
                 }
 
-                const isLyrics = kind === 'lyrics';
                 const element = isLyrics ? resultArea : playlistArea;
                 const content = isLyrics ? lyricEl : playlistContent;
+                rememberOverlayFocusOrigin(kind, element);
+                primeOverlayOpen(kind);
                 element.classList.add('is-visible');
+                setInteractiveState(element, true);
                 document.body.classList.toggle('has-lyric-overlay', isLyrics);
                 document.body.classList.toggle('has-playlist-overlay', !isLyrics);
                 if (isLyrics && !hasShownDismissHint) {
@@ -1479,45 +1887,47 @@ startCriticalAssetGate({
                 setOverlayControlsVisible(false);
 
                 const primaryEasing = 'cubic-bezier(0.22, 1, 0.36, 1)';
-                if (isLyrics) {
-                    const lineDelay = profile === 'full' ? 16 : 0;
-                    await Promise.all([
-                        runOverlayAnimation(element, [
-                            { opacity: 0, transform: 'translateY(8px)' },
-                            { opacity: 1, transform: 'translateY(0)' }
-                        ], { duration, easing: primaryEasing }, signal),
-                        runOverlayAnimation(content, [
-                            { opacity: 0, transform: 'translateY(16px) scale(0.995)' },
-                            { opacity: 1, transform: 'translateY(0) scale(1)' }
-                        ], { duration, easing: primaryEasing }, signal),
-                        runOverlayAnimation(songEl, [
-                            { opacity: 0, transform: 'translateY(12px)' },
-                            { opacity: 1, transform: 'translateY(0)' }
-                        ], { duration, delay: Math.min(150, duration / 2), easing: primaryEasing }, signal),
-                        ...Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => runOverlayAnimation(line, [
-                            { opacity: 0, transform: 'translateY(14px) scale(0.99)' },
-                            { opacity: 1, transform: 'translateY(0) scale(1)' }
-                        ], {
-                            duration,
-                            delay: Math.min(duration, 100 + index * lineDelay),
-                            easing: primaryEasing
-                        }, signal))
-                    ]);
-                } else {
-                    const cardDuration = profile === 'full' ? duration : 0;
-                    await Promise.all([
-                        runOverlayAnimation(element, [
-                            { opacity: 0, transform: 'translateY(8px)' },
-                            { opacity: 1, transform: 'translateY(0)' }
-                        ], { duration: cardDuration, easing: primaryEasing }, signal),
-                        runOverlayAnimation(content, [
-                            { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
-                            { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
-                        ], { duration, easing: primaryEasing }, signal)
-                    ]);
+                try {
+                    if (isLyrics) {
+                        const lineDelay = profile === 'full' ? 16 : 0;
+                        await Promise.all([
+                            runOverlayAnimation(element, [
+                                { opacity: 0, transform: 'translateY(8px)' },
+                                { opacity: 1, transform: 'translateY(0)' }
+                            ], { duration, easing: primaryEasing }, signal),
+                            runOverlayAnimation(content, [
+                                { opacity: 0, transform: 'translateY(16px) scale(0.995)' },
+                                { opacity: 1, transform: 'translateY(0) scale(1)' }
+                            ], { duration, easing: primaryEasing }, signal),
+                            runOverlayAnimation(songEl, [
+                                { opacity: 0, transform: 'translateY(12px)' },
+                                { opacity: 1, transform: 'translateY(0)' }
+                            ], { duration, delay: Math.min(150, duration / 2), easing: primaryEasing }, signal),
+                            ...Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => runOverlayAnimation(line, [
+                                { opacity: 0, transform: 'translateY(14px) scale(0.99)' },
+                                { opacity: 1, transform: 'translateY(0) scale(1)' }
+                            ], {
+                                duration,
+                                delay: Math.min(duration, 100 + index * lineDelay),
+                                easing: primaryEasing
+                            }, signal))
+                        ]);
+                    } else {
+                        const cardDuration = profile === 'full' ? duration : 0;
+                        await Promise.all([
+                            runOverlayAnimation(element, [
+                                { opacity: 0, transform: 'translateY(8px)' },
+                                { opacity: 1, transform: 'translateY(0)' }
+                            ], { duration: cardDuration, easing: primaryEasing }, signal),
+                            runOverlayAnimation(content, [
+                                { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
+                                { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
+                            ], { duration, easing: primaryEasing }, signal)
+                        ]);
+                    }
+                } finally {
+                    settleOverlayOpen(kind);
                 }
-
-                if (!signal.aborted) setOverlayControlsVisible(isLyrics);
             },
 
             async close(kind, { signal, duration }) {
@@ -1525,28 +1935,34 @@ startCriticalAssetGate({
                 const element = isLyrics ? resultArea : playlistArea;
                 if (!element.classList.contains('is-visible')) return;
 
+                const restoreFocus = element.contains(document.activeElement);
+                setInteractiveState(element, false);
                 const content = isLyrics ? lyricEl : playlistContent;
                 const closeButton = isLyrics ? lyricCloseBtn : playlistCloseBtn;
-                await Promise.all([
-                    runOverlayAnimation(element, [
-                        { opacity: 1, transform: 'translateY(0)' },
-                        { opacity: 0, transform: 'translateY(-8px)' }
-                    ], { duration, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal),
-                    runOverlayAnimation(content, [
-                        { opacity: 1, transform: 'translateY(0)' },
-                        { opacity: 0, transform: 'translateY(-8px)' }
-                    ], { duration: Math.min(duration, 280), easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal),
-                    runOverlayAnimation(closeButton, [
-                        { opacity: 1, transform: 'translateZ(0) scale(1)' },
-                        { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)' }
-                    ], { duration: Math.min(duration, 240), easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal)
-                ]);
-                if (signal.aborted) return;
-
-                if (isLyrics) resetResultVisual();
-                else resetPlaylistVisual();
-                if (resultArea.classList.contains('is-visible')) setOverlayControlsVisible(true);
-                else setFloatingButtonsVisible(true);
+                const contentStartTransform = isLyrics
+                    ? 'translateY(0)'
+                    : PLAYLIST_CONTENT_REST_TRANSFORM;
+                const contentExitTransform = isLyrics
+                    ? 'translateY(-8px)'
+                    : 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) - 10px))';
+                try {
+                    await Promise.all([
+                        runOverlayAnimation(element, [
+                            { opacity: 1, transform: 'translateY(0)' },
+                            { opacity: 0, transform: 'translateY(-8px)' }
+                        ], { duration, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal),
+                        runOverlayAnimation(content, [
+                            { opacity: 1, transform: contentStartTransform },
+                            { opacity: 0, transform: contentExitTransform }
+                        ], { duration: Math.min(duration, 280), easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal),
+                        runOverlayAnimation(closeButton, [
+                            { opacity: 1, transform: 'translateZ(0) scale(1)' },
+                            { opacity: 0, transform: 'translate3d(8px, -8px, 0) scale(0.94)' }
+                        ], { duration: Math.min(duration, 240), easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal)
+                    ]);
+                } finally {
+                    settleOverlayClosed(kind, restoreFocus);
+                }
             },
 
             async closeAll({ signal, duration, profile }) {
@@ -1644,12 +2060,34 @@ startCriticalAssetGate({
             },
             setSpinning(active) {
                 turntable.classList.toggle('is-playing', active);
-                if (active) {
+                if (active && !prefersReducedMotion) {
                     spinAnimation.play();
                     sheenAnimation.play();
                 } else {
                     spinAnimation.pause();
                     sheenAnimation.pause();
+                }
+            },
+            setMotionPreference(reduced) {
+                if (reduced) {
+                    cancelTurntableMotion();
+                    const isPlaying = audioController.getState().status === 'playing';
+                    turntable.classList.toggle('is-playing', isPlaying);
+                    spinAnimation.playbackRate = isPlaying ? 0.68 : 0;
+                    updateSheenByRate(spinAnimation.playbackRate);
+                    setTonearmAngle(isPlaying ? ARM_PLAY_ANGLE : ARM_REST_ANGLE);
+                    spinAnimation.pause();
+                    sheenAnimation.pause();
+                    return;
+                }
+
+                updateSheenByRate(spinAnimation.playbackRate || 0);
+                if (
+                    document.visibilityState === 'visible'
+                    && audioController.getState().status === 'playing'
+                ) {
+                    spinAnimation.play();
+                    sheenAnimation.play();
                 }
             },
             async resetAfterPlaybackError() {
@@ -1659,7 +2097,7 @@ startCriticalAssetGate({
                 if (!visible) {
                     spinAnimation.pause();
                     sheenAnimation.pause();
-                } else if (audioController.getState().status === 'playing') {
+                } else if (!prefersReducedMotion && audioController.getState().status === 'playing') {
                     spinAnimation.play();
                     sheenAnimation.play();
                 }
@@ -1708,8 +2146,60 @@ startCriticalAssetGate({
                 isTrackSwitching = active && name === 'switch-track';
                 document.body.classList.toggle('is-track-transitioning', isTrackSwitching);
                 setPlayButtonBusy(isDrawing);
+                if (isDrawing) resetDrawButtonSpotlight();
             }
         });
+
+        const settleReducedMotionPresentation = () => {
+            if (controlMotionTimer) {
+                clearTimeout(controlMotionTimer);
+                controlMotionTimer = null;
+            }
+            dynamicIsland.classList.remove('is-opening', 'is-collapsing');
+
+            lyricAnimations.forEach((animation) => animation.cancel());
+            playlistAnimations.forEach((animation) => animation.cancel());
+            lyricAnimations = [];
+            playlistAnimations = [];
+            btnTextEl.getAnimations?.().forEach((animation) => animation.cancel());
+            btnTextEl.textContent = currentLyricIndex === -1 ? '抽取' : '再次抽取';
+            btnTextEl.style.opacity = '1';
+            btnTextEl.style.transform = 'translateY(0)';
+
+            if (resultArea.classList.contains('is-visible')) {
+                resultArea.style.opacity = '1';
+                resultArea.style.transform = 'translateY(0)';
+                revealLyricContentImmediately();
+            }
+
+            if (playlistArea.classList.contains('is-visible')) {
+                playlistArea.style.opacity = '1';
+                playlistArea.style.transform = 'translateY(0)';
+                playlistContent.style.opacity = '1';
+                playlistContent.style.transform = PLAYLIST_CONTENT_REST_TRANSFORM;
+                revealPlaylistItems();
+            }
+        };
+
+        const syncMotionPreference = () => {
+            if (!reducedMotionQuery) return;
+            prefersReducedMotion = reducedMotionQuery.matches;
+            if (prefersReducedMotion) hidePointerLight();
+            const nextProfile = detectMotionProfile();
+            document.documentElement.dataset.motionProfile = nextProfile;
+            if (nextProfile !== 'full') resetDrawButtonSpotlight();
+            criticalAssetGate.setProfile?.(nextProfile);
+            turntableController.setMotionPreference(prefersReducedMotion);
+            void motion.setProfile(nextProfile).then(() => {
+                if (prefersReducedMotion && motion.profile === 'reduce') settleReducedMotionPresentation();
+            });
+        };
+
+        if (typeof reducedMotionQuery?.addEventListener === 'function') {
+            reducedMotionQuery.addEventListener('change', syncMotionPreference);
+        } else {
+            reducedMotionQuery?.addListener?.(syncMotionPreference);
+        }
 
         const runMotionCommand = async (command) => {
             try {
@@ -1723,7 +2213,20 @@ startCriticalAssetGate({
         const runDirectPlaybackCommand = async (reason, command) => {
             await motion.cancel(reason);
             cancelTurntableMotion();
-            return command();
+            try {
+                return await command();
+            } finally {
+                if (currentLyricIndex !== -1) {
+                    setControlSplit(true);
+                    if (resultArea.classList.contains('is-visible')) {
+                        setOverlayControlsVisible(true);
+                    } else if (playlistArea.classList.contains('is-visible')) {
+                        setOverlayControlsVisible(false);
+                    } else {
+                        setFloatingButtonsVisible(true);
+                    }
+                }
+            }
         };
 
         const closeLyricOverlay = async () => {

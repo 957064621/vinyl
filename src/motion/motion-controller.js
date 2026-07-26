@@ -4,6 +4,13 @@ export const MOTION_TOKENS = Object.freeze({
   reduce: Object.freeze({ enter: 0, move: 0, settle: 0, itemStagger: 0 })
 });
 
+const tokensForProfile = (profile) => {
+  if (!Object.prototype.hasOwnProperty.call(MOTION_TOKENS, profile)) {
+    throw new TypeError(`Unknown motion profile: ${String(profile)}`);
+  }
+  return MOTION_TOKENS[profile];
+};
+
 export function detectMotionProfile({
   matchMedia = globalThis.matchMedia,
   userAgent = globalThis.navigator?.userAgent || ''
@@ -20,8 +27,8 @@ export function createMotionController({
   transitions,
   onActivityChange = () => {}
 }) {
-  const tokens = MOTION_TOKENS[profile];
-  if (!tokens) throw new TypeError(`Unknown motion profile: ${profile}`);
+  let currentProfile = profile;
+  let currentTokens = tokensForProfile(profile);
 
   let active = null;
   let latestRequestId = 0;
@@ -47,6 +54,8 @@ export function createMotionController({
 
     const requestId = ++latestRequestId;
     const visibilityEpoch = decorativeVisibilityEpoch;
+    const commandProfile = currentProfile;
+    const commandTokens = currentTokens;
     const previous = active;
     previous?.controller.abort(`superseded by ${name}`);
 
@@ -68,7 +77,11 @@ export function createMotionController({
       record.settled = Promise.resolve().then(async () => {
         try {
           if (controller.signal.aborted) return { status: 'cancelled', name };
-          await task({ signal: controller.signal, profile, tokens });
+          await task({
+            signal: controller.signal,
+            profile: commandProfile,
+            tokens: commandTokens
+          });
           return {
             status: controller.signal.aborted ? 'cancelled' : 'completed',
             name
@@ -93,14 +106,21 @@ export function createMotionController({
   };
 
   return {
-    profile,
+    get profile() {
+      return currentProfile;
+    },
     draw: (targetIndex) => runExclusive(
       'draw',
       (context) => transitions.draw({ ...context, targetIndex })
     ),
-    switchTrack: (targetIndex, { headless = false } = {}) => runExclusive(
+    switchTrack: (targetIndex, { headless = false, showLyrics = false } = {}) => runExclusive(
       'switch-track',
-      (context) => transitions.switchTrack({ ...context, targetIndex, headless }),
+      (context) => transitions.switchTrack({
+        ...context,
+        targetIndex,
+        headless,
+        showLyrics: !headless && showLyrics
+      }),
       { allowWhenHidden: headless }
     ),
     openOverlay: (kind) => runExclusive(
@@ -112,6 +132,17 @@ export function createMotionController({
       (context) => transitions.closeOverlay({ ...context, kind })
     ),
     isActive: () => active !== null,
+    setProfile(nextProfile) {
+      const nextTokens = tokensForProfile(nextProfile);
+      if (disposed || nextProfile === currentProfile) return Promise.resolve();
+
+      currentProfile = nextProfile;
+      currentTokens = nextTokens;
+      latestRequestId += 1;
+      const pending = active?.settled;
+      active?.controller.abort('motion profile changed');
+      return pending || Promise.resolve();
+    },
     setDocumentVisible(visible) {
       documentVisible = Boolean(visible);
       if (!documentVisible) {

@@ -422,7 +422,7 @@ const releases = [
     makeRelease({
         title: '万兽之王演唱会录音',
         type: 'live-recording',
-        releaseDate: '',
+        releaseDate: '2026',
         sourceArtworkUrl: `${COVER_BASE_URL}1.jpg`,
         coverOssUrl: `${COVER_BASE_URL}1.jpg`,
         palette: { a: [150, 201, 237], b: [190, 204, 235] },
@@ -438,12 +438,21 @@ const releases = [
                 trackNumber: 2,
                 artist: '薛之谦',
                 recordingSource: '万兽之王演唱会录音'
-            }),
+            })
+        ]
+    }),
+    makeRelease({
+        title: '媚人 - Single',
+        type: 'single',
+        releaseDate: '2026-07-17',
+        sourceArtworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/6c/c8/3a/6cc83adf-7cd1-8dd0-6606-94106ac1f83f/4896016816485.jpg/600x600bb.jpg',
+        coverOssUrl: '',
+        palette: { a: [111, 45, 43], b: [188, 190, 186] },
+        tracks: [
             makeTrack('媚人', {
                 musicOssUrl: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/musics/%E5%AA%9A%E4%BA%BA.mp3',
-                trackNumber: 3,
-                artist: '薛之谦',
-                recordingSource: '万兽之王演唱会录音'
+                trackNumber: 1,
+                artist: '薛之谦'
             })
         ]
     })

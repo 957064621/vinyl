@@ -1,6 +1,6 @@
 {
-  "name": "光影档案馆",
-  "short_name": "光影档案馆",
+  "name": "歌词抽取机",
+  "short_name": "歌词抽取机",
   "start_url": "./",
   "display": "standalone",
   "orientation": "portrait",

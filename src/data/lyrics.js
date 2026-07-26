@@ -1,4 +1,11 @@
-export const lyricTextByTitle = Object.freeze({
+/*
+ * 歌词实时编辑入口。
+ *
+ * 只需修改下方对应歌名的字符串；使用 \n 按语义换行，每段最多六行。
+ * 运行 `npm run dev` 时，保存本文件会原位刷新当前歌词，不重载页面，
+ * 不重新抽取歌曲，也不会改变正在播放或暂停的状态。
+ */
+export const lyricTextByTitle = {
     '天外来物': '你就像天外来物一样\n求之不得\n我在世俗里的名字\n被人用了\n反正我隐藏的人格\n是锲而不舍',
     '演员': '该配合你演出的我\n尽力在表演\n像情感节目里的嘉宾\n任人挑选\n如果还能看出我有\n爱你的那面',
     '丑八怪': '丑八怪\n能否别把灯打开\n我要的爱\n出没在漆黑一片的舞台\n丑八怪\n在这暧昧的时代',
@@ -131,4 +138,23 @@ export const lyricTextByTitle = Object.freeze({
     '造物': '唾弃你贪婪的咒\n现在又何必挽留\n怎么狂妄到 要灵魂任人左右\n莫非造了我 爱造了祸\n你才不会觉得寂寞',
     '来日方长': '总是妄想\n借半生流离\n换某人怜悯\n我说爱\n或许是来日方长的事情\n等不到人也至少盼着自己',
     '小尖尖': '在霓虹雨里面\n伞里都是恩怨\n我口袋只剩玫瑰一片\n此行又山高路远\n问私奔多少年\n能舍弃这世界',
-});
+};
+
+if (import.meta.hot) {
+    import.meta.hot.accept((nextModule) => {
+        const nextLyrics = nextModule?.lyricTextByTitle;
+        if (!nextLyrics || typeof nextLyrics !== 'object') return;
+
+        for (const title of Object.keys(lyricTextByTitle)) {
+            if (!Object.prototype.hasOwnProperty.call(nextLyrics, title)) {
+                delete lyricTextByTitle[title];
+            }
+        }
+        Object.assign(lyricTextByTitle, nextLyrics);
+        window.dispatchEvent(new CustomEvent('vinyl:lyrics-updated', {
+            detail: lyricTextByTitle
+        }));
+    });
+} else {
+    Object.freeze(lyricTextByTitle);
+}

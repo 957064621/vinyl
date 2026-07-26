@@ -300,19 +300,19 @@ test('uses the approved 粉钻 wording', () => {
   assert.doesNotMatch(track.text, /用爱交换/);
 });
 
-test('adds 媚人 as the third live recording', () => {
-  const release = liveRelease();
-  const track = release.tracks[2];
+test('keeps 媚人 as a complete independent single release', () => {
+  const release = releases.find(({ title }) => title === '媚人 - Single');
+  const track = release.tracks[0];
+  assert.equal(release.type, 'single');
+  assert.equal(release.releaseDate, '2026-07-17');
   assert.deepEqual(
     release.tracks.map(({ title, trackNumber }) => ({ title, trackNumber })),
     [
-      { title: '粉钻', trackNumber: 1 },
-      { title: '造物', trackNumber: 2 },
-      { title: '媚人', trackNumber: 3 }
+      { title: '媚人', trackNumber: 1 }
     ]
   );
   assert.equal(track.artist, '薛之谦');
-  assert.equal(track.recordingSource, release.title);
+  assert.equal(track.recordingSource, undefined);
   assert.equal(
     track.musicOssUrl,
     'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/musics/%E5%AA%9A%E4%BA%BA.mp3'
@@ -342,7 +342,7 @@ test('keeps every track identity unique and every excerpt valid', () => {
 
 Run: `node --test test/unit/library.test.js`
 
-Expected: FAIL on the old `粉钻` wording, missing third track, and count `141 !== 142`.
+Expected: FAIL on the old `粉钻` wording and the missing independent single; the total track count increases from `141` to `142`.
 
 - [ ] **Step 4: Apply the two approved content changes**
 
@@ -353,14 +353,21 @@ In `lyricTextByTitle`, replace and add exactly:
 '媚人': '我们都疮痍满身\n再捏造缘分\n然后扮成 无辜的路人\n要粉饰半生\n残存体温\n献祭给假圣人',
 ```
 
-Append to the `万兽之王演唱会录音` tracks array:
+Add a separate release after `万兽之王演唱会录音`:
 
 ```js
-makeTrack('媚人', {
-  musicOssUrl: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/musics/%E5%AA%9A%E4%BA%BA.mp3',
-  trackNumber: 3,
-  artist: '薛之谦',
-  recordingSource: '万兽之王演唱会录音'
+makeRelease({
+  title: '媚人 - Single',
+  type: 'single',
+  releaseDate: '2026-07-17',
+  sourceArtworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/6c/c8/3a/6cc83adf-7cd1-8dd0-6606-94106ac1f83f/4896016816485.jpg/600x600bb.jpg',
+  coverOssUrl: '',
+  palette: { a: [111, 45, 43], b: [188, 190, 186] },
+  tracks: [makeTrack('媚人', {
+    musicOssUrl: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/musics/%E5%AA%9A%E4%BA%BA.mp3',
+    trackNumber: 1,
+    artist: '薛之谦'
+  })]
 })
 ```
 
@@ -396,7 +403,7 @@ npm run test:unit
 git diff --check
 ```
 
-Expected: all current unit tests PASS; `粉钻` contains `用挚爱交换`; `媚人` is track 3 with six unchanged semantic lines.
+Expected: all current unit tests PASS; `粉钻` contains `用挚爱交换`; `媚人` is an independent single with its official artwork and six unchanged semantic lines.
 
 ```bash
 git add src/data.js src/main.js src/lyrics/format.js test/unit/lyrics-format.test.js test/unit/library.test.js
@@ -437,11 +444,11 @@ test('builds deterministic audit documents from library data', () => {
   assert.match(audioManifest, /\| 唯一音频标题 \| 131 \|/);
   assert.match(
     audioManifest,
-    /\| 媚人 \| 万兽之王演唱会录音 \| 已填 6 行 \| OSS \|/
+    /\| 媚人 \| 媚人 - Single \| 已填 6 行 \| OSS \|/
   );
   assert.match(
     libraryAudit,
-    /\| 万兽之王演唱会录音 \| live-recording \| 待核对 \| 3 \| 0 \| 0 \| [YN] \| Y \|/
+    /\| 万兽之王演唱会录音 \| live-recording \| 2026 \| 2 \| 0 \| 0 \| [YN] \| Y \|/
   );
 });
 ```
@@ -628,7 +635,7 @@ npm run audit:check
 npm run test:unit
 ```
 
-Expected: PASS. Both manifests report `23` releases, `142` track references, `131` unique titles, `142` configured audio URLs, and the six-line `媚人` excerpt.
+Expected: PASS. Both manifests report `24` releases, `142` track references, `131` unique titles, `142` configured audio URLs, and the six-line `媚人` excerpt.
 
 - [ ] **Step 5: Commit the data boundary**
 
@@ -3818,7 +3825,7 @@ Record device/OS/browser/network, UTC+8 timestamp, PASS/FAIL, measured fps/long 
 
 - [ ] **Step 7: Synchronize the final operating guide**
 
-Re-read every path and command in `agent.md` against the finished tree. Set the final library facts to 23 releases, 142 track references, 131 unique audio objects, 23 OSS release covers, and five decoded critical slots. Ensure it documents `src/app/transitions.js`, `src/app/register-service-worker.js`, `src/data/cover-map.js`, `scripts/media/build-cover-plan.mjs`, `scripts/media/apply-metadata.mjs`, the three-file `dist` contract, the Pages Actions command, and the rule that both OSS write scripts are dry-run unless `--apply` is explicit.
+Re-read every path and command in `agent.md` against the finished tree. Set the final library facts to 24 releases, 142 track references, 131 unique audio objects, 23 OSS release covers plus the direct official artwork for `媚人 - Single`, and five decoded critical slots. Ensure it documents `src/app/transitions.js`, `src/app/register-service-worker.js`, `src/data/cover-map.js`, `scripts/media/build-cover-plan.mjs`, `scripts/media/apply-metadata.mjs`, the three-file `dist` contract, the Pages Actions command, and the rule that both OSS write scripts are dry-run unless `--apply` is explicit.
 
 Run:
 
@@ -3870,6 +3877,6 @@ Release only when:
 - All release art and audio use the approved OSS origins with inline media behavior; audio range checks return 206.
 - The startup DOM contains no playlist items; first open creates 142 stable items.
 - Mobile/reduce overlays have no full-screen live blur, background drift, or persistent compositor hints.
-- `粉钻` says `你若不甘 用挚爱交换`; `媚人` is live track 3 with the approved six semantic lines.
+- `粉钻` says `你若不甘 用挚爱交换`; `媚人` is an independent 2026 single with official artwork and the approved six semantic lines.
 - `agent.md`, generated audits, build checks, browser checks, and real-device evidence agree with the released implementation.
 - The release notes explicitly retain the limitation that a total first-visit `github.io` DNS failure cannot be repaired by this frontend.

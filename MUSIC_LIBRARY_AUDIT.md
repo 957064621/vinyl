@@ -1,6 +1,6 @@
 # Vinyl 曲库统计表
 
-更新时间：2026-07-22
+更新时间：2026-07-26
 
 ## 总览
 
@@ -11,7 +11,7 @@
 | 已配置 OSS 链接 | 142 |
 | 待补 OSS | 0 |
 | 待补歌词 | 0 |
-| 待补封面 OSS | 22 |
+| 待补封面 OSS | 23 |
 
 ## 发行组统计
 
@@ -36,10 +36,11 @@
 | 金斧子银斧子 - Single | single | 2025-08-05 | 1 | 0 | 0 | Y | N |
 | 霸王别姬 - Single | single | 2025-09-20 | 1 | 0 | 0 | Y | N |
 | 音乐缘计划2 第3期 (Live) | live | 2025-11-07 | 1 | 0 | 0 | Y | N |
+| 万兽之王演唱会录音 | live-recording | 2026 | 2 | 0 | 0 | Y | Y |
 | 湖泊 - Single | single | 2026-02-14 | 1 | 0 | 0 | Y | N |
 | 顽疾 - Single | single | 2026-04-10 | 1 | 0 | 0 | Y | N |
 | 人字拖 - Single | single | 2026-04-30 | 1 | 0 | 0 | Y | N |
-| 万兽之王演唱会录音 | live-recording | 待核对 | 3 | 0 | 0 | Y | Y |
+| 媚人 - Single | single | 2026-07-17 | 1 | 0 | 0 | Y | N |
 
 ## 当前曲库
 
@@ -181,12 +182,12 @@
 | 金斧子银斧子 | 金斧子银斧子 - Single | 已填 6 行 | OSS | https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/da/f4/e8/daf4e8ef-2bce-4f30-c9d5-5cbbdf8aabbd/4896004154414.jpg/600x600bb.jpg |
 | 霸王别姬 | 霸王别姬 - Single | 已填 5 行 | OSS | https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/ad/04/c1/ad04c11c-47b0-3edc-e2c7-04dc0faca8f2/4896004431041.jpg/600x600bb.jpg |
 | 平庸 | 音乐缘计划2 第3期 (Live) | 已填 5 行 | OSS | https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/9b/a8/3a/9ba83a47-de41-1925-cd5b-6f86924a103b/4896004619340.jpg/600x600bb.jpg |
+| 粉钻 | 万兽之王演唱会录音 | 已填 4 行 | OSS | https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg |
+| 造物 | 万兽之王演唱会录音 | 已填 5 行 | OSS | https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg |
 | 湖泊 | 湖泊 - Single | 已填 6 行 | OSS | https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/96/9c/4b/969c4b69-bd56-b0b5-5077-5d7a814c8198/4896016081395.jpg/600x600bb.jpg |
 | 顽疾 | 顽疾 - Single | 已填 6 行 | OSS | https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/21/e6/9d/21e69d4d-e817-c471-bc07-3a50f3063ce0/4896016243601.jpg/600x600bb.jpg |
 | 人字拖 | 人字拖 - Single | 已填 5 行 | OSS | https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/5b/4f/c1/5b4fc1b9-8755-a973-d4af-79256d84bdf6/4896016342731.jpg/600x600bb.jpg |
-| 粉钻 | 万兽之王演唱会录音 | 已填 4 行 | OSS | https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg |
-| 造物 | 万兽之王演唱会录音 | 已填 5 行 | OSS | https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg |
-| 媚人 | 万兽之王演唱会录音 | 已填 6 行 | OSS | https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg |
+| 媚人 | 媚人 - Single | 已填 6 行 | OSS | https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/6c/c8/3a/6cc83adf-7cd1-8dd0-6606-94106ac1f83f/4896016816485.jpg/600x600bb.jpg |
 
 ## 缺高潮歌词
 
