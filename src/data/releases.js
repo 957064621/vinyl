@@ -464,6 +464,9 @@ const getReleaseSortTime = (release) => {
 };
 
 releases.sort((left, right) => {
+    // 演唱会录音固定排在播放列表最后，其余按发行时间排序。
+    const endDiff = Number(left.type === 'live-recording') - Number(right.type === 'live-recording');
+    if (endDiff) return endDiff;
     const timeDiff = getReleaseSortTime(left) - getReleaseSortTime(right);
     return timeDiff || left.title.localeCompare(right.title, 'zh-Hans-CN');
 });

@@ -115,10 +115,14 @@ const criticalAssetGate = startCriticalAssetGate({
 
         setPlayButtonBusy(false);
 
-        const updateArchiveMetadata = createArchiveMetadata({
+        let archiveStatusOverride = null;
+        const writeArchiveMetadata = createArchiveMetadata({
             documentRef: document,
             tracks: lyricsPool
         });
+        const updateArchiveMetadata = (index, audioStatus) => (
+            writeArchiveMetadata(index, archiveStatusOverride ?? audioStatus)
+        );
 
         updateArchiveMetadata(-1, 'idle');
 
@@ -1098,6 +1102,35 @@ const criticalAssetGate = startCriticalAssetGate({
 
         let activeCoverLayer = coverLayerA;
         let coverSwapRequestId = 0;
+        let activeCoverReveal = Promise.resolve();
+
+        const trackCoverReveal = (cover) => new Promise((resolve) => {
+            requestAnimationFrame(() => {
+                const animations = cover?.getAnimations?.()
+                    .filter((animation) => animation.effect?.target === cover)
+                    || [];
+                if (animations.length === 0) {
+                    resolve();
+                    return;
+                }
+                Promise.allSettled(animations.map((animation) => animation.finished)).then(resolve);
+            });
+        });
+
+        const waitForActiveCoverReveal = ({ signal } = {}) => {
+            if (signal?.aborted) return Promise.resolve();
+            return new Promise((resolve) => {
+                let settled = false;
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    signal?.removeEventListener('abort', finish);
+                    resolve();
+                };
+                signal?.addEventListener('abort', finish, { once: true });
+                activeCoverReveal.then(finish, finish);
+            });
+        };
 
         // 预载后再交叉淡入，避免空白闪烁；两层互相淡入淡出
         const preloadCoverImage = (src) => new Promise((resolve) => {
@@ -1272,11 +1305,14 @@ const criticalAssetGate = startCriticalAssetGate({
             }
 
             const incoming = activeCoverLayer === coverLayerA ? coverLayerB : coverLayerA;
+            delete incoming.dataset.loadingHandoff;
+            delete incoming.dataset.loadingPrewarm;
             incoming.style.backgroundImage = `url("${artworkSrc}")`;
             delete document.body.dataset.coverState;
             incoming.classList.add('is-active');
             activeCoverLayer.classList.remove('is-active');
             activeCoverLayer = incoming;
+            activeCoverReveal = trackCoverReveal(incoming);
             return artworkSrc;
         };
 
@@ -1294,9 +1330,10 @@ const criticalAssetGate = startCriticalAssetGate({
             songEl.textContent = `- ${result.song}`;
             currentLyricIndex = index;
             updateArchiveMetadata(index, audioController.getState().status);
-            void applyCoverVisual(index);
+            const coverReady = applyCoverVisual(index);
             consumeLyricIndexFromQueue(index);
             updatePlaylistActiveTrack(index);
+            return coverReady;
         };
 
         const revealLyricContentImmediately = () => {
@@ -2020,16 +2057,26 @@ const criticalAssetGate = startCriticalAssetGate({
             async setLabel(label, { signal, duration }) {
                 if (btnTextEl.innerText === label) return;
                 const labelDuration = Math.floor(duration / 2);
-                await runOverlayAnimation(btnTextEl, [
-                    { opacity: 1, transform: 'translateY(0)' },
-                    { opacity: 0, transform: 'translateY(-4px)' }
-                ], { duration: labelDuration, easing: 'ease-out' }, signal);
-                if (signal.aborted) return;
-                btnTextEl.innerText = label;
-                await runOverlayAnimation(btnTextEl, [
-                    { opacity: 0, transform: 'translateY(4px)' },
-                    { opacity: 1, transform: 'translateY(0)' }
-                ], { duration: labelDuration, easing: 'ease-out' }, signal);
+                try {
+                    await runOverlayAnimation(btnTextEl, [
+                        { opacity: 1, transform: 'translateY(0)' },
+                        { opacity: 0, transform: 'translateY(-4px)' }
+                    ], { duration: labelDuration, easing: 'ease-out' }, signal);
+                    if (signal.aborted) return;
+                    btnTextEl.innerText = label;
+                    await runOverlayAnimation(btnTextEl, [
+                        { opacity: 0, transform: 'translateY(4px)' },
+                        { opacity: 1, transform: 'translateY(0)' }
+                    ], { duration: labelDuration, easing: 'ease-out' }, signal);
+                } finally {
+                    // 淡出完成后会留下行内 opacity:0；若换字被打断，必须落到
+                    // 目标文案并恢复可见，按钮不能停在空白状态。
+                    if (signal.aborted) {
+                        btnTextEl.innerText = label;
+                        btnTextEl.style.opacity = '1';
+                        btnTextEl.style.transform = 'translateY(0)';
+                    }
+                }
             }
         };
 
@@ -2038,11 +2085,12 @@ const criticalAssetGate = startCriticalAssetGate({
                 return { arm: getCurrentArmAngle(), rate: spinAnimation.playbackRate || 0 };
             },
             moveArmTo(target, { signal, duration, from = getCurrentArmAngle() }) {
+                // 唱臂是机械动作里最显眼的一段：放慢并用正弦缓动，起落更从容。
                 return animateTonearm({
                     from,
                     to: target === 'play' ? ARM_PLAY_ANGLE : ARM_REST_ANGLE,
-                    duration,
-                    easing: easeInOutCubic,
+                    duration: duration * 1.5,
+                    easing: easeInOutSine,
                     signal
                 });
             },
@@ -2114,7 +2162,8 @@ const criticalAssetGate = startCriticalAssetGate({
             const track = createAudioTrackByIndex(index);
             playerTime.innerText = '0:00';
             trackFill.style.transform = 'translate3d(-100%, 0, 0)';
-            updateCurrentLyric(index);
+            await updateCurrentLyric(index);
+            if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
             if (resultArea.classList.contains('is-visible')) revealLyricContentImmediately();
             return track;
         };
@@ -2139,14 +2188,17 @@ const criticalAssetGate = startCriticalAssetGate({
                 overlays,
                 controls,
                 audio: motionAudio,
-                selectTrack
+                selectTrack,
+                waitForCoverReveal: waitForActiveCoverReveal
             }),
             onActivityChange: ({ active, name }) => {
+                archiveStatusOverride = active && name === 'draw' ? 'drawing' : null;
                 isDrawing = active && (name === 'draw' || name === 'switch-track');
                 isTrackSwitching = active && name === 'switch-track';
                 document.body.classList.toggle('is-track-transitioning', isTrackSwitching);
                 setPlayButtonBusy(isDrawing);
                 if (isDrawing) resetDrawButtonSpotlight();
+                updateArchiveMetadata(currentLyricIndex, audioController.getState().status);
             }
         });
 

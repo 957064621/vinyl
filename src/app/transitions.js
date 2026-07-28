@@ -4,12 +4,33 @@ const assertActive = (signal) => {
   }
 };
 
+export const DRAW_LYRIC_HOLD_MS = 500;
+
+const waitForAbortableDelay = (duration, signal) => new Promise((resolve) => {
+  if (signal.aborted || duration <= 0) {
+    resolve();
+    return;
+  }
+
+  let timer = null;
+  const finish = () => {
+    if (timer !== null) clearTimeout(timer);
+    signal.removeEventListener('abort', finish);
+    resolve();
+  };
+
+  timer = setTimeout(finish, duration);
+  signal.addEventListener('abort', finish, { once: true });
+});
+
 export function createAppTransitions({
   turntable,
   overlays,
   controls,
   audio,
-  selectTrack
+  selectTrack,
+  waitForCoverReveal = () => Promise.resolve(),
+  waitForDelay = waitForAbortableDelay
 }) {
   const resetAfterPlaybackError = async (signal, tokens, profile) => {
     await turntable.resetAfterPlaybackError({
@@ -24,10 +45,17 @@ export function createAppTransitions({
     });
   };
 
-  const loadSelectedTrack = async ({ signal, targetIndex, profile, tokens }) => {
+  const loadSelectedTrack = async ({
+    signal,
+    targetIndex,
+    profile,
+    tokens,
+    onSelected = () => {}
+  }) => {
     try {
       const track = await selectTrack(targetIndex, { signal });
       assertActive(signal);
+      onSelected();
       const loaded = await audio.load(track);
       if (loaded === false) throw new Error('Audio load did not complete');
       assertActive(signal);
@@ -80,12 +108,24 @@ export function createAppTransitions({
       ]);
       assertActive(signal);
 
-      await loadSelectedTrack({ signal, targetIndex, profile, tokens });
+      let lyricHold = Promise.resolve();
+      await loadSelectedTrack({
+        signal,
+        targetIndex,
+        profile,
+        tokens,
+        onSelected: () => {
+          lyricHold = Promise.resolve(waitForCoverReveal({ signal }))
+            .then(() => waitForDelay(DRAW_LYRIC_HOLD_MS, signal));
+        }
+      });
 
-      await Promise.all([
+      const turntableSettling = Promise.all([
         turntable.moveArmTo('play', { signal, duration: tokens.settle, profile }),
         turntable.rampRateTo(0.68, { signal, duration: tokens.settle, profile })
       ]);
+
+      await lyricHold;
       assertActive(signal);
 
       await overlays.open('lyrics', {
@@ -94,6 +134,9 @@ export function createAppTransitions({
         profile,
         previousState: overlayState
       });
+      assertActive(signal);
+
+      await turntableSettling;
       assertActive(signal);
 
       await playSelectedTrack(signal, tokens, profile);

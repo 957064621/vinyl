@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const css = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8');
-const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
-const script = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+// Windows checkouts may smudge CRLF endings; the rule regexes embed \n.
+const readSource = (url) => readFileSync(url, 'utf8').replace(/\r\n/g, '\n');
+const css = readSource(new URL('../../src/style.css', import.meta.url));
+const html = readSource(new URL('../../index.html', import.meta.url));
+const script = readSource(new URL('../../src/main.js', import.meta.url));
 
 const ruleBody = (selector) => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -84,13 +86,19 @@ test('full idle state has one synchronized transform and opacity light pass', ()
   assert.equal((css.match(/@keyframes\s+btn-perimeter-pass\b/g) || []).length, 1);
   assert.equal((css.match(/@keyframes\s+btn-halo-pulse\b/g) || []).length, 1);
   assert.match(css, /--btn-light-cycle:\s*7200ms/);
-  assert.match(css, /--btn-light-active-window:\s*16\.667%/);
+  assert.match(css, /--btn-light-active-window:\s*94\.444%/);
   assert.match(css, /html\[data-motion-profile="full"\]\s+\.play-btn:not\(\[data-busy\]\):not\(:disabled\)\s+\.btn-sheen::before[\s\S]*?btn-perimeter-pass\s+var\(--btn-light-cycle\)\s+cubic-bezier\(0\.32,\s*0\.72,\s*0,\s*1\)\s+infinite/);
   assert.match(css, /html\[data-motion-profile="full"\]\s+\.play-btn:not\(\[data-busy\]\):not\(:disabled\)::after[\s\S]*?btn-halo-pulse\s+var\(--btn-light-cycle\)\s+cubic-bezier\(0\.32,\s*0\.72,\s*0,\s*1\)\s+infinite/);
-  assert.match(pulse, /0%,\s*16\.667%,\s*100%/);
+  assert.match(pulse, /0%,\s*100%\s*\{[\s\S]*?opacity:\s*0/);
   assert.match(pass, /0%\s*\{[\s\S]*?transform:\s*translate3d\(-50%,\s*-50%,\s*0\)\s*rotate\(0turn\)/);
-  assert.match(pass, /8\.333%\s*\{\s*opacity:\s*0\.72;\s*\}/);
-  assert.match(pass, /16\.667%,\s*100%\s*\{[\s\S]*?transform:\s*translate3d\(-50%,\s*-50%,\s*0\)\s*rotate\(1turn\)/);
+  assert.match(pass, /5\.556%\s*\{\s*opacity:\s*0\.58;\s*\}/);
+  assert.match(pass, /66\.667%\s*\{\s*opacity:\s*0\.26;\s*\}/);
+  assert.match(pass, /100%\s*\{[\s\S]*?transform:\s*translate3d\(-50%,\s*-50%,\s*0\)\s*rotate\(1turn\)/);
+  assert.equal(
+    (pass.match(/transform:/g) || []).length,
+    2,
+    'the lap must keep exactly two rotation stops so the sweep runs one uninterrupted easing segment'
+  );
   assert.match(pass, /transform:/);
   assert.match(pass, /opacity:/);
   assert.match(pulse, /transform:/);

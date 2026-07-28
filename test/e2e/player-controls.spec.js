@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { CRITICAL_IMAGE_MANIFEST } from '../../src/config/assets.js';
+import { DRAW_LYRIC_HOLD_MS } from '../../src/app/transitions.js';
 
 const DETERMINISTIC_COVER = Buffer.from(`
   <svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800">
@@ -247,6 +248,184 @@ const hitTestControlCenter = (page, selector) => page.locator(selector).evaluate
     hitId: hit?.id || '',
     hitClass: typeof hit?.className === 'string' ? hit.className : ''
   };
+});
+
+test('draw keeps the switched record cover visible for 500ms before lyrics appear', async ({ page }) => {
+  await waitForApp(page);
+  await page.evaluate(() => {
+    const coverRoot = document.querySelector('.vinyl-sticker');
+    const resultArea = document.querySelector('#resultArea');
+    const archiveState = document.querySelector('#archivePlaybackState');
+    const initialActiveCover = coverRoot.querySelector('.vinyl-cover.is-active');
+    window.__drawRevealTiming = {
+      coverChangedAt: null,
+      coverAt: null,
+      lyricsAt: null,
+      archiveStates: [archiveState.textContent]
+    };
+
+    const sampleCover = () => {
+      const timing = window.__drawRevealTiming;
+      const activeCover = coverRoot.querySelector('.vinyl-cover.is-active');
+      if (activeCover && activeCover !== initialActiveCover) {
+        timing.coverChangedAt ??= performance.now();
+        const inactiveCovers = Array.from(coverRoot.querySelectorAll('.vinyl-cover'))
+          .filter((cover) => cover !== activeCover);
+        const activeOpacity = Number.parseFloat(getComputedStyle(activeCover).opacity);
+        const inactiveOpacity = Math.max(
+          0,
+          ...inactiveCovers.map((cover) => Number.parseFloat(getComputedStyle(cover).opacity))
+        );
+        if (
+          activeCover.style.backgroundImage
+          && activeOpacity >= 0.99
+          && inactiveOpacity <= 0.01
+        ) {
+          timing.coverAt ??= performance.now();
+        }
+      }
+      if (timing.coverAt === null) requestAnimationFrame(sampleCover);
+    };
+    requestAnimationFrame(sampleCover);
+
+    new MutationObserver(() => {
+      if (
+        window.__drawRevealTiming.lyricsAt === null
+        && resultArea.classList.contains('is-visible')
+      ) {
+        window.__drawRevealTiming.lyricsAt = performance.now();
+      }
+    }).observe(resultArea, { attributes: true, attributeFilter: ['class'] });
+
+    new MutationObserver(() => {
+      window.__drawRevealTiming.archiveStates.push(archiveState.textContent);
+    }).observe(archiveState, { childList: true, subtree: true, characterData: true });
+  });
+
+  await page.locator('#playButton').click();
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+  await expect(page.locator('#archivePlaybackState')).toHaveText('播放', { timeout: 12_000 });
+
+  const timing = await page.evaluate(() => ({
+    ...window.__drawRevealTiming,
+    activeCoverCount: document.querySelectorAll('.vinyl-cover.is-active').length
+  }));
+  expect(timing.coverAt).not.toBeNull();
+  expect(timing.coverChangedAt).not.toBeNull();
+  expect(timing.lyricsAt).not.toBeNull();
+  expect(timing.lyricsAt - timing.coverAt)
+    .toBeGreaterThanOrEqual(DRAW_LYRIC_HOLD_MS - 20);
+  expect(timing.lyricsAt - timing.coverAt)
+    .toBeLessThanOrEqual(DRAW_LYRIC_HOLD_MS + 150);
+  expect(timing.activeCoverCount).toBe(1);
+  expect(timing.archiveStates).toContain('抽取中');
+  expect(timing.archiveStates.at(-1)).toBe('播放');
+  const drawingIndex = timing.archiveStates.indexOf('抽取中');
+  expect(timing.archiveStates.slice(drawingIndex, -1)).not.toContain('读取');
+  expect(timing.archiveStates.slice(drawingIndex, -1)).not.toContain('暂停');
+});
+
+test('redraw keeps the replacement cover fully visible for 500ms before reopening lyrics', async ({ page }, testInfo) => {
+  await waitForApp(page);
+  await drawAndOpenLyrics(page);
+
+  await page.evaluate((holdMs) => {
+    const coverRoot = document.querySelector('.vinyl-sticker');
+    const resultArea = document.querySelector('#resultArea');
+    const initialActiveCover = coverRoot.querySelector('.vinyl-cover.is-active');
+    let resolveMidHold;
+    window.__redrawCoverHoldPromise = new Promise((resolve) => {
+      resolveMidHold = resolve;
+    });
+    window.__redrawRevealTiming = {
+      initialActiveCoverId: initialActiveCover?.id || '',
+      replacementCoverId: '',
+      replacementHadLoadingHandoff: null,
+      replacementAnimationName: '',
+      coverChangedAt: null,
+      coverSettledAt: null,
+      lyricsClosedAt: null,
+      lyricsAt: null,
+      sawLyricsClosed: false,
+      midHoldLyricsVisible: null
+    };
+
+    const readLyricsState = () => {
+      const timing = window.__redrawRevealTiming;
+      const visible = resultArea.classList.contains('is-visible');
+      if (!visible) {
+        timing.sawLyricsClosed = true;
+        timing.lyricsClosedAt ??= performance.now();
+      } else if (timing.sawLyricsClosed && timing.lyricsAt === null) {
+        timing.lyricsAt = performance.now();
+      }
+    };
+    new MutationObserver(readLyricsState).observe(resultArea, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+
+    const sampleCover = () => {
+      const timing = window.__redrawRevealTiming;
+      const activeCover = coverRoot.querySelector('.vinyl-cover.is-active');
+      if (activeCover && activeCover !== initialActiveCover) {
+        timing.replacementCoverId = activeCover.id;
+        if (timing.coverChangedAt === null) {
+          timing.coverChangedAt = performance.now();
+          timing.replacementHadLoadingHandoff = activeCover.hasAttribute('data-loading-handoff')
+            || activeCover.hasAttribute('data-loading-prewarm');
+          timing.replacementAnimationName = getComputedStyle(activeCover).animationName;
+        }
+        const inactiveCovers = Array.from(coverRoot.querySelectorAll('.vinyl-cover'))
+          .filter((cover) => cover !== activeCover);
+        const activeOpacity = Number.parseFloat(getComputedStyle(activeCover).opacity);
+        const inactiveOpacity = Math.max(
+          0,
+          ...inactiveCovers.map((cover) => Number.parseFloat(getComputedStyle(cover).opacity))
+        );
+        if (activeOpacity >= 0.99 && inactiveOpacity <= 0.01) {
+          if (timing.coverSettledAt === null) {
+            timing.coverSettledAt = performance.now();
+            setTimeout(() => {
+              timing.midHoldLyricsVisible = resultArea.classList.contains('is-visible');
+              resolveMidHold();
+            }, holdMs / 2);
+          }
+        }
+      }
+
+      if (timing.coverSettledAt === null || timing.lyricsAt === null) {
+        requestAnimationFrame(sampleCover);
+      }
+    };
+    requestAnimationFrame(sampleCover);
+  }, DRAW_LYRIC_HOLD_MS);
+
+  await page.locator('#playButton').click();
+  await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/, { timeout: 5_000 });
+  await page.evaluate(() => window.__redrawCoverHoldPromise);
+  expect(await page.evaluate(() => window.__redrawRevealTiming.midHoldLyricsVisible)).toBe(false);
+  await testInfo.attach('redraw-cover-hold', {
+    body: await page.screenshot(),
+    contentType: 'image/png'
+  });
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+  await expect.poll(() => page.evaluate(() => (
+    window.__redrawRevealTiming.coverSettledAt !== null
+      && window.__redrawRevealTiming.lyricsAt !== null
+  )), { timeout: 5_000 }).toBe(true);
+
+  const timing = await page.evaluate(() => ({ ...window.__redrawRevealTiming }));
+  expect(timing.replacementCoverId).not.toBe(timing.initialActiveCoverId);
+  expect(timing.replacementHadLoadingHandoff).toBe(false);
+  expect(timing.replacementAnimationName).not.toContain('loading-target-cover-reveal');
+  expect(timing.coverChangedAt).not.toBeNull();
+  expect(timing.coverSettledAt).not.toBeNull();
+  expect(timing.lyricsAt).not.toBeNull();
+  expect(timing.lyricsAt - timing.coverSettledAt)
+    .toBeGreaterThanOrEqual(DRAW_LYRIC_HOLD_MS - 20);
+  expect(timing.lyricsAt - timing.coverSettledAt)
+    .toBeLessThanOrEqual(DRAW_LYRIC_HOLD_MS + 150);
 });
 
 test('normal pause settles the record, sheen, and tonearm at rest', async ({ page }, testInfo) => {

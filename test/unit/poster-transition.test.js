@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 import {
+  PORTAL_DURATION,
   POSTER_TIMING as VISUAL8_TIMING,
   createPosterTransition
 } from '../../src/ui/poster-transition.js';
@@ -195,35 +196,34 @@ const makeFixture = ({
 };
 
 test('timing tables are deeply frozen and preserve fast portal travel with a readable center hold', () => {
+  assert.equal(PORTAL_DURATION, 760, 'the established stretch/luminance portal envelope must not change');
   assert.deepEqual(VISUAL8_TIMING, {
     full: {
-      normal: { gather: 90, handoff: 420, exit: 340, hold: 500 },
-      compressed: { gather: 60, handoff: 340, exit: 280, hold: 440 },
+      normal: { gather: 300, handoff: 420, exit: 340, hold: 500 },
+      compressed: { gather: 300, handoff: 340, exit: 280, hold: 440 },
       finalHold: 840,
       finalResolve: 1100,
-      exitLead: 620,
+      exitLead: 1100,
       rootFade: 680
     },
     compact: {
-      normal: { gather: 70, handoff: 360, exit: 300, hold: 440 },
-      compressed: { gather: 50, handoff: 300, exit: 240, hold: 380 },
+      normal: { gather: 300, handoff: 420, exit: 340, hold: 440 },
+      compressed: { gather: 300, handoff: 340, exit: 280, hold: 380 },
       finalHold: 720,
-      finalResolve: 920,
-      exitLead: 520,
-      rootFade: 560
+      finalResolve: 1100,
+      exitLead: 1100,
+      rootFade: 680
     },
     reduce: { fade: 120 }
   });
-  const firstPosterTime = ({ gather, handoff, hold }) => gather + handoff + hold;
-  const exchangeTime = ({ gather, handoff, exit, hold }) => (
-    gather + exit + gather + handoff + hold
-  );
-  assert.equal(firstPosterTime(VISUAL8_TIMING.full.normal), 1010);
-  assert.equal(exchangeTime(VISUAL8_TIMING.full.normal), 1440);
-  assert.equal(firstPosterTime(VISUAL8_TIMING.full.compressed), 840);
-  assert.equal(exchangeTime(VISUAL8_TIMING.full.compressed), 1180);
-  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.normal), 870);
-  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.compressed), 730);
+  const firstPosterTime = ({ hold }) => PORTAL_DURATION + hold;
+  const exchangeTime = ({ hold }) => (PORTAL_DURATION * 2) + hold;
+  assert.equal(firstPosterTime(VISUAL8_TIMING.full.normal), 1260);
+  assert.equal(exchangeTime(VISUAL8_TIMING.full.normal), 2020);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.full.compressed), 1200);
+  assert.equal(exchangeTime(VISUAL8_TIMING.full.compressed), 1960);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.normal), 1200);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.compressed), 1140);
   assert.equal(Object.isFrozen(VISUAL8_TIMING), true);
   for (const profile of ['full', 'compact', 'reduce']) {
     assert.equal(Object.isFrozen(VISUAL8_TIMING[profile]), true);
@@ -234,7 +234,69 @@ test('timing tables are deeply frozen and preserve fast portal travel with a rea
   }
 });
 
-test('left portal ignites for the lead before a single poster begins entering', async () => {
+test('poster transition removes legacy edge feathers and measures a horizontal portal', () => {
+  const source = readFileSync(new URL('../../src/ui/poster-transition.js', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(source, /poster-fade|sideFade|leftSoft|rightSoft/);
+  assert.match(source, /const portalOrientation = 'horizontal'/);
+  assert.match(source, /const gateWidth = Math\.max\(1, Math\.min\(artWidth \* 1\.08, availableWidth\)\)/);
+  assert.match(source, /const gateHeight = Math\.max\(112, Math\.min\(168, gateWidth \/ 4\.4\)\)/);
+  assert.match(source, /const desiredGap = Math\.max\(20, Math\.min\(38, artHeight \* 0\.055\)\)/);
+});
+
+test('top portal leaves measured space above the artwork and forwards its actual travel distance', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, images, particleCalls, root, slots } = makeFixture({ scheduler });
+  root.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    right: 600,
+    bottom: 400,
+    width: 600,
+    height: 400
+  });
+  Object.defineProperties(images[0], {
+    naturalWidth: { configurable: true, value: 300 },
+    naturalHeight: { configurable: true, value: 400 }
+  });
+
+  controller.enqueue(slots[0]);
+  await flush();
+
+  const gateWidth = Number.parseFloat(root.style.getPropertyValue('--gate-width'));
+  const gateHeight = Number.parseFloat(root.style.getPropertyValue('--gate-height'));
+  const gateY = Number.parseFloat(root.style.getPropertyValue('--gate-y'));
+  const portalGap = Number.parseFloat(root.style.getPropertyValue('--portal-gap'));
+  const seamInset = Number.parseFloat(slots[0].style.getPropertyValue('--seam-inset'));
+  const portalOffset = Number.parseFloat(slots[0].style.getPropertyValue('--poster-portal-offset'));
+  assert.equal(gateWidth, 194.4);
+  assert.equal(gateHeight, 112);
+  assert.equal(gateY, 12);
+  assert.equal(portalGap, 18);
+  assert.equal(seamInset, -7.5);
+  assert.ok(portalOffset < -110, 'the poster begins fully beyond the separated gate');
+  assert.equal(slots[0].style.cssText.includes('poster-fade'), false);
+
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
+  await flush();
+  const gatherCall = particleCalls.find(([phase]) => phase === 'gather');
+  const gatherBounds = gatherCall?.[1];
+  const gatherOptions = gatherCall?.[3];
+  assert.ok(Math.abs(gatherBounds.left - 12.8) < 0.001);
+  assert.ok(Math.abs(gatherBounds.right - 207.2) < 0.001);
+  assert.equal(gatherBounds.top, 12);
+  assert.equal(gatherBounds.bottom, 12);
+  assert.equal(gatherBounds.height, 0, 'particles are born on the measured light core');
+  assert.equal(gatherOptions?.portalSide, 'top');
+  assert.ok(Math.abs(gatherOptions?.motionDistance - 268) < 0.001);
+
+  controller.freeze();
+  assert.equal(slots[0].style.getPropertyValue('--seam-inset'), '');
+  assert.equal(slots[0].style.getPropertyValue('--poster-portal-offset'), '');
+  assert.equal(root.style.getPropertyValue('--portal-gap'), '');
+});
+
+test('top portal ignites for the lead before a single poster begins entering', async () => {
   const scheduler = makeManualScheduler();
   const { controller, root, scheduler: unused, slit, slots } = {
     ...makeFixture({ scheduler }),
@@ -246,9 +308,9 @@ test('left portal ignites for the lead before a single poster begins entering', 
 
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
   assert.equal(slit.classList.contains('is-lit'), true);
-  assert.equal(root.dataset.portalSide, 'left');
+  assert.equal(root.dataset.portalSide, 'top');
   assert.equal(root.dataset.portalPhase, 'enter');
-  assert.equal(slit.dataset.portalSide, 'left');
+  assert.equal(slit.dataset.portalSide, 'top');
   assert.equal(slit.dataset.portalPhase, 'enter');
   assert.equal(root.querySelectorAll('.is-active').length, 0);
 
@@ -259,10 +321,10 @@ test('left portal ignites for the lead before a single poster begins entering', 
   assert.equal(root.querySelectorAll('.is-active').length, 1);
   assert.equal(slots[0].classList.contains('is-entering'), true);
   assert.equal(slots[0].classList.contains('is-entering-from-portal'), true);
-  assert.equal(slots[0].dataset.portalSide, 'left');
+  assert.equal(slots[0].dataset.portalSide, 'top');
   assert.equal(slots[0].dataset.portalPhase, 'enter');
-  assert.equal(root.style.getPropertyValue('--slit-duration'), '510ms');
-  assert.equal(root.style.getPropertyValue('--portal-phase-ms'), '510ms');
+  assert.equal(root.style.getPropertyValue('--slit-duration'), `${PORTAL_DURATION}ms`);
+  assert.equal(root.style.getPropertyValue('--portal-phase-ms'), `${PORTAL_DURATION}ms`);
 
   controller.freeze();
 });
@@ -282,7 +344,7 @@ test('validates required collaborators and motion profiles', () => {
   assert.equal(controller.getState().profile, 'full');
 });
 
-test('rapid enqueue is synchronous, FIFO, uses one vertical axis, and preserves exact image nodes', async () => {
+test('rapid enqueue is synchronous, FIFO, uses one horizontal gate axis, and preserves exact image nodes', async () => {
   const { controller, images, root, slots } = makeFixture();
   const returns = slots.map((slot) => controller.enqueue(slot));
 
@@ -290,11 +352,11 @@ test('rapid enqueue is synchronous, FIFO, uses one vertical axis, and preserves 
   assert.equal(controller.enqueue(slots[0]), false, 'a decoded slot is accepted once per run');
   assert.deepEqual(slots.map((slot) => slot.dataset.transitionOrder), ['1', '2', '3', '4', '5']);
   assert.deepEqual(slots.map((slot) => slot.dataset.slitDirection), [
-    'vertical',
-    'vertical',
-    'vertical',
-    'vertical',
-    'vertical'
+    'horizontal',
+    'horizontal',
+    'horizontal',
+    'horizontal',
+    'horizontal'
   ]);
 
   const finishing = controller.finish();
@@ -408,29 +470,40 @@ test('rapid backlog stays compressed through one drain and a later isolated run 
   await flush();
 
   const compressedRounds = await releaseProcessingRounds();
+  const fastEnterTail = PORTAL_DURATION - POSTER_TIMING.fast.gather - POSTER_TIMING.fast.handoff;
+  const fastExitTail = PORTAL_DURATION - POSTER_TIMING.fast.gather - POSTER_TIMING.fast.exit;
   assert.deepEqual(compressedRounds, [
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.handoff],
+    [fastEnterTail],
     [POSTER_TIMING.fast.hold],
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.exit],
+    [fastExitTail],
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.handoff],
+    [fastEnterTail],
     [POSTER_TIMING.fast.hold],
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.exit],
+    [fastExitTail],
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.handoff],
+    [fastEnterTail],
     [POSTER_TIMING.fast.hold],
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.exit],
+    [fastExitTail],
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.handoff],
+    [fastEnterTail],
     [POSTER_TIMING.fast.hold],
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.exit],
+    [fastExitTail],
     [POSTER_TIMING.fast.gather],
     [POSTER_TIMING.fast.handoff],
+    [fastEnterTail],
     [POSTER_TIMING.finalHold]
   ]);
   assert.equal(
@@ -438,7 +511,7 @@ test('rapid backlog stays compressed through one drain and a later isolated run 
       + POSTER_TIMING.fast.exit
       + POSTER_TIMING.fast.handoff
       + POSTER_TIMING.fast.hold,
-    1180
+    1660
   );
   assert.equal(
     slots.at(-1).style.getPropertyValue('--poster-handoff-ms'),
@@ -457,6 +530,7 @@ test('rapid backlog stays compressed through one drain and a later isolated run 
   assert.deepEqual(isolatedRounds, [
     [POSTER_TIMING.normal.gather],
     [POSTER_TIMING.normal.handoff],
+    [PORTAL_DURATION - POSTER_TIMING.normal.gather - POSTER_TIMING.normal.handoff],
     [POSTER_TIMING.normal.hold]
   ]);
   assert.equal(
@@ -483,6 +557,7 @@ test('finish after an idle normal scene adds only the unread final hold remainde
   assert.deepEqual(scheduler.sleepCalls, [
     POSTER_TIMING.normal.gather,
     POSTER_TIMING.normal.handoff,
+    PORTAL_DURATION - POSTER_TIMING.normal.gather - POSTER_TIMING.normal.handoff,
     POSTER_TIMING.normal.hold
   ]);
 
@@ -562,7 +637,7 @@ for (const [initialProfile, nextProfile] of [
   });
 }
 
-test('poster exchange exits right completely before the next poster enters from the left', async () => {
+test('poster exchange descends into the bottom portal before the next poster emerges from the top', async () => {
   const scheduler = makeManualScheduler();
   const { controller, particleCalls, root, slit, slots } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
@@ -570,7 +645,7 @@ test('poster exchange exits right completely before the next poster enters from 
   await flush();
 
   let guard = 0;
-  while (root.dataset.portalSide !== 'right' || root.dataset.portalPhase !== 'exit') {
+  while (root.dataset.portalSide !== 'bottom' || root.dataset.portalPhase !== 'exit') {
     assert.ok(guard < 16);
     assert.ok(scheduler.pending > 0);
     scheduler.releaseNext();
@@ -582,7 +657,7 @@ test('poster exchange exits right completely before the next poster enters from 
   assert.equal(slots[0].classList.contains('is-stable'), true);
   assert.equal(slots[1].classList.contains('is-active'), false);
   assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 1);
-  assert.equal(slit.dataset.portalSide, 'right');
+  assert.equal(slit.dataset.portalSide, 'bottom');
   assert.equal(slit.dataset.portalPhase, 'exit');
 
   scheduler.releaseDuration(POSTER_TIMING.normal.gather);
@@ -595,13 +670,13 @@ test('poster exchange exits right completely before the next poster enters from 
   assert.equal(outgoing.classList.contains('is-exiting-to-portal'), true);
   assert.equal(outgoing.classList.contains('is-active'), false);
   assert.equal(outgoing.querySelector('img').getAttribute('aria-hidden'), 'true');
-  assert.equal(outgoing.dataset.portalSide, 'right');
+  assert.equal(outgoing.dataset.portalSide, 'bottom');
   assert.equal(outgoing.dataset.portalPhase, 'exit');
   assert.equal(incoming.classList.contains('is-active'), false);
   assert.equal(incoming.classList.contains('is-revealing'), false);
   assert.equal(root.querySelectorAll('.is-active').length, 0);
   assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 1);
-  assert.equal(root.style.getPropertyValue('--slit-duration'), '430ms');
+  assert.equal(root.style.getPropertyValue('--slit-duration'), `${PORTAL_DURATION}ms`);
   assert.ok(particleCalls.some(([name]) => name === 'scatter'));
   assert.ok(scheduler.durations.includes(POSTER_TIMING.normal.exit));
   assert.equal(
@@ -612,10 +687,17 @@ test('poster exchange exits right completely before the next poster enters from 
 
   scheduler.releaseDuration(POSTER_TIMING.normal.exit);
   await flush();
+  const exitTail = PORTAL_DURATION - POSTER_TIMING.normal.gather - POSTER_TIMING.normal.exit;
+  assert.equal(root.dataset.portalSide, 'bottom');
+  assert.equal(root.dataset.portalPhase, 'exit');
+  assert.deepEqual(scheduler.durations, [exitTail]);
+
+  scheduler.releaseDuration(exitTail);
+  await flush();
   assert.equal(outgoing.classList.contains('is-outgoing'), false);
   assert.equal(outgoing.classList.contains('is-exiting'), false);
   assert.equal(outgoing.classList.contains('is-exiting-to-portal'), false);
-  assert.equal(root.dataset.portalSide, 'left');
+  assert.equal(root.dataset.portalSide, 'top');
   assert.equal(root.dataset.portalPhase, 'enter');
   assert.equal(incoming.classList.contains('is-active'), false);
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
@@ -625,7 +707,7 @@ test('poster exchange exits right completely before the next poster enters from 
   assert.equal(incoming.classList.contains('is-active'), true);
   assert.equal(incoming.classList.contains('is-revealing'), true);
   assert.equal(incoming.classList.contains('is-entering-from-portal'), true);
-  assert.equal(incoming.dataset.portalSide, 'left');
+  assert.equal(incoming.dataset.portalSide, 'top');
   assert.equal(incoming.dataset.portalPhase, 'enter');
   assert.equal(root.querySelectorAll('.is-active').length, 1);
   assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
@@ -642,7 +724,7 @@ test('poster exchange exits right completely before the next poster enters from 
   assert.equal(outgoing.classList.contains('is-outgoing'), false);
   assert.equal(outgoing.style.getPropertyValue('--poster-handoff-ms'), '');
   assert.equal(incoming.classList.contains('is-entering-from-portal'), false);
-  assert.equal(root.dataset.portalSide, undefined);
+  assert.equal(root.dataset.portalSide, undefined, 'the lamp goes fully dark once the poster rests');
   assert.equal(root.dataset.portalPhase, undefined);
   await controller.waitForIdle();
   assert.equal(root.querySelectorAll('.is-outgoing').length, 0);
@@ -681,7 +763,7 @@ test('normal and compressed scene durations override deliberately slow particle 
   );
   assert.deepEqual(
     normalField.calls.map(([phase, , , options]) => [phase, options.portalSide]),
-    [['gather', 'left'], ['scatter', 'right'], ['gather', 'left']]
+    [['gather', 'top'], ['scatter', 'bottom'], ['gather', 'top']]
   );
 
   const fastField = makeSlowField();
@@ -799,7 +881,7 @@ test('full to compact settles particles without cancelling the active portal pha
   assert.equal(controller.getState().activeId, 'archive-03');
 });
 
-test('right-exit rejection restores the current poster and cleans transient portal state', async () => {
+test('bottom-exit rejection restores the current poster and cleans transient portal state', async () => {
   const scheduler = makeManualScheduler();
   const expected = new Error('overlapped scatter failed');
   let scatterCalls = 0;
@@ -1069,9 +1151,9 @@ test('reset aborts an old finish exposure without settling the new run', async (
   assert.equal(slots[0].style.getPropertyValue('--poster-handoff-ms'), '');
   assert.equal(
     root.style.getPropertyValue('--slit-duration'),
-    `${POSTER_TIMING.normal.gather + POSTER_TIMING.normal.handoff}ms`
+    `${PORTAL_DURATION}ms`
   );
-  assert.equal(root.dataset.portalSide, 'left');
+  assert.equal(root.dataset.portalSide, 'top');
   assert.equal(root.dataset.portalPhase, 'enter');
   assert.equal(controller.getState().activeId, null);
   iterations = 0;

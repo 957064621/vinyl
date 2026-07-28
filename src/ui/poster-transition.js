@@ -1,19 +1,21 @@
+export const PORTAL_DURATION = 760;
+
 export const POSTER_TIMING = Object.freeze({
   full: Object.freeze({
-    normal: Object.freeze({ gather: 90, handoff: 420, exit: 340, hold: 500 }),
-    compressed: Object.freeze({ gather: 60, handoff: 340, exit: 280, hold: 440 }),
+    normal: Object.freeze({ gather: 300, handoff: 420, exit: 340, hold: 500 }),
+    compressed: Object.freeze({ gather: 300, handoff: 340, exit: 280, hold: 440 }),
     finalHold: 840,
     finalResolve: 1100,
-    exitLead: 620,
+    exitLead: 1100,
     rootFade: 680
   }),
   compact: Object.freeze({
-    normal: Object.freeze({ gather: 70, handoff: 360, exit: 300, hold: 440 }),
-    compressed: Object.freeze({ gather: 50, handoff: 300, exit: 240, hold: 380 }),
+    normal: Object.freeze({ gather: 300, handoff: 420, exit: 340, hold: 440 }),
+    compressed: Object.freeze({ gather: 300, handoff: 340, exit: 280, hold: 380 }),
     finalHold: 720,
-    finalResolve: 920,
-    exitLead: 520,
-    rootFade: 560
+    finalResolve: 1100,
+    exitLead: 1100,
+    rootFade: 680
   }),
   reduce: Object.freeze({ fade: 120 })
 });
@@ -107,7 +109,7 @@ export function createPosterTransition({
   let errorReported = false;
   let finishPromise = null;
   let runToken = {};
-  const portalOrientation = 'vertical';
+  const portalOrientation = 'horizontal';
   const idleWaiters = new Set();
 
   const slots = () => [...root.querySelectorAll('[data-loading-slot]')];
@@ -160,6 +162,8 @@ export function createPosterTransition({
     delete slot.dataset.portalPhase;
     slot.style.removeProperty('--poster-enter-ms');
     slot.style.removeProperty('--poster-exit-ms');
+    slot.style.removeProperty('--seam-inset');
+    slot.style.removeProperty('--poster-portal-offset');
   };
 
   const clearPortalState = () => {
@@ -171,8 +175,154 @@ export function createPosterTransition({
     delete slit.dataset.portalPhase;
     root.style.removeProperty('--slit-duration');
     root.style.removeProperty('--portal-phase-ms');
+    root.style.removeProperty('--gate-x');
+    root.style.removeProperty('--gate-y');
+    root.style.removeProperty('--gate-height');
+    root.style.removeProperty('--gate-width');
+    root.style.removeProperty('--portal-gap');
   };
 
+  // 用 contain 布局的实际画面盒定位光隧道：洞口高度贴合画面，
+  // 洞口停在画面边缘外一段间距处；显影缝隙（取景框裁切平面）钉在洞口中心。
+  const artMetrics = (item, side) => {
+    try {
+      const slotBounds = item?.slot?.getBoundingClientRect?.();
+      const stageBounds = slit?.parentElement?.getBoundingClientRect?.();
+      const naturalWidth = Number(item?.image?.naturalWidth);
+      const naturalHeight = Number(item?.image?.naturalHeight);
+      const stageWidth = Number(stageBounds?.width);
+      const stageHeight = Number(stageBounds?.height);
+      const rootBounds = root.getBoundingClientRect?.();
+      if (
+        !slotBounds
+        || !stageBounds
+        || !(slotBounds.width > 0)
+        || !(slotBounds.height > 0)
+        || !(stageWidth > 0)
+        || !(stageHeight > 0)
+        || !(naturalWidth > 0)
+        || !(naturalHeight > 0)
+      ) return null;
+
+      const containRatio = Math.min(slotBounds.width / naturalWidth, slotBounds.height / naturalHeight);
+      const artWidth = naturalWidth * containRatio;
+      const artHeight = naturalHeight * containRatio;
+      const insetX = Math.max(0, (slotBounds.width - artWidth) / 2);
+      const insetY = Math.max(0, (slotBounds.height - artHeight) / 2);
+      const artLeft = slotBounds.left + insetX;
+      const artRight = artLeft + artWidth;
+      const artTop = slotBounds.top + insetY;
+      const artBottom = artTop + artHeight;
+      const hasRootBounds = Number(rootBounds?.width) > 0 && Number(rootBounds?.height) > 0;
+      const boundaryLeft = hasRootBounds ? Number(rootBounds.left) : Number(stageBounds.left);
+      const boundaryRight = hasRootBounds ? Number(rootBounds.right) : Number(stageBounds.right);
+      const boundaryTop = hasRootBounds ? Number(rootBounds.top) : Number(stageBounds.top);
+      const boundaryBottom = hasRootBounds ? Number(rootBounds.bottom) : Number(stageBounds.bottom);
+      const desiredGap = Math.max(20, Math.min(38, artHeight * 0.055));
+      const portalScreenY = side === 'bottom'
+        ? Math.min(boundaryBottom - 12, artBottom + desiredGap)
+        : Math.max(boundaryTop + 12, artTop - desiredGap);
+      const portalGap = side === 'bottom'
+        ? Math.max(0, portalScreenY - artBottom)
+        : Math.max(0, artTop - portalScreenY);
+      const seamPercent = side === 'bottom'
+        ? ((slotBounds.bottom - portalScreenY) / slotBounds.height) * 100
+        : ((portalScreenY - slotBounds.top) / slotBounds.height) * 100;
+      const availableWidth = Math.max(1, boundaryRight - boundaryLeft - 24);
+      const gateWidth = Math.max(1, Math.min(artWidth * 1.08, availableWidth));
+      const gateHeight = Math.max(112, Math.min(168, gateWidth / 4.4));
+      const minimumGateX = (boundaryLeft - stageBounds.left) + 12 + (gateWidth / 2);
+      const maximumGateX = (boundaryRight - stageBounds.left) - 12 - (gateWidth / 2);
+      const artCenterInStage = (artLeft + (artWidth / 2)) - stageBounds.left;
+      const portalStageX = Math.min(maximumGateX, Math.max(minimumGateX, artCenterInStage));
+      const portalScreenX = portalStageX + stageBounds.left;
+      const portalOffset = Math.min(
+        124,
+        Math.max(110, 100 + (((portalGap + 10) / artHeight) * 100))
+      );
+      const motionDistance = slotBounds.height * (portalOffset / 100);
+      return {
+        artBounds: {
+          left: artLeft,
+          right: artRight,
+          top: artTop,
+          bottom: artBottom,
+          width: artWidth,
+          height: artHeight
+        },
+        particleBounds: {
+          left: portalScreenX - (gateWidth / 2),
+          right: portalScreenX + (gateWidth / 2),
+          top: portalScreenY,
+          bottom: portalScreenY,
+          width: gateWidth,
+          height: 0
+        },
+        artHeight,
+        gateHeight,
+        gateWidth,
+        portalGap,
+        portalOffset,
+        motionDistance,
+        portalScreenY,
+        portalStageX,
+        portalStageY: portalScreenY - stageBounds.top,
+        seamPercent,
+        artWidth,
+        artBottomInSlot: insetY + artHeight,
+        artTopInSlot: insetY,
+        floatWidth: Math.max(72, artWidth * 0.78),
+        floatHeight: Math.max(26, Math.min(52, artHeight * 0.072)),
+        artTop,
+        slotBounds
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  // 光门位置、高度与裁切缝都来自当前海报的实际画面盒。
+  const applyGateMetrics = (item, side) => {
+    const metrics = artMetrics(item, side);
+    if (!metrics) {
+      root.style.removeProperty('--gate-x');
+      root.style.removeProperty('--gate-y');
+      root.style.removeProperty('--gate-height');
+      root.style.removeProperty('--gate-width');
+      item?.slot?.style?.removeProperty?.('--seam-inset');
+      item?.slot?.style?.removeProperty?.('--poster-art-bottom');
+      item?.slot?.style?.removeProperty?.('--poster-art-top');
+      item?.slot?.style?.removeProperty?.('--poster-art-height');
+      item?.slot?.style?.removeProperty?.('--poster-float-width');
+      item?.slot?.style?.removeProperty?.('--poster-float-height');
+      item?.slot?.style?.removeProperty?.('--poster-portal-offset');
+      return null;
+    }
+    root.style.setProperty('--gate-x', `${metrics.portalStageX.toFixed(2)}px`);
+    root.style.setProperty('--gate-y', `${metrics.portalStageY.toFixed(2)}px`);
+    root.style.setProperty('--gate-height', `${metrics.gateHeight.toFixed(2)}px`);
+    root.style.setProperty('--gate-width', `${metrics.gateWidth.toFixed(2)}px`);
+    root.style.setProperty('--portal-gap', `${metrics.portalGap.toFixed(2)}px`);
+    item.slot.style.setProperty('--seam-inset', `${metrics.seamPercent.toFixed(3)}%`);
+    item.slot.style.setProperty(
+      '--poster-portal-offset',
+      `${side === 'top' ? '-' : ''}${metrics.portalOffset.toFixed(3)}%`
+    );
+    item.slot.style.setProperty('--poster-art-bottom', `${metrics.artBottomInSlot.toFixed(2)}px`);
+    item.slot.style.setProperty('--poster-art-top', `${metrics.artTopInSlot.toFixed(2)}px`);
+    item.slot.style.setProperty('--poster-art-height', `${metrics.artHeight.toFixed(2)}px`);
+    item.slot.style.setProperty('--poster-float-width', `${metrics.floatWidth.toFixed(2)}px`);
+    item.slot.style.setProperty('--poster-float-height', `${metrics.floatHeight.toFixed(2)}px`);
+    return metrics;
+  };
+
+  const holdParticles = (item, duration) => {
+    if (!item || typeof particleField.hold !== 'function') return Promise.resolve();
+    const bounds = artMetrics(item, 'bottom')?.artBounds ?? item.slot.getBoundingClientRect();
+    return Promise.resolve(particleField.hold(bounds, duration));
+  };
+
+  // 门只在有限的进入或离开包络中点亮，稳定驻留时保持熄灭。
   const activatePortal = (side, phase, sceneProfile, duration) => {
     root.dataset.portalSide = side;
     root.dataset.portalPhase = phase;
@@ -228,14 +378,14 @@ export function createPosterTransition({
     item.slot.dataset.motionProfile = sceneProfile;
     const outgoing = activeItem;
     if (outgoing) {
-      const exitDuration = timing.gather + timing.exit;
-      activatePortal('right', 'exit', sceneProfile, exitDuration);
+      const exitMetrics = applyGateMetrics(outgoing, 'bottom');
+      activatePortal('bottom', 'exit', sceneProfile, PORTAL_DURATION);
       if (!await sleep(timing.gather, token)) return;
       if (!isCurrent(token)) return;
 
       setActive(outgoing, false);
       outgoing.slot.dataset.motionProfile = sceneProfile;
-      outgoing.slot.dataset.portalSide = 'right';
+      outgoing.slot.dataset.portalSide = 'bottom';
       outgoing.slot.dataset.portalPhase = 'exit';
       outgoing.slot.style.setProperty('--poster-exit-ms', `${timing.exit}ms`);
       outgoing.slot.style.setProperty('--poster-handoff-ms', `${timing.exit}ms`);
@@ -249,41 +399,45 @@ export function createPosterTransition({
 
       const [, exited] = await Promise.all([
         Promise.resolve(particleField.scatter(
-          outgoing.slot.getBoundingClientRect(),
+          exitMetrics?.particleBounds ?? outgoing.slot.getBoundingClientRect(),
           timing.exit,
-          { portalSide: 'right' }
+          { portalSide: 'bottom', motionDistance: exitMetrics?.motionDistance }
         )),
         sleep(timing.exit, token)
       ]);
       if (!isCurrent(token) || exited === false) return;
+      const exitTail = Math.max(0, PORTAL_DURATION - timing.gather - timing.exit);
+      if (exitTail > 0 && !await sleep(exitTail, token)) return;
       outgoing.slot.classList.remove('is-outgoing', 'is-scattering');
       outgoing.slot.style.removeProperty('--poster-handoff-ms');
       clearSlotPortalState(outgoing.slot);
       clearPortalState();
     }
 
-    const enterDuration = timing.gather + timing.handoff;
-    activatePortal('left', 'enter', sceneProfile, enterDuration);
+    const enterMetrics = applyGateMetrics(item, 'top');
+    activatePortal('top', 'enter', sceneProfile, PORTAL_DURATION);
     if (!await sleep(timing.gather, token)) return;
     if (!isCurrent(token)) return;
 
     activeItem = item;
     completedReadableHold = 0;
     setActive(activeItem, true);
-    activeItem.slot.dataset.portalSide = 'left';
+    activeItem.slot.dataset.portalSide = 'top';
     activeItem.slot.dataset.portalPhase = 'enter';
     activeItem.slot.style.setProperty('--poster-enter-ms', `${timing.handoff}ms`);
     activeItem.slot.style.setProperty('--poster-handoff-ms', `${timing.handoff}ms`);
     activeItem.slot.classList.add('is-revealing', 'is-entering', 'is-entering-from-portal');
     const [, entered] = await Promise.all([
       Promise.resolve(particleField.gather(
-        activeItem.slot.getBoundingClientRect(),
+        enterMetrics?.particleBounds ?? activeItem.slot.getBoundingClientRect(),
         timing.handoff,
-        { portalSide: 'left' }
+        { portalSide: 'top', motionDistance: enterMetrics?.motionDistance }
       )),
       sleep(timing.handoff, token)
     ]);
     if (!isCurrent(token) || entered === false) return;
+    const enterTail = Math.max(0, PORTAL_DURATION - timing.gather - timing.handoff);
+    if (enterTail > 0 && !await sleep(enterTail, token)) return;
     activeItem.slot.classList.remove('is-revealing');
     clearSlotPortalState(activeItem.slot);
     activeItem.slot.classList.add('is-stable');
@@ -293,7 +447,11 @@ export function createPosterTransition({
     const finalItem = sealed && queue.length === 0;
     const profileTiming = POSTER_TIMING[sceneProfile];
     const hold = finalItem ? profileTiming.finalHold : timing.hold;
-    if (await sleep(hold, token) && activeItem === item) {
+    const [, held] = await Promise.all([
+      holdParticles(item, hold),
+      sleep(hold, token)
+    ]);
+    if (held && activeItem === item) {
       completedReadableHold = Math.min(
         profileTiming.finalHold,
         completedReadableHold + hold
@@ -402,6 +560,11 @@ export function createPosterTransition({
       delete slot.dataset.slitDirection;
       delete slot.dataset.motionProfile;
       slot.style.removeProperty('--poster-handoff-ms');
+      slot.style.removeProperty('--poster-art-bottom');
+      slot.style.removeProperty('--poster-art-top');
+      slot.style.removeProperty('--poster-art-height');
+      slot.style.removeProperty('--poster-float-width');
+      slot.style.removeProperty('--poster-float-height');
       for (const image of slot.querySelectorAll('img')) {
         image.setAttribute('aria-hidden', 'true');
       }
@@ -529,7 +692,11 @@ export function createPosterTransition({
               profileTiming.finalHold - completedReadableHold
             );
             if (remainingHold > 0) {
-              if (!await sleep(remainingHold, token)) {
+              const [, held] = await Promise.all([
+                holdParticles(activeItem, remainingHold),
+                sleep(remainingHold, token)
+              ]);
+              if (!held) {
                 if (generation !== token) continue;
                 return;
               }
@@ -539,7 +706,7 @@ export function createPosterTransition({
 
           if (finalSceneProfile !== 'reduce') {
             const profileTiming = POSTER_TIMING[finalSceneProfile];
-            onFinalScene({
+            settleParticleField();            onFinalScene({
               slot: activeItem?.slot ?? null,
               image: activeItem?.image ?? null,
               profile: finalSceneProfile
@@ -599,6 +766,12 @@ export function createPosterTransition({
       root.dataset.motionProfile = nextProfile;
       particleField.setProfile(nextProfile);
       if (switchingToReduce && !alreadySettled) switchRunningWorkToReduce();
+    },
+
+    resize() {
+      if (destroyed || !activeItem || currentProfile === 'reduce') return;
+      const side = activeItem.slot.dataset.portalSide === 'bottom' ? 'bottom' : 'top';
+      applyGateMetrics(activeItem, side);
     },
 
     destroy() {

@@ -32,9 +32,11 @@ const createFixture = () => new JSDOM(`
       </div>
     </div>
   </div>
-  <div class="vinyl-sticker">
-    <div class="vinyl-cover" id="vinylCoverA"></div>
-  </div>
+  <main class="app-shell" id="appShell">
+    <div class="vinyl-sticker">
+      <div class="vinyl-cover" id="vinylCoverA"></div>
+    </div>
+  </main>
 `);
 
 const createControllerHarness = ({
@@ -180,13 +182,19 @@ test('visual factories receive the loading stage dependencies and motion profile
   assert.equal(typeof transitionCall[1].onError, 'function');
 });
 
-test('final handoff derives the contained artwork crop and primes the sticker cover', () => {
+test('final handoff flies the final poster node and primes the sticker cover one frame ahead', async () => {
   const dom = createFixture();
   const document = dom.window.document;
+  const appShell = document.getElementById('appShell');
   const target = document.querySelector('.vinyl-sticker');
   const targetCover = document.getElementById('vinylCoverA');
+  const timers = createTimerHarness();
   const { harness } = createInjectedView(document, {
-    viewOptions: { motionProfile: 'full' }
+    viewOptions: {
+      motionProfile: 'full',
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
   });
   const root = document.getElementById('loadingScreen');
   const slot = root.querySelector('[data-loading-slot="archive-05"]');
@@ -206,22 +214,35 @@ test('final handoff derives the contained artwork crop and primes the sticker co
     width: 400,
     height: 500
   });
+  appShell.getBoundingClientRect = () => ({
+    left: 400,
+    top: appShell.classList.contains('is-loading-reveal') ? 0 : 10,
+    right: 720,
+    bottom: appShell.classList.contains('is-loading-reveal') ? 760 : 770,
+    width: 320,
+    height: 760
+  });
   target.getBoundingClientRect = () => ({
     left: 500,
-    top: 600,
+    top: appShell.classList.contains('is-loading-reveal') ? 590 : 600,
     right: 620,
-    bottom: 720,
+    bottom: appShell.classList.contains('is-loading-reveal') ? 710 : 720,
     width: 120,
     height: 120
   });
   const transitionCall = harness.calls.find(([name]) => name === 'transitionFactory');
+  const imageCount = root.querySelectorAll('img').length;
 
   transitionCall[1].onFinalScene({ image, profile: 'full' });
 
-  assert.equal(root.dataset.handoffReady, 'true');
+  assert.strictEqual(slot.querySelector('.loading-image'), image);
+  assert.equal(root.querySelectorAll('img').length, imageCount);
+  assert.equal(root.querySelector('.loading-handoff-flight'), null);
+  assert.equal(root.dataset.handoffReady, undefined);
   assert.equal(root.style.getPropertyValue('--poster-final-x'), '260px');
-  assert.equal(root.style.getPropertyValue('--poster-final-y'), '360px');
+  assert.equal(root.style.getPropertyValue('--poster-final-y'), '350px');
   assert.equal(root.style.getPropertyValue('--poster-final-scale'), '0.32');
+  assert.equal(root.style.getPropertyValue('--poster-final-radius'), '187.5px');
   assert.equal(root.style.getPropertyValue('--poster-source-inset-top'), '0.0000%');
   assert.equal(root.style.getPropertyValue('--poster-source-inset-right'), '3.1250%');
   assert.equal(root.style.getPropertyValue('--poster-source-inset-bottom'), '0.0000%');
@@ -230,20 +251,28 @@ test('final handoff derives the contained artwork crop and primes the sticker co
   assert.equal(root.style.getPropertyValue('--poster-final-inset-right'), '3.1250%');
   assert.equal(root.style.getPropertyValue('--poster-final-inset-bottom'), '12.5000%');
   assert.equal(root.style.getPropertyValue('--poster-final-inset-left'), '3.1250%');
+  assert.equal(image.dataset.loadingHandoff, 'true');
   assert.equal(targetCover.dataset.loadingHandoff, 'true');
-  assert.equal(targetCover.classList.contains('is-active'), true);
+  assert.equal(targetCover.classList.contains('is-active'), false);
   assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/archive-05.jpg")');
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+
+  await timers.advance(16);
+  assert.equal(root.dataset.handoffReady, 'true');
+  assert.equal(targetCover.classList.contains('is-active'), true);
 
   transitionCall[1].onFinalScene({ image, profile: 'reduce' });
   assert.equal(root.dataset.handoffReady, undefined);
   assert.equal(root.style.getPropertyValue('--poster-final-x'), '');
   assert.equal(root.style.getPropertyValue('--poster-final-y'), '');
   assert.equal(root.style.getPropertyValue('--poster-final-scale'), '');
+  assert.equal(root.style.getPropertyValue('--poster-final-radius'), '');
   for (const phase of ['source', 'final']) {
     for (const edge of ['top', 'right', 'bottom', 'left']) {
       assert.equal(root.style.getPropertyValue(`--poster-${phase}-inset-${edge}`), '');
     }
   }
+  assert.equal(image.hasAttribute('data-loading-handoff'), false);
   assert.equal(targetCover.hasAttribute('data-loading-handoff'), false);
   assert.equal(targetCover.classList.contains('is-active'), false);
   assert.equal(targetCover.style.backgroundImage, '');
@@ -271,6 +300,34 @@ test('loading screen forwards live profiles to its transition and uses the lates
   root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
   await exiting;
   assert.equal(root.isConnected, false);
+});
+
+test('successful exit clears loading handoff markers without clearing the visible sticker cover', async () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const { view } = createInjectedView(document, {
+    viewOptions: { motionProfile: 'reduce' }
+  });
+  const root = document.getElementById('loadingScreen');
+  const source = document.createElement('img');
+  source.className = 'loading-image';
+  source.dataset.loadingHandoff = 'true';
+  root.querySelector('[data-loading-slot="archive-05"]').prepend(source);
+  const targetCover = document.getElementById('vinylCoverA');
+  targetCover.dataset.loadingHandoff = 'true';
+  targetCover.dataset.loadingPrewarm = 'true';
+  targetCover.classList.add('is-active');
+  targetCover.style.backgroundImage = 'url("https://example.test/visible-cover.jpg")';
+
+  const exiting = view.exit('reduce');
+  root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
+  await exiting;
+
+  assert.equal(source.hasAttribute('data-loading-handoff'), false);
+  assert.equal(targetCover.hasAttribute('data-loading-handoff'), false);
+  assert.equal(targetCover.hasAttribute('data-loading-prewarm'), false);
+  assert.equal(targetCover.classList.contains('is-active'), true);
+  assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/visible-cover.jpg")');
 });
 
 test('loading screen validates required nodes and the exact slot count', () => {
@@ -339,7 +396,10 @@ test('ready progress mounts the exact decoded image in its archive slot', () => 
   });
 
   const slot = dom.window.document.querySelector('[data-loading-slot="archive-01"]');
-  assert.strictEqual(slot.firstElementChild, decodedImage);
+  const artworkViewport = slot.querySelector('.loading-artwork-viewport');
+  assert.strictEqual(slot.firstElementChild, artworkViewport);
+  assert.strictEqual(artworkViewport.firstElementChild, decodedImage);
+  assert.equal(artworkViewport.getAttribute('aria-hidden'), 'true');
   assert.equal(decodedImage.alt, '加载封面图1');
   assert.equal(decodedImage.className, 'loading-image');
   assert.equal(decodedImage.dataset.assetId, 'archive-01');
@@ -676,17 +736,18 @@ test('exit fallback preserves the slit tail and destroys controllers only after 
   const exiting = view.exit('compact').then(() => { settled = true; });
 
   const timing = POSTER_TIMING.compact;
-  await timers.advance(timing.finalResolve - timing.exitLead - 1);
+  assert.equal(timing.finalResolve - timing.exitLead, 0);
+  await timers.advance(79);
   assert.equal(root.isConnected, true);
   assert.equal(settled, false);
   assert.equal(harness.calls.includes('transition.destroy'), false);
 
   slit.style.opacity = '0';
-  await timers.advance(81);
-  assert.equal(root.isConnected, true, 'root fallback must still observe the 560ms fade');
+  await timers.advance(1);
+  assert.equal(root.isConnected, true, 'root fallback must still observe the 680ms fade');
   assert.equal(harness.calls.includes('particles.destroy'), false);
 
-  await timers.advance(timing.rootFade - (timing.finalResolve - timing.exitLead));
+  await timers.advance(timing.rootFade);
   await exiting;
   assert.equal(root.isConnected, false);
   assert.equal(settled, true);
@@ -1029,7 +1090,8 @@ const expectKeyframeStops = (source, name, stops) => {
 };
 
 test('loading CSS defines the projection layers and motion-specific fallbacks', () => {
-  const css = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8');
+  // Windows checkouts may smudge CRLF endings; the declaration pins embed \n.
+  const css = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const loadingBlock = css.slice(css.indexOf('.loading-screen {'), css.indexOf('.app-shell {'));
 
   assert.doesNotMatch(css, /fonts\.googleapis/i);
@@ -1070,8 +1132,8 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   );
   assert.match(
     loadingBlock,
-    /\.loading-screen\[data-motion-profile="compact"\] \.loading-stage::after,\s*\.loading-screen\[data-motion-profile="compact"\] \.loading-light-slit > span,\s*\.loading-screen\[data-motion-profile="compact"\] \.loading-frame::before\s*\{[^}]*filter:\s*blur\(7px\)/s,
-    'compact tunnel layers should retain a bounded soft glow'
+    /\.loading-screen\[data-motion-profile="compact"\] \.loading-stage::after,\s*\.loading-screen\[data-motion-profile="compact"\] \.loading-frame::before\s*\{[^}]*filter:\s*blur\(7px\)/s,
+    'compact poster wake and final ambient layers retain a bounded soft glow'
   );
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-stage::before'),
@@ -1101,11 +1163,15 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.doesNotMatch(loadingBlock, /\.loading-frame\.is-active figcaption/);
   assert.match(loadingBlock, /\.loading-frame\.is-failed figcaption\s*\{[^}]*opacity:\s*1/s);
   assert.equal(POSTER_TIMING.full.finalResolve, 1100);
-  assert.equal(POSTER_TIMING.full.exitLead, 620);
-  assert.match(loadingBlock, /--slit-duration:\s*721ms/);
+  assert.equal(POSTER_TIMING.full.exitLead, 1100);
+  assert.equal(POSTER_TIMING.full.rootFade, 680);
+  assert.equal(POSTER_TIMING.compact.finalResolve, 1100);
+  assert.equal(POSTER_TIMING.compact.exitLead, 1100);
+  assert.equal(POSTER_TIMING.compact.rootFade, 680);
+  assert.match(loadingBlock, /--slit-duration:\s*760ms/);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-handoff-ms, 600ms\) var\(--loading-handoff-ease\)/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-handoff-ms, 600ms\) var\(--loading-settle-ease\)/s);
-  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="compact"\]\s*\{[^}]*--poster-handoff-ms:\s*480ms[^}]*--slit-duration:\s*579ms/s);
+  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="compact"\]\s*\{[^}]*--poster-handoff-ms:\s*480ms[^}]*--slit-duration:\s*760ms/s);
 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),
@@ -1165,27 +1231,27 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     ],
     [
       '.loading-light-slit.is-lit[data-direction="vertical"]',
-      'loading-tunnel-pass var(--slit-duration, 721ms) var(--loading-light-ease) both'
+      'loading-tunnel-pass var(--slit-duration, 760ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-core',
-      'loading-tunnel-core var(--slit-duration, 721ms) var(--loading-light-ease) both'
+      'loading-tunnel-core var(--slit-duration, 760ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-edge.is-warm',
-      'loading-tunnel-warm var(--slit-duration, 721ms) var(--loading-light-ease) both'
+      'loading-tunnel-warm var(--slit-duration, 760ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-light-slit.is-lit .loading-light-edge.is-cool',
-      'loading-tunnel-cool var(--slit-duration, 721ms) var(--loading-light-ease) both'
+      'loading-tunnel-cool var(--slit-duration, 760ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-screen.is-scanning .loading-stage::before',
-      'loading-scan-gate-line var(--slit-duration, 721ms) var(--loading-light-ease) both'
+      'loading-scan-gate-line var(--slit-duration, 760ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-screen.is-scanning .loading-stage::after',
-      'loading-scan-gate-halo var(--slit-duration, 721ms) var(--loading-light-ease) both'
+      'loading-scan-gate-halo var(--slit-duration, 760ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-screen.is-final-resolving .loading-light-slit[data-direction="vertical"]',
@@ -1200,8 +1266,8 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
       'loading-final-scan-gate-halo var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
     ],
     [
-      '.loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-frame.is-active .loading-image',
-      'loading-poster-to-player var(--final-resolve-ms, 1100ms) var(--loading-settle-ease) both'
+      '.loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-image[data-loading-handoff="true"]',
+      'loading-poster-to-player-motion var(--final-resolve-ms, 1100ms) linear both,\n                loading-poster-to-player-shape var(--final-resolve-ms, 1100ms) linear both'
     ]
   ]) {
     expectDeclarations(extractCssBlock(loadingBlock, selector), { animation }, selector);
@@ -1365,21 +1431,15 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
       '38%': { opacity: '0.2', transform: 'translate3d(-1%, 0, 0) scale3d(0.84, 0.76, 1)' },
       '100%': { opacity: '0', transform: 'translate3d(7%, 8%, 0) scale3d(0.56, 0.26, 1)' }
     }),
-    expectKeyframeStops(loadingBlock, 'loading-poster-to-player', {
-      '0%': { opacity: '1', transform: 'translate3d(0, 0, 0) scale(1)' },
-      '42%': { opacity: '1' },
-      '72%': {
-        opacity: '1',
-        transform: 'translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4))'
-      },
-      '84%': {
-        opacity: '0.94',
-        transform: 'translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4))'
-      },
-      '100%': {
-        opacity: '0',
+    expectKeyframeStops(loadingBlock, 'loading-poster-to-player-motion', {
+      '0%': { transform: 'translate3d(0, 0, 0) scale(1)' },
+      '82%, 100%': {
         transform: 'translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4))'
       }
+    }),
+    expectKeyframeStops(loadingBlock, 'loading-poster-to-player-shape', {
+      '0%': {},
+      '22%, 100%': {}
     })
   ];
   for (const keyframe of keyframes) {
@@ -1388,24 +1448,48 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   for (const keyframe of keyframes.slice(0, -1)) {
     assert.doesNotMatch(keyframe, /(?:-webkit-)?clip-path\s*:/);
   }
-  const finalFlip = keyframes.at(-1);
+  const finalHandoff = keyframes.at(-1);
+  const finalMotion = keyframes.at(-2);
+  assert.match(extractCssBlock(finalMotion, '0%'), /animation-timing-function:\s*cubic-bezier\(0\.4, 0\.14, 0\.3, 1\)/);
+  assert.doesNotMatch(finalMotion, /(?:-webkit-)?clip-path\s*:|\bopacity\s*:/);
+  assert.match(extractCssBlock(finalHandoff, '0%'), /animation-timing-function:\s*cubic-bezier\(0, 0, 0\.3, 1\)/);
+  assert.doesNotMatch(finalHandoff, /\bopacity\s*:|\btransform\s*:/);
   assert.match(
-    extractCssBlock(finalFlip, '0%'),
-    /clip-path:\s*inset\(\s*var\(--poster-source-inset-top, 0%\)\s*var\(--poster-source-inset-right, 0%\)\s*var\(--poster-source-inset-bottom, 0%\)\s*var\(--poster-source-inset-left, 0%\)\s*round 0\s*\)/s
+    extractCssBlock(finalHandoff, '0%'),
+    /clip-path:\s*inset\(\s*var\(--poster-source-inset-top, 0%\)\s*var\(--poster-source-inset-right, 0%\)\s*var\(--poster-source-inset-bottom, 0%\)\s*var\(--poster-source-inset-left, 0%\)\s*round 0%\s*\)/s
   );
   assert.match(
-    extractCssBlock(finalFlip, '42%'),
-    /clip-path:\s*inset\(\s*var\(--poster-source-inset-top, 0%\)\s*var\(--poster-source-inset-right, 0%\)\s*var\(--poster-source-inset-bottom, 0%\)\s*var\(--poster-source-inset-left, 0%\)\s*round 12%\s*\)/s
+    extractCssBlock(finalHandoff, '22%, 100%'),
+    /clip-path:\s*inset\(\s*var\(--poster-final-inset-top, 0%\)\s*var\(--poster-final-inset-right, 0%\)\s*var\(--poster-final-inset-bottom, 0%\)\s*var\(--poster-final-inset-left, 0%\)\s*round var\(--poster-final-radius, 999px\)\s*\)/s,
+    'the shape track must preserve its measured circular crop after 22%'
   );
-  for (const stop of ['72%', '84%', '100%']) {
-    assert.match(
-      extractCssBlock(finalFlip, stop),
-      /clip-path:\s*inset\(\s*var\(--poster-final-inset-top, 0%\)\s*var\(--poster-final-inset-right, 0%\)\s*var\(--poster-final-inset-bottom, 0%\)\s*var\(--poster-final-inset-left, 0%\)\s*round 50%\s*\)/s,
-      `${stop} must preserve the circular sticker crop`
-    );
-  }
+  const targetCoverBinding = extractCssBlock(css, '.vinyl-cover[data-loading-handoff="true"].is-active');
+  expectDeclarations(targetCoverBinding, {
+    transition: 'none',
+    animation: 'loading-target-cover-reveal 1100ms linear both'
+  }, 'loading handoff target cover');
+  const targetCoverReveal = expectKeyframeStops(css, 'loading-target-cover-reveal', {
+    '0%, 82%': {
+      opacity: '0',
+      transform: 'scale(1) rotate(0deg)'
+    },
+    '100%': {
+      opacity: '1',
+      transform: 'scale(1) rotate(0deg)'
+    }
+  });
+  assert.match(extractCssBlock(targetCoverReveal, '0%, 82%'), /animation-timing-function:\s*cubic-bezier\(0, 0, 0\.3, 1\)/);
+  assert.doesNotMatch(loadingBlock, /loading-handoff-flight|loading-poster-handoff-source/);
   assert.doesNotMatch(loadingBlock, /loading-(?:slit-(?:ltr|rtl)|curtain|final-(?:ltr|rtl))/);
   assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s var\(--loading-motion-ease\)/s);
+  assert.match(
+    loadingBlock,
+    /\.loading-status\s*\{[^}]*transition:\s*opacity 180ms var\(--loading-motion-ease\)/s
+  );
+  assert.match(
+    loadingBlock,
+    /\.loading-screen\.is-portal-active \.loading-status\s*\{[^}]*opacity:\s*0/s
+  );
   assert.deepEqual(loadingBlock.match(/transition:[^;]*linear;/g), [
     'transition: opacity 120ms linear;',
     'transition: opacity 120ms linear;'
@@ -1418,8 +1502,24 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     );
   }
   assert.doesNotMatch(loadingBlock, /letter-spacing:\s*-/);
-  assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter|will-change)/);
-  assert.doesNotMatch(loadingBlock, /(?:perspective|rotate|translateX)\s*[:(]/);
+  assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter)/);
+  assert.match(
+    extractCssBlock(
+      loadingBlock,
+      '.loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-image[data-loading-handoff="true"]'
+    ),
+    /will-change:\s*transform, clip-path/,
+    'only the short-lived final handoff may pre-promote its animated properties'
+  );
+  assert.doesNotMatch(loadingBlock, /translateX\s*[:(]/);
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-frame'),
+    {
+      perspective: '1200px',
+      'transform-style': 'preserve-3d'
+    },
+    'bounded resting-poster depth'
+  );
   const posterScales = [...loadingBlock.matchAll(/(?<!X)scale\(([0-9.]+)\)/g)]
     .map(([, scale]) => Number(scale));
   assert.ok(posterScales.length > 0);

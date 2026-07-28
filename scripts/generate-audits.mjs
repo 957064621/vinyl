@@ -139,7 +139,8 @@ const main = async () => {
 
   if (check) {
     for (const [url, expected] of outputs) {
-      const actual = await readFile(url, 'utf8');
+      // Windows checkouts may smudge CRLF endings; compare content, not EOL flavor.
+      const actual = (await readFile(url, 'utf8')).replace(/\r\n/g, '\n');
       if (actual !== expected) {
         throw new Error(`${fileURLToPath(url)} is stale; run npm run audit`);
       }

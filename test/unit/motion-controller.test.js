@@ -9,7 +9,10 @@ import {
   MOTION_TOKENS,
   tweenWithCleanup
 } from '../../src/motion/motion-controller.js';
-import { createAppTransitions } from '../../src/app/transitions.js';
+import {
+  createAppTransitions,
+  DRAW_LYRIC_HOLD_MS
+} from '../../src/app/transitions.js';
 
 const media = (reduce, coarse) => (query) => ({
   matches: query.includes('reduced-motion') ? reduce : coarse
@@ -436,7 +439,10 @@ const makeTransitionFakes = ({
   playError = null,
   loadError = null,
   blockMove = null,
+  pendingPlayArm = null,
   pendingPlay = null,
+  pendingCoverReveal = null,
+  pendingLyricHold = null,
   loadResult = undefined,
   playResult = undefined
 } = {}) => {
@@ -454,6 +460,7 @@ const makeTransitionFakes = ({
     moveArmTo: async (target, options) => {
       events.push(['arm', target, options]);
       if (blockMove && target === 'rest') await blockMove(options.signal);
+      if (pendingPlayArm && target === 'play') await pendingPlayArm.promise;
     },
     rampRateTo: async (rate, options) => events.push(['rate', rate, options]),
     resetAfterPlaybackError: async (options) => events.push(['reset', options]),
@@ -490,7 +497,25 @@ const makeTransitionFakes = ({
     events.push(['select', index, options]);
     return normalizedTrack;
   };
-  return { events, normalizedTrack, turntable, overlays, controls, audio, selectTrack };
+  const waitForCoverReveal = async ({ signal }) => {
+    events.push(['coverReveal', signal]);
+    if (pendingCoverReveal) await pendingCoverReveal.promise;
+  };
+  const waitForDelay = async (duration, signal) => {
+    events.push(['wait', duration, signal]);
+    if (pendingLyricHold) await pendingLyricHold.promise;
+  };
+  return {
+    events,
+    normalizedTrack,
+    turntable,
+    overlays,
+    controls,
+    audio,
+    selectTrack,
+    waitForCoverReveal,
+    waitForDelay
+  };
 };
 
 test('draw stops old audio, loads the normalized track, and forwards motion context', async () => {
@@ -507,6 +532,57 @@ test('draw stops old audio, loads the normalized track, and forwards motion cont
   assert.equal(fakes.events.find(([name]) => name === 'select')[2].signal, signal);
   assert.equal(fakes.events.find(([name, target]) => name === 'arm' && target === 'rest')[2].duration, tokens.move);
   assert.equal(fakes.events.find(([name]) => name === 'play')[1].signal, signal);
+});
+
+test('draw holds the switched cover for 500ms while the turntable settles before opening lyrics', async () => {
+  const pendingCoverReveal = createDeferred();
+  const pendingLyricHold = createDeferred();
+  const pendingPlayArm = createDeferred();
+  const fakes = makeTransitionFakes({ pendingCoverReveal, pendingLyricHold, pendingPlayArm });
+  const transitions = createAppTransitions(fakes);
+  const signal = new AbortController().signal;
+
+  const draw = transitions.draw({
+    signal,
+    targetIndex: 4,
+    profile: 'compact',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
+  });
+
+  while (
+    !fakes.events.some(([name]) => name === 'coverReveal')
+    || !fakes.events.some(([name, target]) => name === 'arm' && target === 'play')
+  ) {
+    await Promise.resolve();
+  }
+
+  let eventNames = fakes.events.map(([name]) => name);
+  assert.ok(eventNames.indexOf('select') < eventNames.indexOf('coverReveal'));
+  assert.ok(eventNames.indexOf('coverReveal') < eventNames.indexOf('load'));
+  assert.equal(fakes.events.some(([name]) => name === 'wait'), false);
+  assert.equal(
+    fakes.events.some(([name, target]) => name === 'arm' && target === 'play'),
+    true
+  );
+  assert.equal(fakes.events.some(([name]) => name === 'open'), false);
+
+  pendingCoverReveal.resolve();
+  while (!fakes.events.some(([name]) => name === 'wait')) await Promise.resolve();
+  eventNames = fakes.events.map(([name]) => name);
+  assert.equal(fakes.events.find(([name]) => name === 'wait')[1], DRAW_LYRIC_HOLD_MS);
+  assert.ok(eventNames.indexOf('load') < eventNames.indexOf('wait'));
+
+  pendingLyricHold.resolve();
+  while (!fakes.events.some(([name]) => name === 'open')) await Promise.resolve();
+
+  assert.equal(fakes.events.some(([name]) => name === 'play'), false);
+  pendingPlayArm.resolve();
+  await draw;
+
+  assert.deepEqual(fakes.events.find(([name]) => name === 'open').slice(0, 2), [
+    'open',
+    'lyrics'
+  ]);
 });
 
 test('an aborted draw does not select, open, play, or set its final label', async () => {

@@ -75,6 +75,20 @@
             inherits: true;
             initial-value: #151819;
         }
+
+        /* 播放列表描边的巡游光角度：注册为 <angle> 才能连续插值转动。 */
+        @property --panel-ring-angle {
+            syntax: "<angle>";
+            inherits: false;
+            initial-value: 0deg;
+        }
+
+        /* 蒙层主副色配比的漂移进度：注册为 <number> 才能连续插值。 */
+        @property --overlay-mix {
+            syntax: "<number>";
+            inherits: false;
+            initial-value: 0;
+        }
         * {
             box-sizing: border-box;
             margin: 0;
@@ -181,7 +195,7 @@
             --loading-light-ease: cubic-bezier(0.4, 0, 0.2, 1);
             --loading-settle-ease: cubic-bezier(0.32, 0.72, 0, 1);
             --poster-handoff-ms: 600ms;
-            --slit-duration: 721ms;
+            --slit-duration: 760ms;
             --final-resolve-ms: 1100ms;
             box-sizing: border-box;
             position: fixed;
@@ -269,11 +283,11 @@
         }
 
         .loading-screen.is-scanning .loading-stage::before {
-            animation: loading-scan-gate-line var(--slit-duration, 721ms) var(--loading-light-ease) both;
+            animation: loading-scan-gate-line var(--slit-duration, 760ms) var(--loading-light-ease) both;
         }
 
         .loading-screen.is-scanning .loading-stage::after {
-            animation: loading-scan-gate-halo var(--slit-duration, 721ms) var(--loading-light-ease) both;
+            animation: loading-scan-gate-halo var(--slit-duration, 760ms) var(--loading-light-ease) both;
         }
 
         .loading-screen.is-final-resolving .loading-stage::before {
@@ -306,6 +320,8 @@
             visibility: hidden;
             pointer-events: none;
             transform-origin: center;
+            perspective: 1200px;
+            transform-style: preserve-3d;
         }
 
         .loading-frame::before {
@@ -325,6 +341,17 @@
             pointer-events: none;
             transform: translate3d(-50%, -28%, 0) scale3d(0.24, 0.7, 1);
             transform-origin: center;
+        }
+
+        .loading-artwork-viewport {
+            --poster-effect-bleed: 96px;
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            display: block;
+            overflow: visible;
+            pointer-events: none;
+            transform-style: preserve-3d;
         }
 
         .loading-frame:nth-child(2) {
@@ -419,14 +446,22 @@
             animation: loading-poster-exit var(--poster-handoff-ms, 600ms) var(--loading-settle-ease) both;
         }
 
-        .loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-frame.is-active .loading-image {
-            animation: loading-poster-to-player var(--final-resolve-ms, 1100ms) var(--loading-settle-ease) both;
+        .loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-poster-stack {
+            z-index: 6;
+        }
+
+        .loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-image[data-loading-handoff="true"] {
+            animation:
+                loading-poster-to-player-motion var(--final-resolve-ms, 1100ms) linear both,
+                loading-poster-to-player-shape var(--final-resolve-ms, 1100ms) linear both;
+            will-change: transform, clip-path;
         }
 
         .loading-particles {
             z-index: 3;
             width: 100%;
-            height: 100%;
+            height: calc(100% + 120px);
+            inset: -48px 0 auto;
             pointer-events: none;
         }
 
@@ -494,19 +529,19 @@
         }
 
         .loading-light-slit.is-lit[data-direction="vertical"] {
-            animation: loading-tunnel-pass var(--slit-duration, 721ms) var(--loading-light-ease) both;
+            animation: loading-tunnel-pass var(--slit-duration, 760ms) var(--loading-light-ease) both;
         }
 
         .loading-light-slit.is-lit .loading-light-core {
-            animation: loading-tunnel-core var(--slit-duration, 721ms) var(--loading-light-ease) both;
+            animation: loading-tunnel-core var(--slit-duration, 760ms) var(--loading-light-ease) both;
         }
 
         .loading-light-slit.is-lit .loading-light-edge.is-warm {
-            animation: loading-tunnel-warm var(--slit-duration, 721ms) var(--loading-light-ease) both;
+            animation: loading-tunnel-warm var(--slit-duration, 760ms) var(--loading-light-ease) both;
         }
 
         .loading-light-slit.is-lit .loading-light-edge.is-cool {
-            animation: loading-tunnel-cool var(--slit-duration, 721ms) var(--loading-light-ease) both;
+            animation: loading-tunnel-cool var(--slit-duration, 760ms) var(--loading-light-ease) both;
         }
 
         .loading-screen.is-final-resolving .loading-light-slit[data-direction="vertical"] {
@@ -528,6 +563,12 @@
         .loading-status {
             min-height: 54px;
             text-align: center;
+            opacity: 1;
+            transition: opacity 180ms var(--loading-motion-ease);
+        }
+
+        .loading-screen.is-portal-active .loading-status {
+            opacity: 0;
         }
 
         .loading-copy {
@@ -576,7 +617,7 @@
 
         .loading-screen[data-motion-profile="compact"] {
             --poster-handoff-ms: 480ms;
-            --slit-duration: 579ms;
+            --slit-duration: 760ms;
             --final-resolve-ms: 920ms;
             transition-duration: 560ms;
         }
@@ -586,7 +627,6 @@
         }
 
         .loading-screen[data-motion-profile="compact"] .loading-stage::after,
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit > span,
         .loading-screen[data-motion-profile="compact"] .loading-frame::before {
             filter: blur(7px);
         }
@@ -916,94 +956,48 @@
             100% { opacity: 0; transform: translate3d(7%, 8%, 0) scale3d(0.56, 0.26, 1); }
         }
 
-        @keyframes loading-poster-to-player {
+        @keyframes loading-poster-to-player-motion {
             0% {
-                opacity: 1;
                 transform: translate3d(0, 0, 0) scale(1);
-                -webkit-clip-path: inset(
-                    var(--poster-source-inset-top, 0%)
-                    var(--poster-source-inset-right, 0%)
-                    var(--poster-source-inset-bottom, 0%)
-                    var(--poster-source-inset-left, 0%)
-                    round 0
-                );
-                clip-path: inset(
-                    var(--poster-source-inset-top, 0%)
-                    var(--poster-source-inset-right, 0%)
-                    var(--poster-source-inset-bottom, 0%)
-                    var(--poster-source-inset-left, 0%)
-                    round 0
-                );
+                animation-timing-function: cubic-bezier(0.4, 0.14, 0.3, 1);
             }
-            42% {
-                opacity: 1;
-                -webkit-clip-path: inset(
-                    var(--poster-source-inset-top, 0%)
-                    var(--poster-source-inset-right, 0%)
-                    var(--poster-source-inset-bottom, 0%)
-                    var(--poster-source-inset-left, 0%)
-                    round 12%
-                );
-                clip-path: inset(
-                    var(--poster-source-inset-top, 0%)
-                    var(--poster-source-inset-right, 0%)
-                    var(--poster-source-inset-bottom, 0%)
-                    var(--poster-source-inset-left, 0%)
-                    round 12%
-                );
-            }
-            72% {
-                opacity: 1;
+            82%, 100% {
                 transform: translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4));
-                -webkit-clip-path: inset(
-                    var(--poster-final-inset-top, 0%)
-                    var(--poster-final-inset-right, 0%)
-                    var(--poster-final-inset-bottom, 0%)
-                    var(--poster-final-inset-left, 0%)
-                    round 50%
-                );
-                clip-path: inset(
-                    var(--poster-final-inset-top, 0%)
-                    var(--poster-final-inset-right, 0%)
-                    var(--poster-final-inset-bottom, 0%)
-                    var(--poster-final-inset-left, 0%)
-                    round 50%
-                );
             }
-            84% {
-                opacity: 0.94;
-                transform: translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4));
+        }
+
+        @keyframes loading-poster-to-player-shape {
+            0% {
                 -webkit-clip-path: inset(
-                    var(--poster-final-inset-top, 0%)
-                    var(--poster-final-inset-right, 0%)
-                    var(--poster-final-inset-bottom, 0%)
-                    var(--poster-final-inset-left, 0%)
-                    round 50%
+                    var(--poster-source-inset-top, 0%)
+                    var(--poster-source-inset-right, 0%)
+                    var(--poster-source-inset-bottom, 0%)
+                    var(--poster-source-inset-left, 0%)
+                    round 0%
                 );
                 clip-path: inset(
-                    var(--poster-final-inset-top, 0%)
-                    var(--poster-final-inset-right, 0%)
-                    var(--poster-final-inset-bottom, 0%)
-                    var(--poster-final-inset-left, 0%)
-                    round 50%
+                    var(--poster-source-inset-top, 0%)
+                    var(--poster-source-inset-right, 0%)
+                    var(--poster-source-inset-bottom, 0%)
+                    var(--poster-source-inset-left, 0%)
+                    round 0%
                 );
+                animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
             }
-            100% {
-                opacity: 0;
-                transform: translate3d(var(--poster-final-x, 0px), var(--poster-final-y, 0px), 0) scale(var(--poster-final-scale, 0.4));
+            22%, 100% {
                 -webkit-clip-path: inset(
                     var(--poster-final-inset-top, 0%)
                     var(--poster-final-inset-right, 0%)
                     var(--poster-final-inset-bottom, 0%)
                     var(--poster-final-inset-left, 0%)
-                    round 50%
+                    round var(--poster-final-radius, 999px)
                 );
                 clip-path: inset(
                     var(--poster-final-inset-top, 0%)
                     var(--poster-final-inset-right, 0%)
                     var(--poster-final-inset-bottom, 0%)
                     var(--poster-final-inset-left, 0%)
-                    round 50%
+                    round var(--poster-final-radius, 999px)
                 );
             }
         }
@@ -1016,10 +1010,19 @@
             align-items: center;
             margin-top: calc(-1 * var(--stage-lift));
             opacity: 0;
-            transform: none;
+            transform: translate3d(0, 10px, 0) scale(0.992);
             transition:
                 opacity 1.4s var(--hero-ease),
+                transform 1.1s cubic-bezier(0, 0, 0.3, 1),
                 filter 0.56s var(--fluid-ease);
+        }
+
+        .app-shell.is-loading-reveal {
+            opacity: 1;
+            transform: none;
+            transition:
+                opacity 1s cubic-bezier(0, 0, 0.3, 1),
+                transform 1.1s cubic-bezier(0, 0, 0.3, 1);
         }
 
         .app-shell.is-ready {
@@ -1388,6 +1391,28 @@
             transform: scale(1) rotate(0deg);
         }
 
+        .vinyl-cover[data-loading-handoff="true"] {
+            background-position: center;
+            background-size: cover;
+        }
+
+        .vinyl-cover[data-loading-handoff="true"].is-active {
+            transition: none;
+            animation: loading-target-cover-reveal 1100ms linear both;
+        }
+
+        @keyframes loading-target-cover-reveal {
+            0%, 82% {
+                opacity: 0;
+                transform: scale(1) rotate(0deg);
+                animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
+            }
+            100% {
+                opacity: 1;
+                transform: scale(1) rotate(0deg);
+            }
+        }
+
         .vinyl-sheen {
             position: absolute;
             inset: 0;
@@ -1449,7 +1474,7 @@
             --island-lift: 0px;
             --control-rail-top: calc(100% + 12px);
             --side-control-size: 48px;
-            --side-control-rail-offset: 3px;
+            --side-control-rail-offset: 2px;
             --player-enter-y: -14px;
             --player-exit-y: -10px;
             width: calc(var(--play-width) + var(--player-slot) + var(--player-gap));
@@ -1642,19 +1667,19 @@
             aspect-ratio: 1;
             border-radius: inherit;
             background: conic-gradient(from 0turn,
-                transparent 0deg 328deg,
-                rgba(174, 182, 185, 0.32) 333deg,
-                rgba(241, 242, 238, 0.48) 342deg,
-                rgba(241, 242, 238, 0.96) 350deg,
-                rgba(164, 59, 66, 0.38) 355deg,
+                transparent 0deg 284deg,
+                rgba(174, 182, 185, 0.32) 306deg,
+                rgba(241, 242, 238, 0.48) 330deg,
+                rgba(241, 242, 238, 0.96) 348deg,
+                rgba(164, 59, 66, 0.38) 354deg,
                 transparent 360deg);
             background: conic-gradient(from 0turn,
-                transparent 0deg 328deg,
-                color-mix(in srgb, var(--archive-silver) 32%, transparent) 333deg,
-                color-mix(in srgb, var(--cover-accent) 48%, transparent) 342deg,
-                var(--archive-projector) 350deg,
-                color-mix(in srgb, var(--archive-red) 38%, transparent) 355deg,
-                color-mix(in srgb, var(--cover-accent) 20%, transparent) 358deg,
+                transparent 0deg 284deg,
+                color-mix(in srgb, var(--archive-silver) 32%, transparent) 306deg,
+                color-mix(in srgb, var(--cover-accent) 48%, transparent) 330deg,
+                var(--archive-projector) 348deg,
+                color-mix(in srgb, var(--archive-red) 38%, transparent) 353deg,
+                color-mix(in srgb, var(--cover-accent) 20%, transparent) 357deg,
                 transparent 360deg);
             opacity: 0;
             transform: translate3d(-50%, -50%, 0) rotate(0turn);
@@ -1662,31 +1687,50 @@
 
         :root {
             --btn-light-cycle: 7200ms;
-            --btn-light-active-window: 16.667%;
+            --btn-light-active-window: 94.444%;
         }
 
+        /* 灯头以整个周期完成一圈巡游：起步轻快、尾程滑翔，
+           首尾以透明度收束，旋转接缝因此不可见。 */
         @keyframes btn-perimeter-pass {
             0% {
                 opacity: 0;
                 transform: translate3d(-50%, -50%, 0) rotate(0turn);
             }
-            8.333% {
-                opacity: 0.72;
+            5.556% {
+                opacity: 0.58;
             }
-            16.667%, 100% {
+            33.333% {
+                opacity: 0.42;
+            }
+            66.667% {
+                opacity: 0.26;
+            }
+            94.444% {
+                opacity: 0.06;
+            }
+            100% {
                 opacity: 0;
                 transform: translate3d(-50%, -50%, 0) rotate(1turn);
             }
         }
 
         @keyframes btn-halo-pulse {
-            0%, 16.667%, 100% {
+            0%, 100% {
                 opacity: 0;
-                transform: scale(0.92);
+                transform: scale(0.94);
             }
             8.333% {
-                opacity: 0.11;
+                opacity: 0.1;
+                transform: scale(0.99);
+            }
+            41.667% {
+                opacity: 0.07;
                 transform: scale(1);
+            }
+            77.778% {
+                opacity: 0.03;
+                transform: scale(0.985);
             }
         }
 
@@ -2437,7 +2481,7 @@
 
         .footer-link {
             position: absolute;
-            bottom: max(24px, calc(env(safe-area-inset-bottom) + 12px));
+            bottom: max(14px, calc(env(safe-area-inset-bottom) + 8px));
             font-size: 13px;
             color: rgba(255, 255, 255, 0.35);
             text-decoration: none;
@@ -2718,7 +2762,7 @@
             gap: 12px;
             margin-top: 0;
             margin-left: 0;
-            padding: 6px 14px 6px 5px;
+            padding: 6px 12px 6px 6px;
             border-radius: 999px;
             background:
                 linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.022)),
@@ -3447,7 +3491,7 @@
                 max-width: 190px;
                 min-height: 46px;
                 gap: 8px;
-                padding: 5px 10px 5px 0;
+                padding: 5px 12px 5px 6px;
                 border-width: 1px;
                 opacity: 0;
                 transform: translate3d(-50%, var(--player-enter-y), 0) scale3d(0.955, 0.92, 1);
@@ -3475,7 +3519,7 @@
             .player-ctrl-btn {
                 width: 30px;
                 height: 30px;
-                margin-left: 7px;
+                margin-left: 0;
             }
 
             .player-track-wrap {
@@ -3614,12 +3658,13 @@
             transition: opacity 0.72s var(--continuity-ease);
         }
 
+        /* 玻璃层负责柔化，舞台保留更多亮度，让蒙层透出光。 */
         body.has-lyric-overlay .header,
         body.has-lyric-overlay .vinyl-wrapper,
         body.has-playlist-overlay .header,
         body.has-playlist-overlay .vinyl-wrapper {
             filter: none;
-            opacity: 0.3;
+            opacity: 0.62;
         }
 
         body.has-lyric-overlay .dynamic-island,
@@ -3667,6 +3712,7 @@
         .vinyl-wrapper {
             grid-area: stage;
             width: min(100%, 380px);
+            justify-self: center;
             margin: 0;
             perspective: none;
             transition: transform 0.32s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
@@ -3789,14 +3835,19 @@
             color: var(--archive-red);
         }
 
+        /* 控制簇固定在距视窗底部恒定的位置：任何屏高、任何浮层下都不漂移。 */
         .dynamic-island {
             grid-area: controls;
             justify-self: center;
             --side-control-gap: 10px;
             --control-rail-width: calc((var(--side-control-size) * 2) + var(--player-slot) + (var(--side-control-gap) * 2));
+            position: fixed;
+            left: 50%;
+            bottom: calc(max(20px, var(--safe-bottom)) + 104px);
             width: min(100%, var(--control-rail-width));
             margin: 0;
             z-index: 130;
+            transform: translate3d(-50%, var(--island-lift), 0);
             transition: transform 0.32s var(--continuity-ease), opacity 0.32s var(--continuity-ease);
         }
 
@@ -3805,14 +3856,16 @@
             display: none;
         }
 
+        /* 播放页控件统一改为透光玻璃：靠描边与内高光定形，不再使用实心底色。 */
         .play-btn {
             max-width: 100%;
-            background: var(--archive-graphite);
-            border-color: color-mix(in srgb, var(--archive-silver) 34%, transparent);
+            background: color-mix(in srgb, var(--archive-graphite) 46%, transparent);
+            border-color: color-mix(in srgb, var(--archive-silver) 44%, transparent);
             color: var(--archive-projector);
             box-shadow:
                 0 12px 22px rgba(0, 0, 0, 0.28),
-                inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 10%, transparent);
+                0 0 20px color-mix(in srgb, var(--cover-accent) 12%, transparent),
+                inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 14%, transparent);
             transition: transform 0.42s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
         }
 
@@ -3852,7 +3905,7 @@
             .result-area.is-visible .overlay-close-btn:hover,
             .playlist-area.is-visible .overlay-close-btn:hover,
             .playlist-mode-switch:hover {
-                background: var(--archive-slate);
+                background: color-mix(in srgb, var(--archive-slate) 56%, transparent);
                 border-color: color-mix(in srgb, var(--archive-projector) 46%, transparent);
                 box-shadow:
                     0 14px 24px rgba(0, 0, 0, 0.32),
@@ -3876,10 +3929,12 @@
             }
 
             .player-ctrl-btn:hover {
-                background: var(--archive-projector);
-                border-color: var(--archive-projector);
-                color: var(--archive-void);
-                box-shadow: 0 7px 14px rgba(0, 0, 0, 0.3);
+                background: color-mix(in srgb, var(--archive-projector) 30%, transparent);
+                border-color: color-mix(in srgb, var(--archive-projector) 72%, transparent);
+                color: var(--archive-projector);
+                box-shadow:
+                    0 7px 14px rgba(0, 0, 0, 0.3),
+                    0 0 16px color-mix(in srgb, var(--cover-accent) 16%, transparent);
                 transform: translateY(-1px) scale(1.02);
             }
 
@@ -3892,15 +3947,15 @@
         }
 
         .play-btn:active {
-            background: var(--archive-void);
+            background: color-mix(in srgb, var(--archive-void) 62%, transparent);
             box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
             transition: transform 0.14s var(--continuity-ease), opacity 0.14s var(--continuity-ease);
         }
 
         .player-ctrl-btn:active {
-            background: var(--archive-silver);
-            border-color: var(--archive-silver);
-            color: var(--archive-void);
+            background: color-mix(in srgb, var(--archive-silver) 34%, transparent);
+            border-color: color-mix(in srgb, var(--archive-silver) 56%, transparent);
+            color: var(--archive-projector);
             box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
             transform: scale(0.94);
             transition: transform 0.18s var(--continuity-ease), opacity 0.18s var(--continuity-ease);
@@ -3910,7 +3965,7 @@
         .playlist-toggle-btn.is-visible:active,
         .playlist-mode-switch:active,
         .audio-status .audio-retry:not(:disabled):active {
-            background: var(--archive-void);
+            background: color-mix(in srgb, var(--archive-void) 62%, transparent);
             border-color: color-mix(in srgb, var(--archive-silver) 52%, transparent);
             box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
             transition: transform 0.18s var(--continuity-ease), opacity 0.18s var(--continuity-ease);
@@ -3918,7 +3973,7 @@
 
         .result-area.is-visible .overlay-close-btn:active,
         .playlist-area.is-visible .overlay-close-btn:active {
-            background: var(--archive-void);
+            background: color-mix(in srgb, var(--archive-void) 62%, transparent);
             border-color: color-mix(in srgb, var(--archive-silver) 52%, transparent);
             box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
             transition: transform 0.1s var(--continuity-ease) 0s, opacity 0.1s var(--continuity-ease) 0s;
@@ -3929,8 +3984,8 @@
             grid-template-columns: auto minmax(0, 1fr) max-content;
             align-items: center;
             gap: 10px;
-            background: var(--archive-slate);
-            border-color: color-mix(in srgb, var(--archive-silver) 30%, transparent);
+            background: color-mix(in srgb, var(--archive-slate) 48%, transparent);
+            border-color: color-mix(in srgb, var(--archive-silver) 36%, transparent);
             box-shadow:
                 0 12px 24px rgba(0, 0, 0, 0.32),
                 0 0 20px color-mix(in srgb, var(--cover-accent) 8%, transparent);
@@ -3949,10 +4004,12 @@
         }
 
         .player-ctrl-btn {
-            background: var(--archive-projector);
-            border-color: var(--archive-projector);
-            color: var(--archive-void);
-            box-shadow: 0 5px 12px rgba(0, 0, 0, 0.26);
+            background: color-mix(in srgb, var(--archive-projector) 16%, transparent);
+            border-color: color-mix(in srgb, var(--archive-projector) 46%, transparent);
+            color: var(--archive-projector);
+            box-shadow:
+                0 5px 12px rgba(0, 0, 0, 0.26),
+                inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 22%, transparent);
             transition: transform 0.18s var(--continuity-ease), opacity 0.18s var(--continuity-ease);
         }
 
@@ -3989,10 +4046,12 @@
         .lyric-toggle-btn,
         .playlist-toggle-btn,
         .overlay-close-btn {
-            background: var(--archive-slate);
-            border-color: color-mix(in srgb, var(--archive-silver) 32%, transparent);
+            background: color-mix(in srgb, var(--archive-slate) 48%, transparent);
+            border-color: color-mix(in srgb, var(--archive-silver) 38%, transparent);
             color: var(--archive-projector);
-            box-shadow: 0 9px 18px rgba(0, 0, 0, 0.3);
+            box-shadow:
+                0 9px 18px rgba(0, 0, 0, 0.3),
+                inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 12%, transparent);
             filter: none;
             transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
         }
@@ -4006,8 +4065,8 @@
         }
 
         .playlist-mode-switch {
-            background: var(--archive-graphite);
-            border-color: color-mix(in srgb, var(--archive-silver) 28%, transparent);
+            background: color-mix(in srgb, var(--archive-graphite) 46%, transparent);
+            border-color: color-mix(in srgb, var(--archive-silver) 32%, transparent);
             color: var(--archive-projector);
             box-shadow: 0 8px 14px rgba(0, 0, 0, 0.28);
             transition: transform 0.24s var(--continuity-ease), opacity 0.24s var(--continuity-ease);
@@ -4050,62 +4109,6 @@
         .audio-status .audio-retry:focus-visible {
             outline: 2px solid var(--archive-projector);
             outline-offset: 3px;
-        }
-
-        .result-area,
-        .playlist-area {
-            background: color-mix(in srgb, var(--archive-void) 88%, transparent);
-            transition: opacity 0.24s var(--crossfade-ease), transform 0.24s var(--continuity-ease);
-        }
-
-        .result-area::before,
-        .playlist-area::before {
-            display: block;
-            content: "";
-            position: absolute;
-            inset: -18%;
-            z-index: 0;
-            border-radius: 0;
-            background:
-                radial-gradient(ellipse 52% 38% at 28% 36%, color-mix(in srgb, var(--cover-a) 72%, transparent), transparent 72%),
-                radial-gradient(ellipse 48% 42% at 74% 64%, color-mix(in srgb, var(--cover-b) 68%, transparent), transparent 74%),
-                linear-gradient(112deg, transparent 24%, color-mix(in srgb, var(--cover-accent) 28%, transparent) 50%, transparent 76%);
-            filter: blur(42px);
-            opacity: 0;
-            transform: translate3d(-3%, -2%, 0) rotate(-4deg) scale(1.02);
-            pointer-events: none;
-            transition: opacity 0.62s var(--crossfade-ease);
-        }
-
-        .result-area::after,
-        .playlist-area::after {
-            display: block;
-            content: "";
-            position: absolute;
-            inset: 0;
-            z-index: 1;
-            background: linear-gradient(180deg, rgba(7, 8, 8, 0.28), rgba(7, 8, 8, 0.72));
-            pointer-events: none;
-        }
-
-        html[data-motion-profile="full"] .result-area.is-visible::before,
-        html[data-motion-profile="full"] .playlist-area.is-visible::before {
-            opacity: 0.24;
-            animation: overlay-polarized-drift 8.6s var(--continuity-ease) infinite alternate;
-        }
-
-        html[data-motion-profile="compact"] .result-area.is-visible::before,
-        html[data-motion-profile="compact"] .playlist-area.is-visible::before {
-            opacity: 0.2;
-            animation: none;
-            filter: blur(28px);
-            transform: translate3d(0, 0, 0) rotate(-2deg) scale(1.02);
-        }
-
-        html[data-motion-profile="reduce"] .result-area.is-visible::before,
-        html[data-motion-profile="reduce"] .playlist-area.is-visible::before {
-            opacity: 0.18;
-            transform: none;
         }
 
         .result-content {
@@ -4260,21 +4263,6 @@
             opacity: 0.9;
         }
 
-        @keyframes overlay-polarized-drift {
-            0% {
-                opacity: 0.18;
-                transform: translate3d(-3%, -2%, 0) rotate(-4deg) scale(1.02);
-            }
-            48% {
-                opacity: 0.24;
-                transform: translate3d(2%, 1%, 0) rotate(2deg) scale(1.05);
-            }
-            100% {
-                opacity: 0.2;
-                transform: translate3d(-1%, 3%, 0) rotate(-1deg) scale(1.03);
-            }
-        }
-
         .toast {
             border-radius: 6px;
             background: var(--archive-slate);
@@ -4348,25 +4336,33 @@
                 --player-slot: 190px;
                 --side-control-size: 44px;
                 --side-control-gap: 8px;
+                --side-control-rail-offset: 4px;
                 width: min(100%, var(--control-rail-width));
             }
 
+            /* 留出唱臂的悬出量，避免在 768px 附近被视口裁掉。 */
             .vinyl-wrapper {
                 width: min(100%, 340px);
+                justify-self: start;
+                align-items: flex-start;
             }
-        }
 
-        @media (min-width: 768px) and (max-height: 760px) {
-            .footer-link {
-                left: max(24px, calc(env(safe-area-inset-left) + 12px));
-                right: auto;
+            .turntable {
+                width: min(100%, 296px);
+                height: min(100%, 296px);
+            }
+
+            .vinyl-record,
+            .vinyl-highlight {
+                width: min(60vw, 264px);
+                height: min(60vw, 264px);
             }
         }
 
         @media (max-width: 767px) {
             body {
                 --mobile-content-rail: min(calc(100vw - 32px), 340px);
-                justify-content: flex-start;
+                justify-content: center;
                 padding: max(18px, env(safe-area-inset-top)) 16px max(22px, env(safe-area-inset-bottom));
             }
 
@@ -4383,7 +4379,12 @@
                 justify-items: center;
                 row-gap: 18px;
                 margin: 0;
-                padding: 8px 0 38px;
+                padding: 8px 0 182px;
+            }
+
+            /* 移动端：海报收窄留出光门呼吸空间；光门矮于舞台，不压住文案。 */
+            .loading-frame {
+                width: min(80vw, 520px);
             }
 
             .header {
@@ -4417,8 +4418,9 @@
                 height: min(74vw, min(54svh, 292px));
             }
 
+            /* 元数据栏与唱片、控制区保持相近的左右视觉留白。 */
             .archive-track-meta {
-                width: var(--mobile-content-rail);
+                width: min(calc(var(--mobile-content-rail) - 44px), 300px);
                 padding: 8px 0 0;
                 border-top: 1px solid color-mix(in srgb, var(--archive-silver) 22%, transparent);
                 border-left: 0;
@@ -4432,6 +4434,7 @@
             .dynamic-island {
                 --side-control-size: 44px;
                 --side-control-gap: clamp(6px, 2.5vw, 10px);
+                --side-control-rail-offset: 4px;
                 --player-slot: min(
                     190px,
                     calc(
@@ -4495,7 +4498,7 @@
             .app-shell {
                 row-gap: 8px;
                 padding-top: 0;
-                padding-bottom: 24px;
+                padding-bottom: 164px;
             }
 
             .dynamic-island {
@@ -4518,13 +4521,6 @@
 
             .archive-track-meta > div {
                 padding: 5px 0;
-            }
-
-            .footer-link {
-                top: max(12px, calc(env(safe-area-inset-top) + 8px));
-                bottom: auto;
-                left: max(14px, calc(env(safe-area-inset-left) + 10px));
-                right: auto;
             }
         }
 
@@ -4653,17 +4649,15 @@
             transform: none !important;
         }
 
-        /* Dual portal handoff and translucent album-light overlays. */
-        .loading-screen[data-portal-side="left"],
-        .loading-light-slit[data-portal-side="left"] {
-            --portal-edge-inset: max(0px, calc((100% - 520px) / 2));
-            --portal-x: var(--portal-edge-inset);
+        /* 顶部门负责释放海报，底部门负责收拢海报；位置来自每张画面的实测边界。 */
+        .loading-screen[data-portal-side="top"],
+        .loading-light-slit[data-portal-side="top"] {
+            --portal-y: var(--gate-y, 0px);
         }
 
-        .loading-screen[data-portal-side="right"],
-        .loading-light-slit[data-portal-side="right"] {
-            --portal-edge-inset: max(0px, calc((100% - 520px) / 2));
-            --portal-x: calc(100% - var(--portal-edge-inset));
+        .loading-screen[data-portal-side="bottom"],
+        .loading-light-slit[data-portal-side="bottom"] {
+            --portal-y: var(--gate-y, 100%);
         }
 
         .loading-screen[data-portal-side="center"],
@@ -4673,277 +4667,313 @@
             --portal-x: 50%;
         }
 
-        .loading-screen[data-portal-side] .loading-stage::before,
-        .loading-screen[data-portal-side] .loading-stage::after {
-            top: 50%;
-            left: var(--portal-x, 50%);
+        /* 普通光门相位只显示门体自身，避免与最终环境光叠加。 */
+        .loading-screen[data-portal-side="top"] .loading-stage::before,
+        .loading-screen[data-portal-side="top"] .loading-stage::after,
+        .loading-screen[data-portal-side="bottom"] .loading-stage::before,
+        .loading-screen[data-portal-side="bottom"] .loading-stage::after {
+            display: none;
+        }
+
+        /* 上下光门共用同一套镜像光场，门与海报之间保留实测间距。 */
+        .loading-light-slit[data-portal-side="top"],
+        .loading-light-slit[data-portal-side="bottom"] {
+            top: var(--portal-y, 50%);
+            left: var(--gate-x, 50%);
+            z-index: 4;
+            width: var(--gate-width, min(76vw, 560px));
+            height: var(--gate-height, 156px);
+            contain: layout style;
+            isolation: isolate;
+            overflow: visible;
+            opacity: 0;
+            transform: translate3d(-50%, -50%, 0) scale3d(0.14, 1, 1);
+            transform-origin: center;
+            backface-visibility: hidden;
+        }
+
+        .loading-light-slit[data-portal-side="top"] > span,
+        .loading-light-slit[data-portal-side="bottom"] > span {
+            top: auto;
+            bottom: auto;
+            left: 0;
+            right: 0;
+            border-radius: 0;
+            mix-blend-mode: screen;
             transform-origin: center;
         }
 
-        .loading-screen[data-portal-side] .loading-stage::before {
-            width: 2px;
-            height: min(76vh, 620px);
-            background: linear-gradient(
-                180deg,
-                transparent 0%,
-                rgba(215, 236, 246, 0.12) 14%,
-                rgba(226, 241, 248, 0.7) 40%,
-                rgba(255, 254, 247, 0.98) 50%,
-                rgba(199, 222, 232, 0.56) 60%,
-                rgba(215, 236, 246, 0.09) 86%,
-                transparent 100%
-            );
-            filter: blur(0.35px);
-            box-shadow:
-                0 0 8px rgba(255, 253, 244, 0.72),
-                0 0 24px rgba(211, 233, 243, 0.44),
-                0 0 52px rgba(196, 218, 228, 0.2);
-            transform: translate3d(-50%, -50%, 0) scaleY(0.32);
-        }
-
-        .loading-screen[data-portal-side] .loading-stage::after {
-            width: clamp(68px, 8vw, 104px);
-            height: min(74vh, 600px);
+        .loading-frame::after {
+            content: "";
+            position: absolute;
+            top: var(--poster-art-bottom, 78%);
+            left: 50%;
+            z-index: 0;
+            width: var(--poster-float-width, min(76%, 380px));
+            height: var(--poster-float-height, 36px);
             border-radius: 50%;
             background: radial-gradient(
                 ellipse at center,
-                rgba(255, 253, 244, 0.42) 0%,
-                rgba(211, 233, 243, 0.24) 20%,
-                rgba(196, 218, 228, 0.085) 48%,
+                rgba(248, 252, 255, 0.34) 0%,
+                rgba(186, 218, 240, 0.16) 30%,
+                rgba(126, 166, 198, 0.055) 58%,
                 transparent 78%
             );
-            filter: blur(14px);
-            transform: translate3d(-50%, -50%, 0) scale3d(0.38, 0.72, 1);
-        }
-
-        .loading-screen.is-portal-active[data-portal-phase="enter"] .loading-stage::before {
-            animation: loading-left-portal-rail-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
-        }
-
-        .loading-screen.is-portal-active[data-portal-phase="enter"] .loading-stage::after {
-            animation: loading-left-portal-halo-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
-        }
-
-        .loading-screen.is-portal-active[data-portal-phase="exit"] .loading-stage::before {
-            animation: loading-right-portal-rail-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
-        }
-
-        .loading-screen.is-portal-active[data-portal-phase="exit"] .loading-stage::after {
-            animation: loading-right-portal-halo-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
-        }
-
-        .loading-light-slit[data-portal-side="left"],
-        .loading-light-slit[data-portal-side="right"] {
-            top: 50%;
-            left: var(--portal-x, 50%);
-            width: clamp(54px, 6.8vw, 88px);
-            height: min(76vh, 620px);
-            isolation: isolate;
-            overflow: visible;
-            transform: translate3d(-50%, -50%, 0) scale3d(0.52, 0.78, 1);
+            filter: blur(12px);
+            opacity: 0;
+            pointer-events: none;
+            transform: translate3d(-50%, 8px, 0) scale3d(0.78, 0.66, 1);
             transform-origin: center;
         }
 
-        .loading-light-slit[data-portal-side="left"]::before,
-        .loading-light-slit[data-portal-side="right"]::before,
-        .loading-light-slit[data-portal-side="left"]::after,
-        .loading-light-slit[data-portal-side="right"]::after {
+        /* Lamp 式白芯保持锐利，单个伪元素承担朝画面内侧扩散的柔光。 */
+        .loading-light-slit[data-portal-side="top"] .loading-light-core,
+        .loading-light-slit[data-portal-side="bottom"] .loading-light-core {
+            top: 50%;
+            left: 0;
+            z-index: 1;
+            display: block;
+            width: 100%;
+            height: clamp(1.5px, 0.14vw, 2px);
+            overflow: visible;
+            isolation: isolate;
+            background: linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0) 0%,
+                rgba(255, 255, 255, 0.04) 6%,
+                rgba(255, 255, 255, 0.28) 14%,
+                rgba(255, 255, 255, 0.82) 24%,
+                rgba(255, 255, 255, 0.99) 36%,
+                rgba(255, 255, 255, 1) 50%,
+                rgba(255, 255, 255, 0.99) 64%,
+                rgba(255, 255, 255, 0.82) 76%,
+                rgba(255, 255, 255, 0.28) 86%,
+                rgba(255, 255, 255, 0.04) 94%,
+                rgba(255, 255, 255, 0) 100%
+            );
+            box-shadow: none;
+            filter:
+                blur(0.2px)
+                drop-shadow(0 0 5px rgba(255, 255, 255, 0.86))
+                drop-shadow(0 0 14px rgba(214, 235, 246, 0.58));
+            transform: translate3d(0, -50%, 0);
+        }
+
+        .loading-light-slit:is([data-portal-side="top"], [data-portal-side="bottom"]) .loading-light-core::before {
             content: "";
             position: absolute;
-            pointer-events: none;
-            mix-blend-mode: screen;
-        }
-
-        .loading-light-slit[data-portal-side="left"]::before,
-        .loading-light-slit[data-portal-side="left"]::after {
-            -webkit-mask-image: linear-gradient(90deg, #000 0%, rgba(0, 0, 0, 0.72) 36%, transparent 100%);
-            mask-image: linear-gradient(90deg, #000 0%, rgba(0, 0, 0, 0.72) 36%, transparent 100%);
-        }
-
-        .loading-light-slit[data-portal-side="right"]::before,
-        .loading-light-slit[data-portal-side="right"]::after {
-            -webkit-mask-image: linear-gradient(270deg, #000 0%, rgba(0, 0, 0, 0.72) 36%, transparent 100%);
-            mask-image: linear-gradient(270deg, #000 0%, rgba(0, 0, 0, 0.72) 36%, transparent 100%);
-        }
-
-        .loading-light-slit[data-portal-side="left"]::before,
-        .loading-light-slit[data-portal-side="right"]::before {
-            top: 3%;
-            bottom: 3%;
-            z-index: -2;
-            width: min(38vw, 390px);
-            filter: blur(11px);
-            animation: loading-portal-volume-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
-        }
-
-        .loading-light-slit[data-portal-side="left"]::after,
-        .loading-light-slit[data-portal-side="right"]::after {
-            top: 13%;
-            bottom: 13%;
             z-index: -1;
-            width: min(34vw, 340px);
-            filter: blur(4px);
-            animation: loading-portal-ray-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
-        }
-
-        .loading-light-slit[data-portal-side="left"]::before {
-            left: 50%;
-            background: linear-gradient(
+            left: -16%;
+            right: -16%;
+            width: auto;
+            height: calc(var(--gate-height, 156px) * 1.85);
+            filter: blur(clamp(14px, 1.4vw, 22px));
+            -webkit-mask-image: linear-gradient(
                 90deg,
-                rgba(255, 253, 244, 0.32) 0%,
-                rgba(217, 237, 246, 0.17) 18%,
-                rgba(202, 226, 237, 0.075) 48%,
+                transparent 0%,
+                rgba(0, 0, 0, 0.08) 6%,
+                rgba(0, 0, 0, 0.34) 14%,
+                rgba(0, 0, 0, 0.76) 28%,
+                #000 42%,
+                #000 58%,
+                rgba(0, 0, 0, 0.76) 72%,
+                rgba(0, 0, 0, 0.34) 86%,
+                rgba(0, 0, 0, 0.08) 94%,
                 transparent 100%
             );
-            clip-path: polygon(0 3%, 100% 22%, 100% 78%, 0 97%);
-            transform-origin: left center;
-        }
-
-        .loading-light-slit[data-portal-side="right"]::before {
-            right: 50%;
-            background: linear-gradient(
-                270deg,
-                rgba(255, 253, 244, 0.32) 0%,
-                rgba(217, 237, 246, 0.17) 18%,
-                rgba(202, 226, 237, 0.075) 48%,
-                transparent 100%
-            );
-            clip-path: polygon(0 22%, 100% 3%, 100% 97%, 0 78%);
-            transform-origin: right center;
-        }
-
-        .loading-light-slit[data-portal-side="left"]::after {
-            left: 50%;
-            background: linear-gradient(
+            mask-image: linear-gradient(
                 90deg,
-                rgba(255, 254, 248, 0.34) 0%,
-                rgba(231, 244, 249, 0.13) 24%,
-                rgba(208, 232, 241, 0.035) 66%,
-                transparent 100%
-            );
-            clip-path: polygon(0 12%, 100% 28%, 100% 72%, 0 88%);
-            transform-origin: left center;
-        }
-
-        .loading-light-slit[data-portal-side="right"]::after {
-            right: 50%;
-            background: linear-gradient(
-                270deg,
-                rgba(255, 254, 248, 0.34) 0%,
-                rgba(231, 244, 249, 0.13) 24%,
-                rgba(208, 232, 241, 0.035) 66%,
-                transparent 100%
-            );
-            clip-path: polygon(0 28%, 100% 12%, 100% 88%, 0 72%);
-            transform-origin: right center;
-        }
-
-        .loading-light-slit[data-portal-side="left"] > span,
-        .loading-light-slit[data-portal-side="right"] > span {
-            top: 3%;
-            bottom: 3%;
-            border-radius: 50%;
-            filter: blur(12px);
-        }
-
-        .loading-light-slit[data-portal-side="left"] .loading-light-core,
-        .loading-light-slit[data-portal-side="right"] .loading-light-core {
-            left: calc(50% - 1.5px);
-            width: 3px;
-            background: linear-gradient(
-                180deg,
                 transparent 0%,
-                rgba(248, 248, 243, 0.22) 14%,
-                rgba(255, 254, 247, 1) 48%,
-                rgba(222, 237, 243, 0.58) 62%,
-                transparent 100%
-            );
-            filter: blur(0.4px);
-            box-shadow:
-                0 0 7px rgba(255, 253, 244, 0.88),
-                0 0 18px rgba(214, 235, 245, 0.68),
-                0 0 42px rgba(195, 220, 232, 0.34);
-        }
-
-        .loading-light-slit[data-portal-side="left"] .loading-light-edge.is-warm,
-        .loading-light-slit[data-portal-side="right"] .loading-light-edge.is-warm {
-            left: 0;
-            width: 72%;
-            background: linear-gradient(
-                180deg,
-                transparent 0%,
-                rgba(249, 239, 220, 0.09) 18%,
-                rgba(249, 239, 220, 0.38) 48%,
-                rgba(249, 239, 220, 0.12) 72%,
+                rgba(0, 0, 0, 0.08) 6%,
+                rgba(0, 0, 0, 0.34) 14%,
+                rgba(0, 0, 0, 0.76) 28%,
+                #000 42%,
+                #000 58%,
+                rgba(0, 0, 0, 0.76) 72%,
+                rgba(0, 0, 0, 0.34) 86%,
+                rgba(0, 0, 0, 0.08) 94%,
                 transparent 100%
             );
         }
 
-        .loading-light-slit[data-portal-side="left"] .loading-light-edge.is-cool,
-        .loading-light-slit[data-portal-side="right"] .loading-light-edge.is-cool {
-            right: 0;
-            width: 72%;
-            background: linear-gradient(
-                180deg,
-                transparent 0%,
-                rgba(205, 229, 240, 0.09) 18%,
-                rgba(205, 229, 240, 0.36) 48%,
-                rgba(205, 229, 240, 0.11) 72%,
-                transparent 100%
+        .loading-light-slit[data-portal-side="top"] .loading-light-core::before {
+            top: 50%;
+            background: radial-gradient(
+                ellipse 104% 100% at 50% 0%,
+                rgba(255, 252, 243, 0.92) 0%,
+                rgba(226, 241, 247, 0.42) 18%,
+                rgba(194, 225, 240, 0.17) 42%,
+                rgba(164, 205, 228, 0.055) 68%,
+                rgba(164, 205, 228, 0) 100%
             );
+            transform: translate3d(0, -1px, 0);
         }
 
+        .loading-light-slit[data-portal-side="bottom"] .loading-light-core::before {
+            top: auto;
+            bottom: 50%;
+            background: radial-gradient(
+                ellipse 104% 100% at 50% 100%,
+                rgba(255, 252, 243, 0.92) 0%,
+                rgba(226, 241, 247, 0.42) 18%,
+                rgba(194, 225, 240, 0.17) 42%,
+                rgba(164, 205, 228, 0.055) 68%,
+                rgba(164, 205, 228, 0) 100%
+            );
+            transform: translate3d(0, 1px, 0);
+        }
+
+        .loading-light-slit[data-portal-side="top"] .loading-light-edge.is-warm,
+        .loading-light-slit[data-portal-side="bottom"] .loading-light-edge.is-warm {
+            display: none;
+        }
+
+        .loading-light-slit[data-portal-side="top"] .loading-light-edge.is-cool,
+        .loading-light-slit[data-portal-side="bottom"] .loading-light-edge.is-cool {
+            display: none;
+        }
+
+        /* 上下入口共享同一条 760ms 包络，方向只影响海报和粒子。 */
         .loading-screen.is-portal-active[data-portal-phase="enter"] .loading-light-slit.is-lit {
-            animation: loading-left-portal-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
+            animation:
+                loading-portal-stretch var(--portal-phase-ms, 760ms) linear both,
+                loading-portal-luminance var(--portal-phase-ms, 760ms) linear both;
         }
 
         .loading-screen.is-portal-active[data-portal-phase="exit"] .loading-light-slit.is-lit {
-            animation: loading-right-portal-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
+            animation:
+                loading-portal-stretch var(--portal-phase-ms, 760ms) linear both,
+                loading-portal-luminance var(--portal-phase-ms, 760ms) linear both;
         }
 
-        .loading-screen.is-portal-active[data-portal-phase="enter"] .loading-light-slit.is-lit .loading-light-core,
-        .loading-screen.is-portal-active[data-portal-phase="exit"] .loading-light-slit.is-lit .loading-light-core {
-            animation: loading-portal-core-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
+        .loading-screen.is-portal-active .loading-light-slit.is-lit > span {
+            animation: none;
         }
 
-        .loading-screen.is-portal-active[data-portal-phase="enter"] .loading-light-slit.is-lit .loading-light-edge.is-warm,
-        .loading-screen.is-portal-active[data-portal-phase="exit"] .loading-light-slit.is-lit .loading-light-edge.is-warm {
-            animation: loading-portal-warm-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
+        /* 光门只负责几何遮挡，海报自身保持完整、不再叠加四周透明蒙版。 */
+        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering-from-portal[data-portal-side="top"] .loading-artwork-viewport {
+            -webkit-clip-path: inset(
+                var(--seam-inset, 0%)
+                calc(0px - var(--poster-effect-bleed, 96px))
+                calc(0px - var(--poster-effect-bleed, 96px))
+                calc(0px - var(--poster-effect-bleed, 96px))
+            );
+            clip-path: inset(
+                var(--seam-inset, 0%)
+                calc(0px - var(--poster-effect-bleed, 96px))
+                calc(0px - var(--poster-effect-bleed, 96px))
+                calc(0px - var(--poster-effect-bleed, 96px))
+            );
         }
 
-        .loading-screen.is-portal-active[data-portal-phase="enter"] .loading-light-slit.is-lit .loading-light-edge.is-cool,
-        .loading-screen.is-portal-active[data-portal-phase="exit"] .loading-light-slit.is-lit .loading-light-edge.is-cool {
-            animation: loading-portal-cool-pulse var(--portal-phase-ms, var(--slit-duration, 600ms)) var(--loading-light-ease) both;
+        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting-to-portal[data-portal-side="bottom"] .loading-artwork-viewport {
+            -webkit-clip-path: inset(
+                calc(0px - var(--poster-effect-bleed, 96px))
+                calc(0px - var(--poster-effect-bleed, 96px))
+                var(--seam-inset, 0%)
+                calc(0px - var(--poster-effect-bleed, 96px))
+            );
+            clip-path: inset(
+                calc(0px - var(--poster-effect-bleed, 96px))
+                calc(0px - var(--poster-effect-bleed, 96px))
+                var(--seam-inset, 0%)
+                calc(0px - var(--poster-effect-bleed, 96px))
+            );
         }
 
-        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="left"] .loading-image {
-            animation: loading-poster-enter-from-left var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) var(--loading-settle-ease) both;
+        .loading-screen .loading-frame .loading-image {
+            -webkit-mask-image: none;
+            mask-image: none;
         }
 
-        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="left"]::before {
-            animation: loading-poster-horizontal-wake var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) var(--loading-settle-ease) both;
+        .loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing) {
+            animation: loading-poster-float 6.4s cubic-bezier(0.37, 0, 0.63, 1) infinite;
         }
 
-        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="right"] .loading-image {
-            animation: loading-poster-exit-to-right var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) var(--loading-settle-ease) both;
+        .loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing)::before {
+            top: var(--poster-art-top, 8%);
+            width: min(92%, calc(var(--poster-float-width, 380px) * 1.18));
+            height: var(--poster-art-height, 76%);
+            filter: blur(22px);
+        }
+
+        .loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame.is-stable::before {
+            animation: loading-poster-aura 6.4s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+        }
+
+        .loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame.is-stable::after {
+            animation: loading-poster-floor-glow 6.4s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+        }
+
+        .loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing) .loading-image {
+            filter:
+                drop-shadow(0 18px 24px rgba(2, 8, 16, 0.48))
+                drop-shadow(0 0 22px rgba(188, 220, 240, 0.16));
+        }
+
+
+        /* iOS 式灵动飞行：位移与缩放分轨——位移走临界阻尼弹簧（无过冲、
+           丝滑长尾），缩放与亮度略滞后到位，层次感来自轨道间的微小时差。 */
+        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"] .loading-image {
+            transform: none;
+            animation:
+                loading-poster-glide-in var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) both,
+                loading-poster-arrive var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) both;
+            animation-timing-function: cubic-bezier(0.4, 0.14, 0.3, 1), cubic-bezier(0.32, 0.72, 0, 1);
+        }
+
+        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"]::before {
+            animation:
+                loading-poster-glide-in var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0.14, 0.3, 1) both,
+                loading-poster-aura-arrive var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.32, 0.72, 0, 1) both;
+        }
+
+        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"]::after {
+            animation:
+                loading-poster-glide-in var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0.14, 0.3, 1) both,
+                loading-poster-floor-arrive var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.32, 0.72, 0, 1) both;
+        }
+
+        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"] .loading-image {
+            transform: none;
+            opacity: 1;
+            animation:
+                loading-poster-glide-out var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) both,
+                loading-poster-depart var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) both;
+            animation-timing-function: cubic-bezier(0.4, 0.14, 0.3, 1), cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"]::before {
+            animation:
+                loading-poster-glide-out var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0.14, 0.3, 1) both,
+                loading-poster-aura-depart var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+
+        .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"]::after {
+            animation:
+                loading-poster-glide-out var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0.14, 0.3, 1) both,
+                loading-poster-floor-depart var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+
+        .loading-screen.is-final-resolving {
+            animation: loading-backdrop-reveal var(--final-resolve-ms, 1100ms) linear both;
         }
 
         .loading-screen.is-final-resolving:is([data-portal-phase="handoff"], [data-portal-phase="final-handoff"]) .loading-stage::before,
         .loading-screen.is-final-resolving[data-portal-side="center"] .loading-stage::before,
         .loading-screen.is-final-resolving[data-portal-side="final"] .loading-stage::before {
+            display: block;
             left: 50%;
             width: min(58vw, 440px);
             height: min(72vh, 560px);
             border-radius: 50%;
             background: radial-gradient(
                 ellipse at center,
-                color-mix(in srgb, var(--archive-projector) 15%, transparent) 0%,
-                color-mix(in srgb, var(--cover-accent) 18%, transparent) 20%,
-                color-mix(in srgb, var(--cover-a) 11%, transparent) 42%,
-                color-mix(in srgb, var(--cover-b) 5%, transparent) 62%,
-                transparent 80%
+                color-mix(in srgb, var(--archive-projector) 13%, transparent) 0%,
+                color-mix(in srgb, var(--cover-accent) 10%, transparent) 32%,
+                transparent 74%
             );
-            filter: blur(22px);
+            filter: blur(24px);
             transform: translate3d(-50%, -50%, 0) scale3d(1.08, 1.04, 1);
             animation: loading-final-ambient-converge var(--final-resolve-ms, 1100ms) var(--loading-settle-ease) both;
         }
@@ -4951,20 +4981,7 @@
         .loading-screen.is-final-resolving:is([data-portal-phase="handoff"], [data-portal-phase="final-handoff"]) .loading-stage::after,
         .loading-screen.is-final-resolving[data-portal-side="center"] .loading-stage::after,
         .loading-screen.is-final-resolving[data-portal-side="final"] .loading-stage::after {
-            left: 50%;
-            width: min(48vw, 360px);
-            height: min(62vh, 480px);
-            border-radius: 50%;
-            background: radial-gradient(
-                ellipse at center,
-                color-mix(in srgb, var(--archive-projector) 12%, transparent),
-                color-mix(in srgb, var(--cover-accent) 12%, transparent) 32%,
-                color-mix(in srgb, var(--cover-b) 5%, transparent) 56%,
-                transparent 76%
-            );
-            filter: blur(19px);
-            transform: translate3d(-50%, -50%, 0) scale3d(1.12, 1.06, 1);
-            animation: loading-final-ambient-refraction var(--final-resolve-ms, 1100ms) var(--loading-settle-ease) both;
+            display: none;
         }
 
         .loading-screen.is-final-resolving .loading-light-slit:is([data-portal-phase="handoff"], [data-portal-phase="final-handoff"]),
@@ -4975,26 +4992,26 @@
             animation: none !important;
         }
 
-        @keyframes loading-poster-enter-from-left {
-            0%, 8% {
-                opacity: 0;
-                transform: translate3d(calc(-50% + clamp(0px, 1vw, 6px)), 0, 0) scale(0.86);
+        /* 隧道飞行：海报从隧道深处放大飞出（取景框裁切负责遮挡），
+           位移 + 缩放同时进行，带出纵深感；不做透明度淡入。 */
+        /* 落位是弹簧滑行：位移单段、无回弹；缩放与亮度独立收束。 */
+        @keyframes loading-poster-glide-in {
+            0% {
+                translate: 0 var(--poster-portal-offset, -112%);
             }
-            20% {
-                opacity: 0.18;
-                transform: translate3d(calc(-34% + clamp(0px, 0.7vw, 4px)), 0, 0) scale(0.9);
+            100% {
+                translate: 0 0%;
             }
-            44% {
-                opacity: 0.94;
-                transform: translate3d(-8%, 0, 0) scale(0.985);
-            }
-            58% {
+        }
+
+        @keyframes loading-poster-arrive {
+            0% {
                 opacity: 1;
-                transform: translate3d(1.4%, 0, 0) scale(1.016);
+                scale: 0.76;
             }
-            76%, 100% {
+            100% {
                 opacity: 1;
-                transform: translate3d(0, 0, 0) scale(1);
+                scale: 1;
             }
         }
 
@@ -5017,157 +5034,197 @@
             }
         }
 
-        @keyframes loading-poster-exit-to-right {
-            0%, 18% {
+        /* 离场是纯加速被吸入：不做机械的预备后倾。 */
+        @keyframes loading-poster-glide-out {
+            0% {
+                translate: 0 0%;
+            }
+            100% {
+                translate: 0 var(--poster-portal-offset, 112%);
+            }
+        }
+
+        @keyframes loading-poster-depart {
+            0% {
                 opacity: 1;
-                transform: translate3d(0, 0, 0) scale(1);
+                scale: 1;
             }
-            38% {
+            100% {
                 opacity: 1;
-                transform: translate3d(10%, 0, 0) scale(1.012);
+                scale: 0.74;
             }
-            68% {
-                opacity: 0.48;
-                transform: translate3d(calc(34% - clamp(0px, 0.7vw, 4px)), 0, 0) scale(0.93);
+        }
+
+        @keyframes loading-poster-float {
+            0%, 100% {
+                transform: translate3d(0, -2px, 10px) rotateX(0.26deg) rotateY(-0.22deg) scale(1.001);
             }
-            84%, 100% {
+            50% {
+                transform: translate3d(0, -7px, 16px) rotateX(-0.32deg) rotateY(0.27deg) scale(1.006);
+            }
+        }
+
+        @keyframes loading-poster-aura-arrive {
+            0% {
+                opacity: 0.08;
+                transform: translate3d(-50%, -10px, 0) scale3d(0.72, 0.82, 1);
+            }
+            58% {
+                opacity: 0.22;
+                transform: translate3d(-50%, -2px, 0) scale3d(0.94, 0.96, 1);
+            }
+            100% {
+                opacity: 0.14;
+                transform: translate3d(-50%, 1px, 0) scale3d(0.9, 0.94, 1);
+            }
+        }
+
+        @keyframes loading-poster-floor-arrive {
+            0% {
+                opacity: 0.06;
+                transform: translate3d(-50%, 5px, 0) scale3d(0.48, 0.42, 1);
+            }
+            64% {
+                opacity: 0.34;
+                transform: translate3d(-50%, 10px, 0) scale3d(0.88, 0.72, 1);
+            }
+            100% {
+                opacity: 0.25;
+                transform: translate3d(-50%, 9px, 0) scale3d(0.82, 0.64, 1);
+            }
+        }
+
+        @keyframes loading-poster-aura-depart {
+            0% {
+                opacity: 0.14;
+                transform: translate3d(-50%, 1px, 0) scale3d(0.9, 0.94, 1);
+            }
+            42% {
+                opacity: 0.23;
+                transform: translate3d(-50%, 4px, 0) scale3d(0.98, 0.9, 1);
+            }
+            100% {
                 opacity: 0;
-                transform: translate3d(calc(50% - clamp(0px, 1vw, 6px)), 0, 0) scale(0.86);
+                transform: translate3d(-50%, 14px, 0) scale3d(0.58, 0.46, 1);
             }
         }
 
-        @keyframes loading-left-portal-rail-pulse {
-            0% { opacity: 0.02; transform: translate3d(-50%, -50%, 0) scaleY(0.56); }
-            8% { opacity: 0.05; transform: translate3d(-50%, -50%, 0) scaleY(0.72); }
-            16% { opacity: 0.5; transform: translate3d(-50%, -50%, 0) scaleY(0.88); }
-            24% { opacity: 1; transform: translate3d(-50%, -50%, 0) scaleY(1); }
-            38% { opacity: 0.86; transform: translate3d(-50%, -50%, 0) scaleY(1.012); }
-            50% { opacity: 0.28; transform: translate3d(-50%, -50%, 0) scaleY(1.025); }
-            58% { opacity: 0.04; transform: translate3d(-50%, -50%, 0) scaleY(1.045); }
-            66%, 100% { opacity: 0; transform: translate3d(-50%, -50%, 0) scaleY(1.065); }
+        @keyframes loading-poster-floor-depart {
+            0% {
+                opacity: 0.25;
+                transform: translate3d(-50%, 9px, 0) scale3d(0.82, 0.64, 1);
+            }
+            44% {
+                opacity: 0.38;
+                transform: translate3d(-50%, 12px, 0) scale3d(0.94, 0.76, 1);
+            }
+            100% {
+                opacity: 0;
+                transform: translate3d(-50%, 18px, 0) scale3d(0.54, 0.38, 1);
+            }
         }
 
-        @keyframes loading-right-portal-rail-pulse {
-            0% { opacity: 0.02; transform: translate3d(-50%, -50%, 0) scaleY(0.58); }
-            9% { opacity: 0.05; transform: translate3d(-50%, -50%, 0) scaleY(0.74); }
-            17% { opacity: 0.46; transform: translate3d(-50%, -50%, 0) scaleY(0.89); }
-            26% { opacity: 0.98; transform: translate3d(-50%, -50%, 0) scaleY(1); }
-            40% { opacity: 0.82; transform: translate3d(-50%, -50%, 0) scaleY(1.012); }
-            52% { opacity: 0.25; transform: translate3d(-50%, -50%, 0) scaleY(1.022); }
-            60% { opacity: 0.04; transform: translate3d(-50%, -50%, 0) scaleY(1.04); }
-            68%, 100% { opacity: 0; transform: translate3d(-50%, -50%, 0) scaleY(1.06); }
+        @keyframes loading-poster-aura {
+            0%, 100% {
+                opacity: 0.14;
+                transform: translate3d(-50%, 1px, 0) scale3d(0.9, 0.94, 1);
+            }
+            50% {
+                opacity: 0.26;
+                transform: translate3d(-50%, -5px, 0) scale3d(1.02, 1, 1);
+            }
         }
 
-        @keyframes loading-left-portal-halo-pulse {
-            0% { opacity: 0.26; transform: translate3d(-50%, -50%, 0) scale3d(0.54, 0.78, 1); }
-            10% { opacity: 0.44; transform: translate3d(-50%, -50%, 0) scale3d(0.72, 0.9, 1); }
-            25% { opacity: 0.68; transform: translate3d(-50%, -50%, 0) scale3d(1, 1, 1); }
-            41% { opacity: 0.48; transform: translate3d(-50%, -50%, 0) scale3d(1.025, 1.008, 1); }
-            54% { opacity: 0.12; transform: translate3d(-50%, -50%, 0) scale3d(1.055, 1.018, 1); }
-            65% { opacity: 0.18; transform: translate3d(-50%, -50%, 0) scale3d(1.09, 1.03, 1); }
-            78%, 100% { opacity: 0; transform: translate3d(-50%, -50%, 0) scale3d(1.13, 1.045, 1); }
+        @keyframes loading-poster-floor-glow {
+            0%, 100% {
+                opacity: 0.25;
+                transform: translate3d(-50%, 9px, 0) scale3d(0.82, 0.64, 1);
+            }
+            50% {
+                opacity: 0.5;
+                transform: translate3d(-50%, 13px, 0) scale3d(1, 0.86, 1);
+            }
         }
 
-        @keyframes loading-right-portal-halo-pulse {
-            0% { opacity: 0.24; transform: translate3d(-50%, -50%, 0) scale3d(0.56, 0.8, 1); }
-            11% { opacity: 0.4; transform: translate3d(-50%, -50%, 0) scale3d(0.74, 0.91, 1); }
-            27% { opacity: 0.64; transform: translate3d(-50%, -50%, 0) scale3d(1, 1, 1); }
-            43% { opacity: 0.45; transform: translate3d(-50%, -50%, 0) scale3d(1.024, 1.008, 1); }
-            56% { opacity: 0.11; transform: translate3d(-50%, -50%, 0) scale3d(1.05, 1.016, 1); }
-            67% { opacity: 0.17; transform: translate3d(-50%, -50%, 0) scale3d(1.085, 1.026, 1); }
-            82%, 100% { opacity: 0; transform: translate3d(-50%, -50%, 0) scale3d(1.12, 1.04, 1); }
+        /* 门在整段穿越里保持点亮：预热 → 峰值 → 长保持 → 余晖，
+           而不是在海报走到一半时先行熄灭。 */
+        /* 点火线与灯管同步"从短变长"，光晕在灯长满后才绽放。 */
+        /* 相位脉冲收束到驻留态亮度，而不是熄灭——洞口在整段加载里持续存在。 */
+        /* 灯的开与灭：灯管先从中心"从短变长"地舒展（作品集 lamp 的入场），
+           光锥、光柱、薄雾依次绽放，海报随后飞出；落位/吞没后灯光完全熄灭。 */
+        @keyframes loading-portal-stretch {
+            0% {
+                transform: translate3d(-50%, -50%, 0) scale3d(0.04, 1, 1);
+                animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
+            }
+            40% {
+                transform: translate3d(-50%, -50%, 0) scale3d(1, 1, 1);
+            }
+            78% {
+                transform: translate3d(-50%, -50%, 0) scale3d(1.004, 1, 1);
+                animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+            }
+            100% {
+                transform: translate3d(-50%, -50%, 0) scale3d(1.018, 1, 1);
+            }
         }
 
-        @keyframes loading-left-portal-pulse {
-            0% { opacity: 0.38; transform: translate3d(-50%, -50%, 0) scale3d(0.62, 0.82, 1); }
-            10% { opacity: 0.58; transform: translate3d(-50%, -50%, 0) scale3d(0.8, 0.93, 1); }
-            24% { opacity: 0.92; transform: translate3d(-50%, -50%, 0) scale3d(1, 1, 1); }
-            38% { opacity: 0.82; transform: translate3d(-50%, -50%, 0) scale3d(1.025, 1.008, 1); }
-            50% { opacity: 0.62; transform: translate3d(-50%, -50%, 0) scale3d(1.055, 1.018, 1); }
-            64% { opacity: 0.3; transform: translate3d(-50%, -50%, 0) scale3d(1.09, 1.03, 1); }
-            78%, 100% { opacity: 0; transform: translate3d(-50%, -50%, 0) scale3d(1.13, 1.045, 1); }
+        @keyframes loading-portal-luminance {
+            0% {
+                opacity: 0;
+                animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+            }
+            12% {
+                opacity: 0.38;
+                animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
+            }
+            40% { opacity: 1; }
+            78% {
+                opacity: 0.98;
+                animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+            }
+            100% { opacity: 0; }
         }
 
-        @keyframes loading-right-portal-pulse {
-            0% { opacity: 0.36; transform: translate3d(-50%, -50%, 0) scale3d(0.64, 0.84, 1); }
-            11% { opacity: 0.56; transform: translate3d(-50%, -50%, 0) scale3d(0.82, 0.94, 1); }
-            26% { opacity: 0.9; transform: translate3d(-50%, -50%, 0) scale3d(1, 1, 1); }
-            40% { opacity: 0.8; transform: translate3d(-50%, -50%, 0) scale3d(1.024, 1.008, 1); }
-            52% { opacity: 0.6; transform: translate3d(-50%, -50%, 0) scale3d(1.05, 1.016, 1); }
-            66% { opacity: 0.28; transform: translate3d(-50%, -50%, 0) scale3d(1.085, 1.026, 1); }
-            82%, 100% { opacity: 0; transform: translate3d(-50%, -50%, 0) scale3d(1.12, 1.04, 1); }
-        }
-
-        @keyframes loading-portal-core-pulse {
-            0% { opacity: 0.82; transform: scale3d(0.66, 0.82, 1); }
-            10% { opacity: 0.96; transform: scale3d(0.82, 0.94, 1); }
-            25% { opacity: 1; transform: scale3d(1, 1, 1); }
-            42% { opacity: 0.92; transform: scale3d(1.025, 1.008, 1); }
-            56% { opacity: 0.5; transform: scale3d(1.055, 1.016, 1); }
-            68% { opacity: 0.24; transform: scale3d(1.09, 1.03, 1); }
-            79%, 100% { opacity: 0; transform: scale3d(1.13, 1.045, 1); }
-        }
-
-        @keyframes loading-portal-warm-pulse {
-            0% { opacity: 0.16; transform: translate3d(5%, 0, 0) scale3d(0.64, 0.82, 1); }
-            12% { opacity: 0.28; transform: translate3d(2%, 0, 0) scale3d(0.82, 0.94, 1); }
-            27% { opacity: 0.42; transform: translate3d(0, 0, 0) scale3d(1, 1, 1); }
-            42% { opacity: 0.26; transform: translate3d(-1.5%, 0, 0) scale3d(1.025, 1.008, 1); }
-            52% { opacity: 0.05; transform: translate3d(-3%, 0, 0) scale3d(1.055, 1.016, 1); }
-            63% { opacity: 0.11; transform: translate3d(-5%, 0, 0) scale3d(1.09, 1.03, 1); }
-            81%, 100% { opacity: 0; transform: translate3d(-7%, 0, 0) scale3d(1.13, 1.045, 1); }
-        }
-
-        @keyframes loading-portal-cool-pulse {
-            0% { opacity: 0.14; transform: translate3d(-5%, 0, 0) scale3d(0.64, 0.82, 1); }
-            12% { opacity: 0.25; transform: translate3d(-2%, 0, 0) scale3d(0.82, 0.94, 1); }
-            27% { opacity: 0.39; transform: translate3d(0, 0, 0) scale3d(1, 1, 1); }
-            42% { opacity: 0.24; transform: translate3d(1.5%, 0, 0) scale3d(1.025, 1.008, 1); }
-            52% { opacity: 0.045; transform: translate3d(3%, 0, 0) scale3d(1.055, 1.016, 1); }
-            63% { opacity: 0.1; transform: translate3d(5%, 0, 0) scale3d(1.09, 1.03, 1); }
-            81%, 100% { opacity: 0; transform: translate3d(7%, 0, 0) scale3d(1.13, 1.045, 1); }
-        }
-
-        @keyframes loading-portal-volume-pulse {
-            0% { opacity: 0.18; transform: scale3d(0.66, 0.82, 1); }
-            11% { opacity: 0.34; transform: scale3d(0.82, 0.92, 1); }
-            26% { opacity: 0.66; transform: scale3d(1, 1, 1); }
-            43% { opacity: 0.5; transform: scale3d(1.025, 1.008, 1); }
-            58% { opacity: 0.22; transform: scale3d(1.06, 1.018, 1); }
-            74%, 100% { opacity: 0; transform: scale3d(1.12, 1.04, 1); }
-        }
-
-        @keyframes loading-portal-ray-pulse {
-            0% { opacity: 0.12; transform: scale3d(0.7, 0.86, 1); }
-            14% { opacity: 0.28; transform: scale3d(0.86, 0.95, 1); }
-            31% { opacity: 0.52; transform: scale3d(1, 1, 1); }
-            48% { opacity: 0.32; transform: scale3d(1.035, 1.01, 1); }
-            63% { opacity: 0.1; transform: scale3d(1.075, 1.024, 1); }
-            78%, 100% { opacity: 0; transform: scale3d(1.13, 1.045, 1); }
-        }
-
+        /* 贴管光柱：灯长满时绽放。 */
+        /* 薄雾：最后弥散开。 */
         @keyframes loading-final-ambient-converge {
             0%, 12% { opacity: 0; transform: translate3d(-50%, -50%, 0) scale3d(1.08, 1.04, 1); }
-            30% { opacity: 0.26; transform: translate3d(-50%, -50%, 0) scale3d(1.035, 1.02, 1); }
-            52% { opacity: 0.2; transform: translate3d(-50%, -50%, 0) scale3d(0.98, 0.99, 1); }
-            76% { opacity: 0.06; transform: translate3d(-50%, -50%, 0) scale3d(0.91, 0.95, 1); }
+            32% { opacity: 0.14; transform: translate3d(-50%, -50%, 0) scale3d(1.025, 1.015, 1); }
+            56% { opacity: 0.1; transform: translate3d(-50%, -50%, 0) scale3d(0.98, 0.99, 1); }
+            78% { opacity: 0.035; transform: translate3d(-50%, -50%, 0) scale3d(0.91, 0.95, 1); }
             100% { opacity: 0; transform: translate3d(-50%, -50%, 0) scale3d(0.86, 0.92, 1); }
         }
 
-        @keyframes loading-final-ambient-refraction {
-            0%, 16% { opacity: 0; transform: translate3d(-50%, -50%, 0) scale3d(1.12, 1.06, 1); }
-            34% { opacity: 0.16; transform: translate3d(-50%, -50%, 0) scale3d(1.04, 1.02, 1); }
-            50% { opacity: 0.2; transform: translate3d(-50%, -50%, 0) scale3d(0.985, 0.995, 1); }
-            72% { opacity: 0.05; transform: translate3d(-50%, -50%, 0) scale3d(0.92, 0.96, 1); }
-            100% { opacity: 0; transform: translate3d(-50%, -50%, 0) scale3d(0.87, 0.93, 1); }
+        @keyframes loading-backdrop-reveal {
+            0%, 16% { background-color: var(--archive-void); }
+            48% { background-color: color-mix(in srgb, var(--archive-void) 72%, transparent); }
+            82% { background-color: color-mix(in srgb, var(--archive-void) 24%, transparent); }
+            100% { background-color: transparent; }
         }
 
+        /* 荧幕玻璃：真实高斯模糊 + 当前歌曲主/副色的渐变光场。
+           薄纱保持约七成透光，背后的舞台始终隐约可见。 */
         .result-area,
         .playlist-area {
-            background: color-mix(in srgb, var(--archive-void) 62%, transparent);
+            background:
+                radial-gradient(120% 86% at 50% 10%, color-mix(in srgb, var(--cover-deep) 14%, transparent), transparent 62%),
+                color-mix(in srgb, var(--archive-void) 30%, transparent);
+            -webkit-backdrop-filter: blur(28px) saturate(1.24);
+            backdrop-filter: blur(28px) saturate(1.24);
             transition: none;
         }
 
+        @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+            .result-area,
+            .playlist-area {
+                background:
+                    radial-gradient(120% 86% at 50% 10%, color-mix(in srgb, var(--cover-deep) 22%, transparent), transparent 62%),
+                    color-mix(in srgb, var(--archive-void) 78%, transparent);
+            }
+        }
+
+        /* 主/副色双色场：位置与配比随 --overlay-mix 缓慢往复漂移。 */
         .result-area::before,
         .playlist-area::before {
             display: block;
@@ -5178,11 +5235,11 @@
             height: auto;
             z-index: 0;
             border-radius: 0;
-            background:
-                radial-gradient(ellipse 54% 42% at 26% 34%, color-mix(in srgb, var(--cover-a) 72%, transparent), transparent 72%),
-                radial-gradient(ellipse 50% 44% at 76% 66%, color-mix(in srgb, var(--cover-b) 68%, transparent), transparent 74%),
-                linear-gradient(112deg, transparent 22%, color-mix(in srgb, var(--cover-accent) 24%, transparent) 50%, transparent 78%);
-            filter: blur(42px);
+            background-image:
+                radial-gradient(ellipse 58% 46% at calc(24% + (var(--overlay-mix, 0) * 18%)) calc(34% - (var(--overlay-mix, 0) * 6%)), color-mix(in srgb, var(--cover-a) calc(72% - (var(--overlay-mix, 0) * 22%)), transparent), transparent 74%),
+                radial-gradient(ellipse 54% 48% at calc(78% - (var(--overlay-mix, 0) * 16%)) calc(66% + (var(--overlay-mix, 0) * 6%)), color-mix(in srgb, var(--cover-b) calc(68% + (var(--overlay-mix, 0) * 20%)), transparent), transparent 76%),
+                linear-gradient(calc(112deg + (var(--overlay-mix, 0) * 26deg)), transparent 20%, color-mix(in srgb, var(--cover-accent) calc(24% + (var(--overlay-mix, 0) * 10%)), transparent) 50%, transparent 80%);
+            filter: blur(42px) saturate(1.18);
             mix-blend-mode: normal;
             -webkit-mask-image: none;
             mask-image: none;
@@ -5219,16 +5276,25 @@
 
         .result-area.is-visible::after,
         .playlist-area.is-visible::after {
-            opacity: 0.2;
+            opacity: 0.22;
             transform: translate3d(0, 0, 0) scale(1.035);
             transition-delay: 0.1s;
         }
 
         html[data-motion-profile="full"] .result-area.is-visible::before,
         html[data-motion-profile="full"] .playlist-area.is-visible::before {
-            opacity: 0.22;
-            animation: overlay-polarized-drift 10.4s var(--continuity-ease) 0.08s infinite alternate;
+            opacity: 0.25;
+            animation: overlay-polarized-drift 10.4s var(--continuity-ease) 0.08s infinite alternate, overlay-duotone-shift 12.5s var(--continuity-ease) infinite alternate;
             transition-delay: 0.08s;
+        }
+
+        @keyframes overlay-duotone-shift {
+            from {
+                --overlay-mix: 0;
+            }
+            to {
+                --overlay-mix: 1;
+            }
         }
 
         html[data-motion-profile="full"] .result-area.is-visible::after,
@@ -5238,7 +5304,7 @@
 
         html[data-motion-profile="compact"] .result-area.is-visible::before,
         html[data-motion-profile="compact"] .playlist-area.is-visible::before {
-            opacity: 0.2;
+            opacity: 0.25;
             animation: none;
             transform: translate3d(0, 0, 0) rotate(-2deg) scale(1.02);
             transition-delay: 0.05s;
@@ -5306,11 +5372,11 @@
 
         @media (hover: hover) and (pointer: fine) {
             .play-btn:hover {
-                background: var(--archive-graphite);
-                border-color: color-mix(in srgb, var(--archive-silver) 34%, transparent);
+                background: color-mix(in srgb, var(--archive-graphite) 56%, transparent);
+                border-color: color-mix(in srgb, var(--archive-silver) 44%, transparent);
                 box-shadow:
                     0 12px 22px rgba(0, 0, 0, 0.28),
-                    inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 10%, transparent);
+                    inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 12%, transparent);
                 transition:
                     transform 0.36s var(--continuity-ease),
                     opacity 0.3s var(--crossfade-ease);
@@ -5324,14 +5390,25 @@
         .playlist-content {
             border: 0;
             background:
-                radial-gradient(ellipse 74% 32% at 50% 0%, color-mix(in srgb, var(--cover-accent) 9%, transparent), transparent 72%),
-                linear-gradient(150deg, color-mix(in srgb, var(--cover-a) 5%, transparent), transparent 46%),
-                color-mix(in srgb, var(--archive-graphite) 66%, transparent);
+                radial-gradient(ellipse 74% 32% at 50% 0%, color-mix(in srgb, var(--cover-accent) 10%, transparent), transparent 72%),
+                linear-gradient(150deg, color-mix(in srgb, var(--cover-a) 6%, transparent), transparent 46%),
+                color-mix(in srgb, var(--archive-graphite) 46%, transparent);
+            -webkit-backdrop-filter: blur(18px) saturate(1.3);
+            backdrop-filter: blur(18px) saturate(1.3);
             box-shadow:
                 0 22px 52px rgba(0, 0, 0, 0.22),
-                0 0 44px color-mix(in srgb, var(--cover-accent) 6%, transparent),
-                inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 3%, transparent);
+                0 0 44px color-mix(in srgb, var(--cover-accent) 7%, transparent),
+                inset 0 1px 0 color-mix(in srgb, var(--archive-projector) 4%, transparent);
             isolation: isolate;
+        }
+
+        @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+            .playlist-content {
+                background:
+                    radial-gradient(ellipse 74% 32% at 50% 0%, color-mix(in srgb, var(--cover-accent) 9%, transparent), transparent 72%),
+                    linear-gradient(150deg, color-mix(in srgb, var(--cover-a) 5%, transparent), transparent 46%),
+                    color-mix(in srgb, var(--archive-graphite) 80%, transparent);
+            }
         }
 
         .playlist-content::before {
@@ -5342,31 +5419,34 @@
             border: 0;
             border-radius: inherit;
             background:
-                radial-gradient(ellipse 54% 18% at 18% 0%, color-mix(in srgb, var(--cover-a) 24%, transparent), transparent 72%),
-                radial-gradient(ellipse 50% 18% at 82% 100%, color-mix(in srgb, var(--cover-b) 22%, transparent), transparent 74%);
-            box-shadow: 0 0 24px color-mix(in srgb, var(--cover-accent) 7%, transparent);
+                radial-gradient(ellipse 54% 18% at 18% 0%, color-mix(in srgb, var(--cover-a) 26%, transparent), transparent 72%),
+                radial-gradient(ellipse 50% 18% at 82% 100%, color-mix(in srgb, var(--cover-b) 24%, transparent), transparent 74%);
+            box-shadow: 0 0 26px color-mix(in srgb, var(--cover-accent) 9%, transparent);
             filter: blur(7px);
-            opacity: 0.08;
-            transform: translate3d(-2px, 0, 0) scale3d(0.99, 0.994, 1);
+            opacity: 0.42;
+            transform: translateZ(0);
             animation: playlist-panel-edge-breathe 9.8s var(--continuity-ease) infinite;
             z-index: -1;
         }
 
         @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) {
             .playlist-content::before {
-                padding: 3px;
+                inset: -2px;
+                padding: 2px;
                 border: 0;
                 background: conic-gradient(
-                    from 212deg,
-                    transparent 0deg 102deg,
-                    color-mix(in srgb, var(--cover-a) 20%, transparent) 132deg,
-                    color-mix(in srgb, var(--archive-projector) 30%, transparent) 154deg,
-                    color-mix(in srgb, var(--cover-b) 19%, transparent) 181deg,
-                    transparent 214deg 318deg,
-                    color-mix(in srgb, var(--cover-accent) 12%, transparent) 340deg,
-                    transparent 360deg
+                    from calc(212deg + var(--panel-ring-angle, 0deg)),
+                    color-mix(in srgb, var(--cover-accent) 10%, transparent) 0deg,
+                    color-mix(in srgb, var(--cover-a) 14%, transparent) 64deg,
+                    color-mix(in srgb, var(--cover-a) 46%, transparent) 116deg,
+                    color-mix(in srgb, var(--archive-projector) 74%, transparent) 148deg,
+                    color-mix(in srgb, var(--cover-b) 42%, transparent) 184deg,
+                    color-mix(in srgb, var(--cover-b) 12%, transparent) 236deg,
+                    color-mix(in srgb, var(--cover-accent) 9%, transparent) 292deg,
+                    color-mix(in srgb, var(--cover-accent) 36%, transparent) 326deg,
+                    color-mix(in srgb, var(--cover-accent) 10%, transparent) 360deg
                 );
-                filter: blur(3.8px);
+                filter: blur(2.2px);
                 -webkit-mask:
                     linear-gradient(#000 0 0) content-box,
                     linear-gradient(#000 0 0);
@@ -5375,6 +5455,20 @@
                     linear-gradient(#000 0 0) content-box,
                     linear-gradient(#000 0 0);
                 mask-composite: exclude;
+            }
+
+            /* 巡游光只在完整动效档运行；不支持 @property 的浏览器停在静态柔光。 */
+            html[data-motion-profile="full"] .playlist-area.is-visible .playlist-content::before {
+                animation: playlist-ring-orbit 16s linear infinite, playlist-panel-edge-breathe 9.8s var(--continuity-ease) infinite;
+            }
+        }
+
+        @keyframes playlist-ring-orbit {
+            from {
+                --panel-ring-angle: 0deg;
+            }
+            to {
+                --panel-ring-angle: 360deg;
             }
         }
 
@@ -5425,22 +5519,23 @@
             100% { transform: translate3d(2%, 1%, 0) scale(1.035); }
         }
 
+        /* 描边常亮呼吸：从"偶尔闪一下"改为持续的柔光起伏。 */
         @keyframes playlist-panel-edge-breathe {
-            0%, 58%, 100% {
-                opacity: 0.08;
-                transform: translate3d(-2px, 0, 0) scale3d(0.99, 0.994, 1);
+            0%, 100% {
+                opacity: 0.42;
+                transform: translateZ(0) scale3d(0.998, 0.998, 1);
             }
-            68% {
-                opacity: 0.17;
+            38% {
+                opacity: 0.58;
                 transform: translate3d(0, -1px, 0) scale3d(1, 1, 1);
             }
-            78% {
-                opacity: 0.24;
-                transform: translate3d(2px, 0, 0) scale3d(1.006, 1.003, 1);
+            58% {
+                opacity: 0.72;
+                transform: translate3d(1px, 0, 0) scale3d(1.004, 1.002, 1);
             }
-            90% {
-                opacity: 0.12;
-                transform: translate3d(0, 1px, 0) scale3d(0.997, 1, 1);
+            82% {
+                opacity: 0.5;
+                transform: translate3d(0, 1px, 0) scale3d(0.999, 1, 1);
             }
         }
 
@@ -5482,34 +5577,6 @@
             }
         }
 
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit[data-portal-side="left"],
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit[data-portal-side="right"] {
-            width: 26px;
-            height: min(68vh, 540px);
-        }
-
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit[data-portal-side="left"] > span,
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit[data-portal-side="right"] > span {
-            filter: blur(5.5px);
-        }
-
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit[data-portal-side="left"]::before,
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit[data-portal-side="right"]::before {
-            width: min(44vw, 190px);
-            filter: blur(7px);
-        }
-
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit[data-portal-side="left"]::after,
-        .loading-screen[data-motion-profile="compact"] .loading-light-slit[data-portal-side="right"]::after {
-            width: min(38vw, 160px);
-            filter: blur(3.5px);
-        }
-
-        .loading-screen[data-motion-profile="compact"] .loading-stage::after {
-            width: 36px;
-            filter: blur(8px);
-        }
-
         @media (max-width: 767px) and (max-height: 720px) {
             .result-area {
                 justify-content: flex-start;
@@ -5549,6 +5616,16 @@
             .loading-light-slit[data-portal-side] {
                 display: none !important;
                 animation: none !important;
+            }
+
+            .loading-frame::before,
+            .loading-frame::after,
+            .loading-frame.is-stable .loading-image {
+                animation: none !important;
+            }
+
+            .loading-frame.is-stable .loading-image {
+                transform: none !important;
             }
 
             .playlist-content::before,

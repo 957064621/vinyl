@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const css = readFileSync(new URL('../../src/style.css', import.meta.url), 'utf8');
-const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+// Windows checkouts may smudge CRLF endings; the selector regexes embed \n.
+const readSource = (url) => readFileSync(url, 'utf8').replace(/\r\n/g, '\n');
+const css = readSource(new URL('../../src/style.css', import.meta.url));
+const mainSource = readSource(new URL('../../src/main.js', import.meta.url));
 const archiveMarker = '/* Directional archive system */';
 const archiveStart = css.indexOf(archiveMarker);
 
@@ -184,8 +186,40 @@ test('the viewport uses only two directional projector fields', () => {
   assert.doesNotMatch(css, /\bambient-dust-drift\b/);
   assert.doesNotMatch(css, /\bambient-veil-shift\b/);
   assert.doesNotMatch(css, /\bbtn-sheen-sweep\b/);
-  assert.doesNotMatch(css, /(?:-webkit-)?backdrop-filter\s*:/);
-  assert.doesNotMatch(css, /\bwill-change\s*:/);
+  const willChangeDeclarations = [...css.matchAll(/\bwill-change\s*:\s*([^;]+);/g)]
+    .map((match) => match[1].trim());
+  assert.deepEqual(willChangeDeclarations, ['transform, clip-path']);
+  assert.match(
+    sourceRuleBody('.loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-image[data-loading-handoff="true"]'),
+    /will-change:\s*transform, clip-path/,
+    'the only promoted layer is the short-lived final poster handoff'
+  );
+});
+
+test('overlay surfaces are true glass with a graceful non-blur fallback', () => {
+  const overlayShell = archiveRuleBody('.result-area,\n        .playlist-area');
+
+  assert.match(overlayShell, /-webkit-backdrop-filter:\s*blur\(28px\) saturate\(1\.24\)/);
+  assert.match(overlayShell, /backdrop-filter:\s*blur\(28px\) saturate\(1\.24\)/);
+  assert.match(overlayShell, /color-mix\(in srgb, var\(--archive-void\) 30%, transparent\)/, 'the veil must stay sheer enough to see the stage');
+  assert.match(
+    archiveCss,
+    /\.playlist-content\s*\{[^}]*-webkit-backdrop-filter:\s*blur\(18px\) saturate\(1\.3\)/s,
+    'the playlist panel needs its own glass layer'
+  );
+  assert.match(
+    archiveCss,
+    /\.playlist-content\s*\{[^}]*(?<!-webkit-)backdrop-filter:\s*blur\(18px\) saturate\(1\.3\)/s,
+    'the playlist panel needs its own glass layer'
+  );
+
+  const fallbackGates = archiveCss.match(
+    /@supports not \(\(-webkit-backdrop-filter: blur\(1px\)\) or \(backdrop-filter: blur\(1px\)\)\)/g
+  ) || [];
+  assert.equal(fallbackGates.length, 2, 'both glass surfaces need a denser non-blur fallback');
+
+  const glassDeclarations = css.match(/(?<!-webkit-)backdrop-filter\s*:\s*blur\((?!1px)/g) || [];
+  assert.equal(glassDeclarations.length, 2, 'glass blur stays confined to the two overlay surfaces');
 });
 
 test('fullscreen layers use a stable fallback and dynamic viewport height', () => {
@@ -247,11 +281,21 @@ test('terminal interaction and error states use the archive palette with compact
   assert.match(archiveCss, /\.audio-status \.audio-retry:focus-visible\s*\{[\s\S]*outline:\s*2px solid var\(--archive-projector\)/);
   assert.match(
     archiveRuleBody('.lyric-toggle-btn.is-visible:active,\n        .playlist-toggle-btn.is-visible:active,\n        .playlist-mode-switch:active,\n        .audio-status .audio-retry:not(:disabled):active'),
-    /background:\s*var\(--archive-void\)/
+    /background:\s*color-mix\(in srgb, var\(--archive-void\) 62%, transparent\)/
   );
   assert.match(
     archiveRuleBody('.result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active'),
-    /background:\s*var\(--archive-void\)/
+    /background:\s*color-mix\(in srgb, var\(--archive-void\) 62%, transparent\)/
+  );
+
+  // 播放页控件是透光玻璃，不是实心色块。
+  assert.match(archiveRuleBody('.play-btn'), /background:\s*color-mix\(in srgb, var\(--archive-graphite\) 46%, transparent\)/);
+  assert.match(archiveRuleBody('.player-pill'), /background:\s*color-mix\(in srgb, var\(--archive-slate\) 48%, transparent\)/);
+  assert.match(archiveRuleBody('.player-ctrl-btn'), /background:\s*color-mix\(in srgb, var\(--archive-projector\) 16%, transparent\)/);
+  assert.match(archiveRuleBody('.player-ctrl-btn'), /color:\s*var\(--archive-projector\)/);
+  assert.match(
+    archiveRuleBody('.lyric-toggle-btn,\n        .playlist-toggle-btn,\n        .overlay-close-btn'),
+    /background:\s*color-mix\(in srgb, var\(--archive-slate\) 48%, transparent\)/
   );
   assert.doesNotMatch(archiveCss, /rgba\(255,\s*151,\s*135/);
   assert.match(groupCover, /border-radius:\s*6px/);
@@ -352,9 +396,9 @@ test('archive transitions are composited and reduce states are instant', () => {
   assert.match(archiveRuleBody('.player-track-bg'), /transition:\s*none/);
 });
 
-test('linear timing is limited to physical rotation, progress sync, and reduced-motion fades', () => {
+test('linear wrappers are limited to physical motion and keyframes with explicit segment curves', () => {
   const linearCssDeclarations = [...css.matchAll(
-    /(?:transition|animation)\s*:[^;\n]*\blinear\b[^;\n]*;/g
+    /(?:transition|animation)\s*:[^;]*\blinear\b[^;]*;/g
   )].map((match) => match[0].replace(/\s+/g, ' ').trim());
   const declarationCounts = Object.fromEntries(
     [...new Set(linearCssDeclarations)].map((declaration) => [
@@ -364,6 +408,11 @@ test('linear timing is limited to physical rotation, progress sync, and reduced-
   );
 
   assert.deepEqual(declarationCounts, {
+    'animation: loading-poster-to-player-motion var(--final-resolve-ms, 1100ms) linear both, loading-poster-to-player-shape var(--final-resolve-ms, 1100ms) linear both;': 1,
+    'animation: loading-target-cover-reveal 1100ms linear both;': 1,
+    'animation: loading-portal-stretch var(--portal-phase-ms, 760ms) linear both, loading-portal-luminance var(--portal-phase-ms, 760ms) linear both;': 2,
+    'animation: loading-backdrop-reveal var(--final-resolve-ms, 1100ms) linear both;': 1,
+    'animation: playlist-ring-orbit 16s linear infinite, playlist-panel-edge-breathe 9.8s var(--continuity-ease) infinite;': 1,
     'transition: opacity 120ms linear;': 2,
     'transition: transform 0.2s linear;': 2,
     'transition: opacity 120ms linear !important;': 2
@@ -393,7 +442,7 @@ test('controls reserve a stable three-column rail and keep time inside the playe
   assert.match(mobile, /--mobile-content-rail:\s*min\(calc\(100vw - 32px\),\s*340px\)/);
   assert.match(mobile, /--side-control-size:\s*44px/);
   assert.match(mobile, /\.vinyl-wrapper\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);
-  assert.match(mobile, /\.archive-track-meta\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);
+  assert.match(mobile, /\.archive-track-meta\s*\{[\s\S]*width:\s*min\(calc\(var\(--mobile-content-rail\) - 44px\),\s*300px\)/);
   assert.match(mobile, /\.dynamic-island\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);
 });
 
@@ -407,9 +456,16 @@ test('overlays and playlist use cover-driven polarized light without animated bl
   const reducedLight = archiveRuleBody('html[data-motion-profile="reduce"] .result-area.is-visible::before,\n        html[data-motion-profile="reduce"] .playlist-area.is-visible::before');
   const pointerLight = archiveRuleBody('.pointer-light');
 
-  assert.match(overlayLight, /var\(--cover-a\) 72%/);
-  assert.match(overlayLight, /var\(--cover-b\) 68%/);
+  assert.match(overlayLight, /var\(--cover-a\) calc\(72% - \(var\(--overlay-mix, 0\) \* 22%\)\)/, 'the primary accent ratio must drift with --overlay-mix');
+  assert.match(overlayLight, /var\(--cover-b\) calc\(68% \+ \(var\(--overlay-mix, 0\) \* 20%\)\)/, 'the secondary accent ratio must drift against it');
   assert.match(overlayLight, /filter:\s*blur\(42px\)/);
+  assert.match(css, /@property --overlay-mix\s*\{[^}]*syntax:\s*"<number>"/s);
+  assert.match(archiveCss, /@keyframes overlay-duotone-shift\s*\{/);
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="full"\] \.result-area\.is-visible::before,\s*html\[data-motion-profile="full"\] \.playlist-area\.is-visible::before\s*\{[^}]*opacity:\s*0\.25;[^}]*overlay-duotone-shift/s,
+    'the duotone field must sit near 25% and keep drifting'
+  );
   assert.match(reducedLight, /opacity:\s*0\.18/);
   assert.match(reducedLight, /transform:\s*none/);
   assert.match(selected, /background:\s*transparent/);
@@ -430,45 +486,175 @@ test('overlays and playlist use cover-driven polarized light without animated bl
   assert.doesNotMatch(drift, /\bbox-shadow\s*:/);
 });
 
-test('dual loading portals prelight on their first rendered frame and peak before poster travel', () => {
-  const portal = archiveRuleBody('.loading-light-slit[data-portal-side="left"],\n        .loading-light-slit[data-portal-side="right"]');
-  const core = archiveRuleBody('.loading-light-slit[data-portal-side="left"] .loading-light-core,\n        .loading-light-slit[data-portal-side="right"] .loading-light-core');
-  const volumeBeam = archiveRuleBody('.loading-light-slit[data-portal-side="left"]::before,\n        .loading-light-slit[data-portal-side="right"]::before');
-  const leftVolumeBeam = archiveRuleBody('.loading-light-slit[data-portal-side="left"]::before');
-  const leftPulse = blockBody(archiveCss, '@keyframes loading-left-portal-pulse {');
-  const rightPulse = blockBody(archiveCss, '@keyframes loading-right-portal-pulse {');
-  const corePulse = blockBody(archiveCss, '@keyframes loading-portal-core-pulse {');
-  const leftRail = blockBody(archiveCss, '@keyframes loading-left-portal-rail-pulse {');
-  const volumePulse = blockBody(archiveCss, '@keyframes loading-portal-volume-pulse {');
+test('lamp portal separates Carbon stretch and luminance tracks around one bounded bloom', () => {
+  const gate = archiveRuleBody('.loading-light-slit[data-portal-side="top"],\n        .loading-light-slit[data-portal-side="bottom"]');
+  const layers = archiveRuleBody('.loading-light-slit[data-portal-side="top"] > span,\n        .loading-light-slit[data-portal-side="bottom"] > span');
+  const core = archiveRuleBody('.loading-light-slit[data-portal-side="top"] .loading-light-core,\n        .loading-light-slit[data-portal-side="bottom"] .loading-light-core');
+  const coreHalo = archiveRuleBody('.loading-light-slit:is([data-portal-side="top"], [data-portal-side="bottom"]) .loading-light-core::before');
+  const topHalo = archiveRuleBody('.loading-light-slit[data-portal-side="top"] .loading-light-core::before');
+  const bottomHalo = archiveRuleBody('.loading-light-slit[data-portal-side="bottom"] .loading-light-core::before');
+  const warm = archiveRuleBody('.loading-light-slit[data-portal-side="top"] .loading-light-edge.is-warm,\n        .loading-light-slit[data-portal-side="bottom"] .loading-light-edge.is-warm');
+  const cool = archiveRuleBody('.loading-light-slit[data-portal-side="top"] .loading-light-edge.is-cool,\n        .loading-light-slit[data-portal-side="bottom"] .loading-light-edge.is-cool');
+  const stretch = blockBody(archiveCss, '@keyframes loading-portal-stretch {');
+  const luminance = blockBody(archiveCss, '@keyframes loading-portal-luminance {');
 
-  assert.match(portal, /width:\s*clamp\(54px,\s*6\.8vw,\s*88px\)/);
-  assert.match(core, /width:\s*3px/);
-  assert.match(core, /box-shadow:[\s\S]*rgba\(255, 253, 244, 0\.88\)/);
-  assert.match(volumeBeam, /width:\s*min\(38vw,\s*390px\)/);
-  assert.match(volumeBeam, /filter:\s*blur\(11px\)/);
-  assert.match(volumeBeam, /loading-portal-volume-pulse/);
-  assert.match(leftVolumeBeam, /linear-gradient\(\s*90deg/);
-  assert.match(leftVolumeBeam, /transform-origin:\s*left center/);
+  assert.match(gate, /height:\s*var\(--gate-height,\s*156px\)/);
+  assert.match(gate, /top:\s*var\(--portal-y,\s*50%\)/);
+  assert.match(gate, /left:\s*var\(--gate-x,\s*50%\)/);
+  assert.match(gate, /width:\s*var\(--gate-width,\s*min\(76vw,\s*560px\)\)/);
+  assert.match(gate, /contain:\s*layout style/);
+  assert.match(gate, /overflow:\s*visible/, 'the fixed blur halo must be allowed to bloom outside the gate box');
+  assert.match(layers, /border-radius:\s*0/);
+  assert.doesNotMatch(layers, /mask-image/, 'the narrow core host must not crop its directional bloom');
+  assert.match(core, /width:\s*100%/);
+  assert.match(core, /height:\s*clamp\(1\.5px, 0\.14vw, 2px\)/);
+  assert.match(core, /z-index:\s*1/);
+  assert.match(core, /background:\s*linear-gradient\(\s*90deg/s);
+  assert.match(core, /box-shadow:\s*none/);
   assert.match(
-    archiveCss,
-    /\.loading-light-slit\[data-portal-side="right"\]::before\s*\{[^}]*right:\s*50%;[^}]*linear-gradient\(\s*270deg[^}]*transform-origin:\s*right center/s
+    core,
+    /filter:[^;]*blur\(0\.2px\)[^;]*drop-shadow\(0 0 5px rgba\(255, 255, 255, 0\.86\)\)[^;]*drop-shadow\(0 0 14px rgba\(214, 235, 246, 0\.58\)\)/s,
+    'the Lamp strip glow follows its tapered alpha instead of painting rectangular end caps'
+  );
+  assert.match(coreHalo, /height:\s*calc\(var\(--gate-height, 156px\) \* 1\.85\)/);
+  assert.match(
+    coreHalo,
+    /mask-image:\s*linear-gradient\(\s*90deg,\s*transparent 0%,[\s\S]*rgba\(0, 0, 0, 0\.08\) 6%,[\s\S]*rgba\(0, 0, 0, 0\.76\) 28%,[\s\S]*#000 42%,[\s\S]*#000 58%,[\s\S]*transparent 100%\s*\)/,
+    'the bounded bloom feathers through several horizontal stops instead of ending as a rectangle'
   );
   assert.match(
-    archiveCss,
-    /\.loading-light-slit\[data-portal-side="right"\]::before,\s*\.loading-light-slit\[data-portal-side="right"\]::after\s*\{[^}]*mask-image:\s*linear-gradient\(270deg/s
+    coreHalo,
+    /filter:\s*blur\(clamp\(14px, 1\.4vw, 22px\)\)/,
+    'the single bounded bloom keeps a responsive fixed-per-frame blur radius'
   );
+  assert.match(topHalo, /top:\s*50%/);
+  assert.match(topHalo, /radial-gradient\(\s*ellipse 104% 100% at 50% 0%/s);
+  assert.match(bottomHalo, /bottom:\s*50%/);
+  assert.match(bottomHalo, /radial-gradient\(\s*ellipse 104% 100% at 50% 100%/s);
+  assert.doesNotMatch(`${core}\n${topHalo}\n${bottomHalo}`, /rgba\(0,\s*0,\s*0/, 'the portal must not paint a black core');
+  assert.match(warm, /display:\s*none/);
+  assert.match(cool, /display:\s*none/);
+  assert.match(archiveCss, /\.loading-screen\.is-portal-active \.loading-light-slit\.is-lit > span\s*\{[^}]*animation:\s*none/s);
+  assert.equal(
+    (archiveCss.match(
+      /loading-portal-stretch var\(--portal-phase-ms, 760ms\) linear both,\s*loading-portal-luminance var\(--portal-phase-ms, 760ms\) linear both/g
+    ) || []).length,
+    2,
+    'enter and exit must retain the same 760ms stretch/luminance envelope'
+  );
+  for (const phase of ['enter', 'exit']) {
+    assert.match(
+      archiveCss,
+      new RegExp(`data-portal-phase="${phase}"[^}]*loading-portal-stretch var\\(--portal-phase-ms, 760ms\\) linear both,[^}]*loading-portal-luminance var\\(--portal-phase-ms, 760ms\\) linear both`, 's')
+    );
+  }
+  assert.match(stretch, /0%\s*\{[^}]*scale3d\(0\.04, 1, 1\)[^}]*cubic-bezier\(0, 0, 0\.3, 1\)/s);
+  assert.match(stretch, /40%\s*\{[^}]*scale3d\(1, 1, 1\)/s);
+  assert.match(stretch, /78%\s*\{[^}]*scale3d\(1\.004, 1, 1\)[^}]*cubic-bezier\(0\.4, 0, 1, 1\)/s);
+  assert.match(stretch, /100%\s*\{[^}]*scale3d\(1\.018, 1, 1\)/s);
+  assert.match(luminance, /0%\s*\{[^}]*opacity:\s*0[^}]*cubic-bezier\(0\.2, 0, 0, 1\)/s);
+  assert.match(luminance, /12%\s*\{[^}]*opacity:\s*0\.38[^}]*cubic-bezier\(0, 0, 0\.3, 1\)/s);
+  assert.match(luminance, /40%\s*\{\s*opacity:\s*1/);
+  assert.match(luminance, /78%\s*\{[^}]*opacity:\s*0\.98[^}]*cubic-bezier\(0\.4, 0, 1, 1\)/s);
+  assert.match(luminance, /100%\s*\{\s*opacity:\s*0/);
+  for (const track of [stretch, luminance]) {
+    assert.doesNotMatch(track, /(?:filter|backdrop-filter|box-shadow)\s*:/);
+  }
+  assert.doesNotMatch(archiveCss, /loading-portal-envelope/);
+  assert.doesNotMatch(archiveCss, /loading-portal-(?:core|near|far)-bloom/);
+  assert.doesNotMatch(archiveCss, /loading-(?:left|right)-portal-pulse|is-parked|idle-breathe/);
+  assert.doesNotMatch(archiveCss, /data-motion-profile="compact"[^}]*loading-light-slit[^}]*width:/s);
+});
+
+test('posters travel vertically through geometric gates without edge transparency masks', () => {
+  const enter = blockBody(archiveCss, '@keyframes loading-poster-glide-in {');
+  const exit = blockBody(archiveCss, '@keyframes loading-poster-glide-out {');
+  const artworkViewport = sourceRuleBody('.loading-artwork-viewport');
+  const enterViewport = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering-from-portal[data-portal-side="top"] .loading-artwork-viewport');
+  const exitViewport = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting-to-portal[data-portal-side="bottom"] .loading-artwork-viewport');
+  const posterImage = archiveRuleBody('.loading-screen .loading-frame .loading-image');
+  const floatingFrame = archiveRuleBody('.loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing)');
+  const litImage = archiveRuleBody('.loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing) .loading-image');
+  const enterBinding = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"] .loading-image');
+  const enterAura = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"]::before');
+  const enterReflection = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"]::after');
+  const exitBinding = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"] .loading-image');
+  const exitAura = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"]::before');
+  const exitReflection = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"]::after');
+
+  assert.match(artworkViewport, /--poster-effect-bleed:\s*96px/);
+  assert.match(artworkViewport, /overflow:\s*visible/);
+  assert.match(enterViewport, /clip-path:\s*inset\([\s\S]*var\(--seam-inset, 0%\)[\s\S]*calc\(0px - var\(--poster-effect-bleed, 96px\)\)[\s\S]*\)/);
+  assert.match(exitViewport, /clip-path:\s*inset\([\s\S]*calc\(0px - var\(--poster-effect-bleed, 96px\)\)[\s\S]*var\(--seam-inset, 0%\)[\s\S]*\)/);
+  assert.doesNotMatch(`${enterViewport}${exitViewport}`, /mask-image|poster-fade/);
+  assert.doesNotMatch(
+    archiveCss,
+    /\.loading-frame\.is-(?:entering-from-portal|exiting-to-portal)\[data-portal-side="(?:top|bottom)"\]\s*\{[^}]*clip-path/s,
+    'the frame-level aura and floor glow must remain outside the geometric poster viewport clip'
+  );
+  assert.match(posterImage, /-webkit-mask-image:\s*none/);
+  assert.match(posterImage, /mask-image:\s*none/);
+  assert.doesNotMatch(archiveCss, /--poster-fade-/);
+  assert.match(enterBinding, /loading-poster-glide-in[\s\S]*loading-poster-arrive/, 'translate and scale ride separate tracks');
   assert.match(
-    archiveCss,
-    /\.loading-screen\[data-portal-side\] \.loading-stage::after\s*\{[^}]*width:\s*clamp\(68px,\s*8vw,\s*104px\)/s
+    enterBinding,
+    /animation-timing-function:\s*cubic-bezier\(0\.4, 0\.14, 0\.3, 1\), cubic-bezier\(0\.32, 0\.72, 0, 1\);/,
+    'translation and scale use separate bounded settling curves'
   );
-  assert.match(leftPulse, /0%\s*\{\s*opacity:\s*0\.38/);
-  assert.match(rightPulse, /0%\s*\{\s*opacity:\s*0\.36/);
-  assert.match(corePulse, /0%\s*\{\s*opacity:\s*0\.82/);
-  assert.match(leftRail, /0%\s*\{\s*opacity:\s*0\.02/);
-  assert.match(leftPulse, /24%\s*\{\s*opacity:\s*0\.92/);
-  assert.match(rightPulse, /26%\s*\{\s*opacity:\s*0\.9/);
-  assert.match(volumePulse, /26%\s*\{\s*opacity:\s*0\.66/);
-  assert.doesNotMatch(`${leftPulse}${rightPulse}${corePulse}${leftRail}${volumePulse}`, /\blinear\b/);
+  assert.match(exitBinding, /loading-poster-glide-out[\s\S]*loading-poster-depart/);
+  assert.match(floatingFrame, /loading-poster-float 6\.4s/, 'the same ambient motion stays active across travel and rest');
+  assert.match(litImage, /drop-shadow/);
+  assert.match(enterAura, /loading-poster-glide-in[\s\S]*loading-poster-aura-arrive/);
+  assert.match(enterReflection, /loading-poster-glide-in[\s\S]*loading-poster-floor-arrive/);
+  assert.match(exitAura, /loading-poster-glide-out[\s\S]*loading-poster-aura-depart/);
+  assert.match(exitReflection, /loading-poster-glide-out[\s\S]*loading-poster-floor-depart/);
+
+  assert.match(enter, /translate:\s*0 var\(--poster-portal-offset, -112%\)/, 'the poster emerges from above the separated gate');
+  assert.match(enter, /translate:\s*0 0%/);
+  assert.match(blockBody(archiveCss, '@keyframes loading-poster-arrive {'), /scale:\s*0\.76/, 'scale settles on its own track');
+  assert.match(exit, /translate:\s*0 var\(--poster-portal-offset, 112%\)/);
+  assert.match(blockBody(archiveCss, '@keyframes loading-poster-depart {'), /scale:\s*0\.74/, 'the poster shrinks as the bottom lamp consumes it');
+  for (const body of [enter, exit]) {
+    assert.doesNotMatch(body, /clip-path|transform:/, 'flight keyframes carry only the split translate track');
+  }
+  assert.doesNotMatch(blockBody(archiveCss, '@keyframes loading-poster-arrive {'), /opacity:\s*0\s*[;}]/, 'the gate, not opacity, reveals the poster');
+  assert.doesNotMatch(blockBody(archiveCss, '@keyframes loading-poster-depart {'), /opacity:\s*0\s*[;}]/, 'the gate, not opacity, consumes the poster');
+
+  const stableReflection = archiveRuleBody('.loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame.is-stable::after');
+  assert.match(stableReflection, /loading-poster-floor-glow 6\.4s/);
+});
+
+test('portal geometry follows the measured artwork box with a gap and hold particles stay below it', () => {
+  const posterTransition = readSource(new URL('../../src/ui/poster-transition.js', import.meta.url));
+
+  assert.match(archiveCss, /--portal-y:\s*var\(--gate-y,\s*0px\)/);
+  assert.match(posterTransition, /setProperty\('--gate-x'/);
+  assert.match(posterTransition, /setProperty\('--gate-y'/);
+  assert.match(posterTransition, /setProperty\('--gate-height'/);
+  assert.match(posterTransition, /setProperty\('--gate-width'/);
+  assert.match(posterTransition, /setProperty\('--portal-gap'/);
+  assert.match(posterTransition, /particleBounds:\s*\{/);
+  assert.match(
+    css,
+    /\.loading-particles\s*\{[^}]*height:\s*calc\(100% \+ 120px\);[^}]*inset:\s*-48px 0 auto/s,
+    'the Canvas reserves real space below full-height desktop artwork'
+  );
+  assert.match(posterTransition, /setProperty\('--seam-inset'/);
+  assert.match(posterTransition, /setProperty\('--poster-art-bottom'/);
+  assert.match(posterTransition, /setProperty\('--poster-art-top'/);
+  assert.match(posterTransition, /setProperty\('--poster-art-height'/);
+  assert.match(posterTransition, /removeProperty\('--gate-x'\)/);
+  assert.match(posterTransition, /removeProperty\('--gate-y'\)/);
+  assert.match(posterTransition, /removeProperty\('--gate-height'\)/);
+  assert.match(posterTransition, /removeProperty\('--gate-width'\)/);
+  assert.match(posterTransition, /removeProperty\('--portal-gap'\)/);
+  assert.match(posterTransition, /removeProperty\('--seam-inset'\)/);
+  assert.match(posterTransition, /artWidth \* 1\.08/, 'the horizontal gate includes an eight-percent breathing margin');
+  assert.match(posterTransition, /const desiredGap = Math\.max\(20, Math\.min\(38, artHeight \* 0\.055\)\)/);
+  assert.match(posterTransition, /side === 'bottom'\s*\?\s*Math\.min\(boundaryBottom - 12, artBottom \+ desiredGap\)/);
+  assert.match(posterTransition, /activatePortal\('bottom', 'exit', sceneProfile, PORTAL_DURATION\)/);
+  assert.match(posterTransition, /activatePortal\('top', 'enter', sceneProfile, PORTAL_DURATION\)/);
+  assert.match(posterTransition, /particleField\.hold|holdParticles/, 'resting posters keep a bounded floating field below the art');
 });
 
 test('obsolete loading chrome stays removed from the visual layer', () => {

@@ -1,5 +1,6 @@
 const AUDIO_STATE_LABELS = Object.freeze({
   idle: '待机',
+  drawing: '抽取中',
   loading: '读取',
   playing: '播放',
   ready: '暂停',
@@ -15,7 +16,7 @@ export function getArchiveMetadata(tracks, index, audioStatus) {
       song: '未抽取',
       release: '未抽取',
       year: '----',
-      state: '待机'
+      state: AUDIO_STATE_LABELS[audioStatus] || '待机'
     };
   }
 

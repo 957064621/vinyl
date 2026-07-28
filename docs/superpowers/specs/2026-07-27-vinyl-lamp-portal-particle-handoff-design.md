@@ -1,159 +1,164 @@
-# Vinyl Lamp Portal, Particle Stream, and Player Handoff Design
+# Vinyl Lamp 光门、粒子流与唱片机交接设计
 
-**Date:** 2026-07-27
+**日期：** 2026-07-27
 
-**Status:** Approved visual direction
+**状态：** 视觉方向已确认
 
-## Goal
+## 目标
 
-Refine the loading sequence so each poster travels through a spatial portal inspired by the portfolio homepage lamp, then hand the final poster to the turntable without a visible hitch. The portal must grow from a short ignition mark into a full-height opening with layered light, use a restrained scanner-like particle stream, and look materially consistent on desktop and mobile.
+优化加载阶段的海报动效：每张海报通过参考作品集首页 Lamp 的时空光门进入舞台，最后一张海报再顺畅交接到唱片机。光门需要从短小的点火形态优雅延展为完整入口，并配合克制的扫描粒子流；桌面端和移动端必须保持一致的视觉语言。
 
-This design supersedes the current thin scanner-line experiment, the final animated `clip-path` handoff, the older full-profile cap of 64 particles, and the blanket compact-profile prohibition on blur. Compact may use the bounded fixed-radius portal and final-ambient blur layers defined here; it still cannot animate blur radius or run an unbounded blur surface. The existing decoded-image gate, loading order, retry behavior, motion profiles, and turntable application remain unchanged.
+本设计取代当前的细扫描线实验、多层暖冷光门、克隆海报交接、旧规格中全动态档最多 64 个粒子的限制，以及紧凑档完全禁止模糊的限制。紧凑档可以使用本文规定的有界、固定半径光门模糊与最终环境光，但仍然禁止动画修改模糊半径或运行无边界模糊表面。现有图片解码门槛、加载顺序、重试行为、动效档位与唱片机应用保持不变。
 
-## Locked Visual Intent
+## 已确认的视觉意图
 
-- The portal reads as a spacetime tunnel opening, not as a black-core lamp or a standalone scanner line.
-- Its entrance borrows the portfolio homepage lamp rhythm: a short ignition, an elegant length expansion, then delayed bloom from wider light layers.
-- The poster begins crossing only after the opening is visibly established.
-- The supplied Scanner Card Stream is a particle-motion reference, not an implementation template. The desired quality is a dense-looking stream born along the portal edge with small additive points, short trails, and finite lifetimes.
-- Desktop and mobile use the same portal proportions, normalized timing curve, light hierarchy, and phase order.
-- Blur remains part of the art direction. Blur radii stay fixed during an active phase; opacity and transform create the motion.
-- The final poster-to-turntable transition prioritizes uninterrupted spatial continuity and stable frame pacing.
+- 光门应呈现为时空隧道入口，而不是黑色灯芯或孤立的扫描线。
+- 入场节奏参考作品集首页 Lamp：先以短线点火，再优雅延展长度，最后让更宽的光层延迟绽放。
+- 光门明确建立以后，海报才开始穿越。
+- 用户提供的 Scanner Card Stream 作为粒子视觉基准：粒子使用同类径向柔光 Sprite、加色叠加、窄裂缝出生、微小漂移和独立生命周期，但不引入其常驻 Three.js 场、DOM 扫描或逐帧 React 状态更新。
+- 桌面端和移动端使用相同的光门比例、归一化时间曲线、光层层级与阶段顺序。
+- `blur` 是视觉方向的一部分。每个阶段中的模糊半径保持固定，通过透明度和变换产生运动。
+- 最后一张海报向唱片机的交接必须保持空间连续，并优先保证稳定帧率。
 
-## Current Failure Modes
+## 当前问题
 
-The current loading CSS contains multiple generations of portal styling. Base slit, stage rail, later tunnel, scanner-line, compact, and final-ambient rules overlap. The mobile breakpoint changes portal height and width independently, so the same state does not produce the same composition across profiles.
+现有加载样式混合了多代光门实现，包括基础光缝、舞台光轨、隧道、扫描线、紧凑档覆盖以及最终环境光。移动端断点还独立修改了光门高度和宽度，导致同一个状态在不同设备上呈现出不同构图。
 
-The final handoff currently combines an animated rectangular-to-round `clip-path`, a two-axis mask, poster translation and scaling, large blurred ambient layers, loading-root opacity, and the revealed player underneath. Those effects overlap in one short interval and can force repeated rasterization at the exact moment visual attention is highest.
+最终交接目前同时执行矩形到圆形的动态 `clip-path`、双轴遮罩、海报位移与缩放、大面积模糊环境光、加载层透明度变化，以及底层播放器显现。这些效果集中在很短的时间段，容易在视觉注意力最高的时刻触发重复栅格化。
 
-The particle controller also supports a repeating hold command. A decorative loop during stable poster display adds work without advancing the transition and must not overlap the final handoff.
+粒子控制器还支持循环驻留指令。稳定展示海报时持续运行装饰循环不会推进转场，且不得与最终交接重叠。
 
-## Portal Composition
+## 光门构成
 
-The existing `#loadingLightSlit` element remains the portal coordinate system. No React, Three.js, WebGL renderer, image request, or permanent DOM layer is added.
+继续使用现有 `#loadingLightSlit` 作为光门坐标系。不引入 React、Three.js、WebGL 渲染器、新图片请求或永久 DOM 层。
 
-The portal uses the existing child spans plus bounded pseudo-elements:
+光门复用现有子元素并保持单一可见亮度场：
 
-- The parent owns the measured position, target height, lifecycle opacity, and length expansion.
-- The core span draws two narrow luminous rims separated by a transparent aperture. The middle is not painted black; the loading background naturally supplies the tunnel depth.
-- The warm and cool spans provide near-field refraction and a wider outer haze.
-- Parent pseudo-elements form the directional conic light sheets derived from the portfolio lamp beams, rotated into a vertical portal.
-- Every blurred layer has an explicit bounded box, `contain: paint`, and a fixed blur radius. Near refraction uses 10 px and the outer haze uses 22 px in both full and compact profiles. Their cached results move only through `transform` and `opacity`.
+- 父元素负责实测位置、目标高度、生命周期透明度与长度延展。
+- 海报由位置和尺寸不参与穿越动画的固定 `frame` 裁切，海报内容只在 `frame` 内移动；`frame` 的当前活动边界就是粒子发射所使用的真实裂缝。
+- 裂缝两侧使用以裂缝轴为中心的镜像羽化，让门内擦边光与门外光晕连续展开；固定 `frame` 本身不移动，也不绘制黑芯或两条独立暗线。
+- 核心节点复用作品集 Lamp 的 `core + strip` 关系：`1.5-2px` 中轴亮条始终是最高亮度，节点伪元素在其后形成连续柔光；两者共享同一条纵向遮罩和生命周期，不构成两扇门。
+- 暖色层、冷色层和左右阶段的舞台伪元素保持隐藏，避免重复轮廓。
+- 门体宽度由实测高度限制在 `72-112px`；中轴亮条使用固定 `blur(0.2px)` 与两级轻量光晕，后方柔光占门宽 `64%`，固定使用 `blur(clamp(9px, 0.8vw, 13px))`。
+- 纵向遮罩在 `15%-85%` 保持主体，端部向透明柔和收束；父元素允许外溢光晕，不裁掉模糊边缘。
 
-Portal height comes from the rendered artwork box, not viewport-only breakpoints. The target is the artwork height plus an 8% breathing margin, clamped inside the loading stage. The left and right portal positions come from the measured artwork edges. Desktop and mobile use the same calculation.
+光门高度依据当前海报实际画面计算，不再仅由视口断点决定。目标高度为画面高度加 `8%` 呼吸空间，并限制在加载舞台内。左右光门位置来自实测画面边缘，桌面端与移动端共用同一套计算。
 
-## Portal Choreography
+## 光门时间编排
 
-Full and compact profiles share one normalized 760 ms portal envelope. Compact changes rendering budget, not the visible choreography.
+全动态档和紧凑档共用一条归一化的 `760ms` 光门包络。紧凑档只调整渲染预算，不改变可见编排。
 
-1. **Ignition, 0-120 ms:** the portal fades from zero and grows from roughly 14% to 28% of target length around its center.
-2. **Expansion, 120-420 ms:** the luminous rims extend toward full height on a fast, controlled `cubic-bezier(0.16, 1, 0.3, 1)` curve.
-3. **Bloom, 200-520 ms:** near refraction and outer conic light layers follow 80-120 ms behind the rim. Their fixed blur fields expand with transform and opacity.
-4. **Traversal, 260-650 ms:** the poster crosses the portal boundary after the opening is established. Portal particles peak around the leading poster edge.
-5. **Extinguish, 650-760 ms:** particle energy reaches zero first; the light field then fades with a slight 1.02 length settle rather than disappearing or snapping shorter.
+1. **点火与展开，0-304ms：** 光门从 `4%` 高度和完全透明开始，长度使用 Carbon Expressive Entrance `cubic-bezier(0, 0, 0.3, 1)` 单段延展至完整高度。
+2. **亮度建立，0-304ms：** 独立亮度轨在 `12%` 建立初始柔光，并在 `40%` 达到峰值，不改变模糊半径。
+3. **穿越，300-650ms：** 光门建立后海报穿越边界，粒子能量在海报前缘附近达到峰值。
+4. **驻留与熄灭，304-760ms：** 门体保持完整长度至 `78%`，随后粒子先降至零，亮度淡出并把长度轻微延展至 `1.018`，避免骤然缩短。
 
-The left portal emits the incoming poster. The right portal receives the outgoing poster. Only the active side is lit, and the portal is fully dark during a stable poster hold.
+左侧光门传出新海报，右侧光门接收离场海报。一次只点亮当前使用的一侧，海报稳定驻留期间光门完全熄灭。
 
-## Particle Stream
+## 粒子流
 
-`src/ui/light-particle-field.js` remains a finite Canvas 2D controller. The Scanner Card Stream informs the emitter geometry and additive point treatment, but its always-running Three.js field, 800-to-2500 Canvas particles, per-frame random alpha mutation, DOM scanning, and React state updates are intentionally excluded.
+`src/ui/light-particle-field.js` 继续作为有限生命周期的 Canvas 2D 控制器。Scanner Card Stream 只提供发射器几何和加色光点的参考；其常驻 Three.js 粒子场、`800-2500` 个 Canvas 粒子、逐帧随机透明度、DOM 扫描和 React 状态更新均不引入本项目。
 
-The revised controller uses:
+调整后的控制器采用：
 
-- a cached offscreen radial sprite for warm-white and cool-white points;
-- `globalCompositeOperation = "lighter"` during particle drawing;
-- preallocated numeric storage, with no object creation or random generation inside the frame loop;
-- particles born along the measured portal height with a 1-3 px cross-axis jitter;
-- short directional drift and short trails aligned with poster travel;
-- a finite energy envelope tied to portal ignition, traversal, and extinguish;
-- the existing upper bounds of 84 particles for `full`, 28 for `compact`, and zero for `reduce`.
+- 粒子只使用预先缓存的暖白与冷白径向柔光 Sprite；纹理停点固定为 `0.025 / 0.1 / 0.25 / 1`，形成 Scanner Card Stream 同类的针状白芯、冷色近光与宽透明外晕；帧循环内不生成纹理、渐变、圆弧或线段；
+- 绘制粒子时使用 `globalCompositeOperation = "lighter"`；
+- 预分配数值存储，帧循环内不创建对象，也不生成随机数；
+- 发射原点来自固定 `frame` 当前活动边界的实测真实裂缝坐标，并沿裂缝的有效高度分布，不能以 Canvas 中线或视口断点近似；
+- 每个粒子以指向舞台内侧的裂缝法线为主方向，横向行程保持独立，纵向仅做轻微随机漂移，形成 Scanner 式微粒流而不是平行线段或宽角度烟花；
+- 每个粒子独立记录出生时刻、出生位置、初始速度、基础亮度和基础尺寸，重用存储槽时必须完整重置这组出生状态；
+- 粒子年龄与离裂缝距离分别归一化并采用独立衰减曲线；当前亮度和尺寸由时间衰减、距离衰减及阶段能量共同计算，不能只依赖全局 Canvas 透明度；
+- 与光门点火、穿越和熄灭同步的有限能量包络；
+- `full` 最多 320 个、`compact` 最多 120 个、`reduce` 为 0 个的上限。
 
-Incoming particles drift from the left aperture into the stage. Outgoing particles converge toward the right aperture before disappearing. Perceived density comes from the cached glow sprite, additive overlap, staggered lifetime, and trail length rather than a large particle count.
+无论海报从左侧进入还是从右侧离开，粒子都从当前真实裂缝流向舞台内侧：左侧裂缝的主方向向右，右侧裂缝的主方向向左，两侧几何和运动互为镜像。右侧光门不执行吸入或汇聚运动。密集感来自较高但有界的 Sprite 数量、加色重叠、错开的出生时刻、不同速度和生命周期，不使用线段尾迹。
 
-There is no particle hold loop. The Canvas stops scheduling frames and clears after each portal phase, on failure, on profile replacement, when the document is hidden, and before final handoff.
+不再保留粒子驻留循环。每个光门阶段结束、加载失败、档位替换、页面隐藏、最终交接开始或控制器销毁时，Canvas 都必须停止调度帧并清空。
 
-## Final Poster-to-Turntable Handoff
+## 最终海报到唱片机的交接
 
-The final handoff is a separate phase and never runs portal particles.
+最终交接是独立阶段，期间不运行光门粒子。
 
-1. Settle and clear the particle controller.
-2. Measure the final poster and target vinyl cover once.
-3. Prepare the existing target cover with the same decoded artwork and place it at opacity zero.
-4. On the next animation frame, animate the poster toward the target using only `transform` and `opacity`.
-5. Begin the target-cover crossfade after the source has completed most of its travel. The two layers overlap so combined artwork visibility never falls below 0.85.
-6. Start the loading-root fade only after the target cover is visibly established.
-7. Remove transient promotion hints and handoff styles after settlement.
+1. 完成并清空粒子控制器。
+2. 保留最后一张已解码海报节点，只测量一次源画面与播放器最终显现位置的唱片圆心。
+3. 测量目标时排除播放器初始 `10px` 上浮变换，确保海报落到界面动画结束后的真实位置。
+4. 位移和缩放在 `0%-82%` 使用 Carbon Expressive Standard `cubic-bezier(0.4, 0.14, 0.3, 1)` 连续完成。
+5. 独立形状轨在 `0%-22%` 把同一张海报裁成正方形并变圆；圆角半径由每张海报最终正方形边长的一半计算，不能使用按原长方形参考盒解析的 `50%` 近似值。
+6. 播放器界面与海报同时渐显上浮，目标唱片封面保持透明至 `82%`，随后接管同一画面。
+7. `1100ms` 动画结束后移除加载根层和临时交接样式。
 
-The source keeps its existing static soft-edge mask during travel. The mask does not animate. The rectangular-to-round animated `clip-path` is removed; the circular target cover owns the final shape during the crossfade.
+海报移动过程中保留现有静态左右柔边遮罩，遮罩本身不参与动画。最终阶段只允许这个原始海报节点执行一次短时、可测量的 `clip-path` 圆化，不创建克隆节点；源海报全程保持不透明，末段由完全对齐的目标封面接管。
 
-The two blurred final-ambient layers remain at fixed 22 px and 19 px radii. Their boxes are bounded, and only opacity and transform animate. No handoff keyframe changes `filter`, `backdrop-filter`, mask geometry, width, height, or shadow geometry.
+最终环境光只保留一个有界的 `24px` 固定模糊层，只动画透明度与变换。任何交接关键帧都不得修改 `filter`、`backdrop-filter`、宽高或阴影几何。
 
-## Motion Profiles
+## 动效档位
 
-### Full
+### 全动态档
 
-- Portal envelope: 760 ms.
-- Up to 84 Canvas particles at DPR capped at 1.5.
-- Full bounded near-field and outer-haze layers.
-- Final handoff uses composited transform and opacity with bounded fixed-blur ambience.
+- 光门包络为 `760ms`。
+- Canvas 粒子最多 320 个，DPR 上限为 `1.5`。
+- 使用完整但有界的近场光和外部雾光层。
+- 最终交接使用分离的位移缩放轨与短时圆化轨，并保留有界、固定模糊的环境光。
 
-### Compact
+### 紧凑档
 
-- The same 760 ms portal envelope, geometry ratios, and light hierarchy.
-- Up to 28 Canvas particles at DPR capped at 1.25.
-- Smaller backing-store cost and fewer particle trails, without changing the portal silhouette.
-- Final handoff follows the same phase offsets and easing as full mode.
+- 使用同一条 `760ms` 光门包络、几何比例和光层层级。
+- Canvas 粒子最多 120 个，DPR 上限为 `1.25`。
+- 降低柔光 Sprite 数量和 Canvas 后备缓冲成本，但不改变光门轮廓、喷散方向或衰减逻辑。
+- 最终交接使用与全动态档相同的阶段偏移和缓动。
 
-### Reduce
+### 减弱动效档
 
-- No portal expansion, particle frame, translation, scale, animated blur, or spatial handoff.
-- The existing direct 120 ms opacity fade remains.
+- 不运行光门延展、粒子帧、位移、缩放、动态模糊或空间交接。
+- 保留现有 `120ms` 直接透明度淡化。
 
-## Component Ownership and Data Flow
+## 组件职责与数据流
 
-- `src/ui/poster-transition.js` owns portal phase timing, measured portal geometry, poster state, and final settlement order.
-- `src/ui/light-particle-field.js` owns only finite Canvas particle rendering and cleanup.
-- `src/ui/loading-screen.js` measures and prepares the existing poster and turntable target for final handoff.
-- `src/style.css` owns portal layers, fixed blur values, shared responsive proportions, and composited motion keyframes.
-- `test/unit/` verifies lifecycle, timing, cleanup, and CSS contracts.
-- `test/e2e/loading-poster-transition.spec.js` verifies rendered geometry, continuity, desktop/mobile parity, and performance.
+- `src/ui/poster-transition.js` 负责光门阶段时间、实测光门几何、海报状态和最终完成顺序。
+- `src/ui/light-particle-field.js` 只负责有限 Canvas 粒子渲染与清理。
+- `src/ui/loading-screen.js` 负责测量并准备最终海报和唱片机目标。
+- `src/style.css` 负责光门图层、固定模糊值、共用响应式比例和可合成动效关键帧。
+- `test/unit/` 验证生命周期、时间、清理和 CSS 契约。
+- `test/e2e/loading-poster-transition.spec.js` 验证实际几何、连续性、桌面/移动一致性和性能。
 
-One portal phase passes measured artwork bounds and side to the particle controller. The particle promise settles before the poster state becomes stable. The final sequence clears particles before preparing the player target. Loading-screen removal remains gated by both handoff settlement and root fade completion.
+每个光门阶段把固定 `frame` 的边界、当前使用侧和实测真实裂缝坐标传给粒子控制器；`frame` 在穿越期间保持不动，粒子控制器据此建立向舞台内侧的镜像发射方向。粒子 Promise 在海报进入稳定状态前完成。最终流程在准备播放器目标前清空粒子。只有交接完成并且加载根层淡出后，才允许移除加载界面。
 
-## Cancellation and Error Handling
+## 取消与错误处理
 
-Reset, retry, freeze, switch to `reduce`, visibility loss, and destroy must cancel the active animation frame, resolve or reject pending work exactly once, clear the Canvas, remove portal datasets, and restore one stable poster state.
+重置、重试、冻结、切换到 `reduce`、页面隐藏和销毁都必须取消当前动画帧，只完成一次待处理任务，清空 Canvas，移除光门数据属性，并恢复唯一稳定的海报状态。
 
-A stale portal or handoff completion cannot mutate a later loading run. If final target measurement is invalid, the sequence falls back to a transform-free source/target crossfade instead of retaining the loading screen or attempting animated geometry with invalid values.
+过期的光门或交接回调不得修改后续加载流程。若最终目标尺寸无效，则退化为不执行空间变换的源图/目标图交叉淡化，不能让加载界面滞留，也不能使用无效数值继续动画。
 
-## Verification
+## 验证标准
 
-Unit coverage must prove:
+单元测试必须证明：
 
-- full and compact share portal geometry ratios, phase offsets, and easing;
-- compact does not substitute a different portal shape;
-- portal blur values are fixed and no keyframe animates `filter` or `backdrop-filter`;
-- final handoff does not animate `clip-path`, mask geometry, filter, dimensions, or shadows;
-- particle storage stays within 84/28/0 profile limits;
-- no frame is scheduled after portal settlement, final handoff start, clear, reduce, or destroy;
-- cancellation and stale completion preserve one stable active poster.
+- 全动态档和紧凑档共用光门几何比例、阶段偏移与缓动；
+- 紧凑档不会替换为另一种光门造型；
+- 光门模糊值固定，关键帧不动画 `filter` 或 `backdrop-filter`；
+- 只有最终原海报节点可以在前 `22%` 动画一次 `clip-path`；其余阶段不得动画遮罩几何、滤镜、尺寸或阴影；
+- 海报穿越期间固定 `frame` 不移动，真实裂缝两侧保持镜像羽化；
+- 每个粒子具有独立出生状态，并分别按时间和离裂缝距离衰减亮度；
+- 粒子存储始终限制在 `320/120/0` 档位上限内；
+- 光门完成、最终交接开始、清空、切换减弱动效或销毁后，不再调度动画帧；
+- 取消和过期回调始终保留唯一稳定的当前海报。
 
-Browser verification covers desktop Chromium, Pixel-class mobile Chromium, and reduced motion. It must capture ignition, expansion, traversal, and final handoff frames and assert:
+浏览器验证覆盖桌面 Chromium、Pixel 级移动端 Chromium 和减弱动效模式。需要捕获点火、展开、穿越与最终交接画面，并确认：
 
-- desktop and mobile portals use matching normalized height, aperture, and bloom ratios;
-- the portal grows from short to full length before poster traversal;
-- particle pixels appear around the active portal and disappear before stable hold;
-- combined final source/target artwork visibility never drops below 0.85;
-- no effect-attributable long task exceeds 50 ms;
-- no incoherent overlap or blank frame appears;
-- Canvas frame count remains unchanged after portal settlement and loading removal;
-- the loading layer is removed and the player remains interactive.
+- 桌面端与移动端使用相同的归一化光门高度、入口和光晕比例；
+- 光门先从短变长，再开始海报穿越；
+- 当前光门的粒子像素从实测真实裂缝向舞台内侧形成高密度微粒流，左右方向互为镜像，不出现 `moveTo / lineTo / stroke` 尾迹，并在稳定驻留前完全消失；
+- 最终源海报始终不透明，目标封面在 `82%-100%` 对齐接管，圆心误差不超过 `2px`；
+- 动效引起的长任务不超过 `50ms`；
+- 不出现不连贯叠层或空白帧；
+- 光门完成及加载层移除后，Canvas 帧数不再增长；
+- 加载层最终移除，播放器保持可交互。
 
-Run `npm run test:unit`, `npm run build`, the focused loading-poster Playwright suite, and desktop/mobile screenshot inspection before completion.
+完成前运行 `npm run test:unit`、`npm run build`、聚焦的加载海报 Playwright 用例，并检查桌面端与移动端截图。
 
-## Non-Goals
+## 非目标
 
-- No direct dependency on Three.js, React, or the referenced component package.
-- No 800-to-2500 particle field, continuous ambient particle loop, ASCII scramble, card stream, or scanner controls.
-- No new visible copy, loading asset, duplicate poster image request, or player redesign.
-- No unrelated refactor of the broader archive interface.
+- 不直接依赖 Three.js、React 或参考组件包。
+- 不引入 `800-2500` 粒子场、常驻环境粒子循环、ASCII 扰动、卡片流或扫描控制器。
+- 不增加可见文案、加载资源、重复海报图片请求或播放器改版。
+- 不重构与本次目标无关的档案界面。

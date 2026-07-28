@@ -180,12 +180,46 @@ export function createLoadingScreen(documentRef = document, {
       .map((slot) => [slot.dataset.loadingSlot, slot])
   );
   let visualQueueError = null;
+  const windowRef = documentRef.defaultView;
+  const requestFrame = windowRef?.requestAnimationFrame?.bind(windowRef)
+    ?? ((callback) => setTimer(callback, 16));
+  const cancelFrame = windowRef?.cancelAnimationFrame?.bind(windowRef) ?? clearTimer;
+  let handoffFrame = null;
+  let handoffGeneration = 0;
+
+  const measureRevealedTarget = (target, appShell) => {
+    if (
+      !appShell?.classList
+      || !appShell?.style
+      || typeof appShell.getBoundingClientRect !== 'function'
+    ) return target.getBoundingClientRect();
+
+    const wasRevealed = appShell.classList.contains('is-loading-reveal');
+    if (wasRevealed) return target.getBoundingClientRect();
+
+    const inlineTransition = appShell.style.transition;
+    appShell.style.transition = 'none';
+    appShell.classList.add('is-loading-reveal');
+    const revealedRect = target.getBoundingClientRect();
+
+    appShell.classList.remove('is-loading-reveal');
+    appShell.getBoundingClientRect();
+    if (inlineTransition) appShell.style.transition = inlineTransition;
+    else appShell.style.removeProperty('transition');
+    return revealedRect;
+  };
 
   const clearFinalHandoff = () => {
+    handoffGeneration += 1;
+    if (handoffFrame !== null) {
+      cancelFrame(handoffFrame);
+      handoffFrame = null;
+    }
     delete root.dataset.handoffReady;
     root.style.removeProperty('--poster-final-x');
     root.style.removeProperty('--poster-final-y');
     root.style.removeProperty('--poster-final-scale');
+    root.style.removeProperty('--poster-final-radius');
     root.style.removeProperty('--poster-source-inset-top');
     root.style.removeProperty('--poster-source-inset-right');
     root.style.removeProperty('--poster-source-inset-bottom');
@@ -195,12 +229,35 @@ export function createLoadingScreen(documentRef = document, {
     root.style.removeProperty('--poster-final-inset-bottom');
     root.style.removeProperty('--poster-final-inset-left');
 
-    const targetCover = documentRef.querySelector('.vinyl-cover[data-loading-handoff="true"]');
+    const source = root.querySelector('.loading-image[data-loading-handoff="true"]');
+    if (source) delete source.dataset.loadingHandoff;
+    documentRef.querySelector('#appShell')?.classList.remove('is-loading-reveal');
+
+    const targetCover = documentRef.querySelector(
+      '.vinyl-cover[data-loading-handoff="true"], .vinyl-cover[data-loading-prewarm="true"]'
+    );
     if (targetCover) {
       targetCover.classList.remove('is-active');
       targetCover.style.removeProperty('background-image');
       delete targetCover.dataset.loadingHandoff;
+      delete targetCover.dataset.loadingPrewarm;
     }
+  };
+
+  const settleFinalHandoff = () => {
+    handoffGeneration += 1;
+    if (handoffFrame !== null) {
+      cancelFrame(handoffFrame);
+      handoffFrame = null;
+    }
+    const source = root.querySelector('.loading-image[data-loading-handoff="true"]');
+    if (source) delete source.dataset.loadingHandoff;
+    documentRef.querySelectorAll(
+      '.vinyl-cover[data-loading-handoff="true"], .vinyl-cover[data-loading-prewarm="true"]'
+    ).forEach((targetCover) => {
+      delete targetCover.dataset.loadingHandoff;
+      delete targetCover.dataset.loadingPrewarm;
+    });
   };
 
   const prepareFinalHandoff = (profile, source) => {
@@ -212,7 +269,8 @@ export function createLoadingScreen(documentRef = document, {
     if (!target) return;
 
     const sourceRect = sourceFrame.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
+    const appShell = documentRef.querySelector('#appShell');
+    const targetRect = measureRevealedTarget(target, appShell);
     const naturalWidth = Number(source.naturalWidth);
     const naturalHeight = Number(source.naturalHeight);
     if (
@@ -251,6 +309,7 @@ export function createLoadingScreen(documentRef = document, {
     root.style.setProperty('--poster-final-x', `${targetCenterX - sourceCenterX}px`);
     root.style.setProperty('--poster-final-y', `${targetCenterY - sourceCenterY}px`);
     root.style.setProperty('--poster-final-scale', String(scale));
+    root.style.setProperty('--poster-final-radius', `${handoffSquare / 2}px`);
     root.style.setProperty('--poster-source-inset-top', asPercent(sourceInsetY, sourceRect.height));
     root.style.setProperty('--poster-source-inset-right', asPercent(sourceInsetX, sourceRect.width));
     root.style.setProperty('--poster-source-inset-bottom', asPercent(sourceInsetY, sourceRect.height));
@@ -262,12 +321,19 @@ export function createLoadingScreen(documentRef = document, {
 
     const targetCover = documentRef.querySelector('#vinylCoverA');
     const artworkSource = source.currentSrc || source.src;
-    if (targetCover && artworkSource) {
-      targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
-      targetCover.dataset.loadingHandoff = 'true';
+    if (!targetCover || !artworkSource) return;
+
+    source.dataset.loadingHandoff = 'true';
+    targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
+    targetCover.dataset.loadingHandoff = 'true';
+    appShell?.classList.add('is-loading-reveal');
+    const generation = ++handoffGeneration;
+    handoffFrame = requestFrame(() => {
+      handoffFrame = null;
+      if (generation !== handoffGeneration || !root.isConnected) return;
+      root.dataset.handoffReady = 'true';
       targetCover.classList.add('is-active');
-    }
-    root.dataset.handoffReady = 'true';
+    });
   };
 
   let particleField;
@@ -294,10 +360,6 @@ export function createLoadingScreen(documentRef = document, {
       visualQueueError ||= error;
     }
   });
-  const windowRef = documentRef.defaultView;
-  const requestFrame = windowRef?.requestAnimationFrame?.bind(windowRef)
-    ?? ((callback) => setTimer(callback, 16));
-  const cancelFrame = windowRef?.cancelAnimationFrame?.bind(windowRef) ?? clearTimer;
   let resizeFrame = null;
   let resizeObserver = null;
   let exitGeneration = 0;
@@ -339,6 +401,7 @@ export function createLoadingScreen(documentRef = document, {
       resizeFrame = null;
       if (destroyed) return;
       particleField.resize();
+      transition.resize?.();
     });
   };
   const connectResizeObserver = () => {
@@ -359,11 +422,26 @@ export function createLoadingScreen(documentRef = document, {
     const slot = slots.get(result.id);
     if (!slot) return null;
     slot.querySelector('img')?.remove();
+    let artworkViewport = slot.querySelector('.loading-artwork-viewport');
+    if (!artworkViewport) {
+      artworkViewport = documentRef.createElement('span');
+      artworkViewport.className = 'loading-artwork-viewport';
+      artworkViewport.setAttribute('aria-hidden', 'true');
+      slot.insertBefore(artworkViewport, slot.firstChild);
+    }
     result.image.alt = result.alt;
     result.image.className = 'loading-image';
     result.image.dataset.assetId = result.id;
     result.image.setAttribute('aria-hidden', 'true');
-    slot.insertBefore(result.image, slot.firstChild);
+    artworkViewport.replaceChildren(result.image);
+    if (slot.dataset.loadingSlot === 'archive-05') {
+      const targetCover = documentRef.querySelector('#vinylCoverA');
+      const artworkSource = result.image.currentSrc || result.image.src;
+      if (targetCover && artworkSource) {
+        targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
+        targetCover.dataset.loadingPrewarm = 'true';
+      }
+    }
     try {
       transition.enqueue(slot);
     } catch (error) {
@@ -525,6 +603,8 @@ export function createLoadingScreen(documentRef = document, {
         || destroyed
       ) return;
       exitController = null;
+      settleFinalHandoff();
+      documentRef.querySelector('#appShell')?.classList.remove('is-loading-reveal');
       root.remove();
       destroyControllers();
     },
@@ -534,6 +614,7 @@ export function createLoadingScreen(documentRef = document, {
       retry.onclick = null;
       cancelExit({ clearFallback: true });
       disconnectResizeObserver();
+      clearFinalHandoff();
       root.remove();
       destroyControllers();
     }

@@ -108,6 +108,12 @@ test('maps selected tracks and controller states to stable archive metadata', ()
     year: '----',
     state: '待机'
   });
+  assert.deepEqual(getArchiveMetadata(tracks, -1, 'drawing'), {
+    song: '未抽取',
+    release: '未抽取',
+    year: '----',
+    state: '抽取中'
+  });
   assert.deepEqual(getArchiveMetadata(tracks, 0, 'loading'), {
     song: '方圆几里',
     release: '正式专辑',
@@ -128,6 +134,7 @@ test('maps selected tracks and controller states to stable archive metadata', ()
   assert.equal(getArchiveMetadata(tracks, 1, 'ready').state, '暂停');
   assert.equal(getArchiveMetadata(tracks, 1, 'paused').state, '暂停');
   assert.equal(getArchiveMetadata(tracks, 1, 'error').state, '故障');
+  assert.equal(getArchiveMetadata(tracks, 1, 'drawing').state, '抽取中');
 });
 
 test('updates the four metadata values without rebuilding the rail', () => {

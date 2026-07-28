@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const lyricsSource = readFileSync(new URL('../../src/data/lyrics.js', import.meta.url), 'utf8');
-const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+// Windows checkouts may smudge CRLF endings; the structure regexes embed \n.
+const lyricsSource = readFileSync(new URL('../../src/data/lyrics.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 test('the editable lyric file self-accepts HMR and publishes an in-place update', () => {
   assert.match(lyricsSource, /if \(import\.meta\.hot\)/);
