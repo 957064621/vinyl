@@ -1,11 +1,16 @@
-export const COVER_OSS_ORIGIN = 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/';
+export const COVER_OSS_ORIGIN = 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/';
 
 const COVER_FILES = [
-  '3.jpg',
-  '4.jpg',
   '1.jpg',
   '2.jpg',
-  '%E5%A4%A9%E5%A4%96%E6%9D%A5%E7%89%A9.jpg'
+  '3.jpg',
+  '4.jpg',
+  '5.jpg',
+  '6.jpg',
+  '7.jpg',
+  '8.jpg',
+  '9.jpg',
+  'end.jpg'
 ];
 
 export function ossImageDerivative(source, width) {

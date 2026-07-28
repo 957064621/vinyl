@@ -6,9 +6,9 @@ import { normalizeOssRegion } from './mirror-covers.mjs';
 
 const ROLE_CONFIG = Object.freeze({
   loading: Object.freeze({
-    origin: 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com',
+    origin: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com',
     bucketEnv: 'OSS_LOADING_BUCKET',
-    expectedBucket: 'yuko-portfolio',
+    expectedBucket: 'yuko-vinyl',
     type: 'image/jpeg'
   }),
   audio: Object.freeze({

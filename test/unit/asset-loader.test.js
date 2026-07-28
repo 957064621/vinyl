@@ -71,6 +71,33 @@ test('limits concurrency and reports completed decoded slots', async () => {
   );
 });
 
+test('abort stops queued image work and reaches the active request signal', async () => {
+  const controller = new AbortController();
+  const started = [];
+  let notifyStarted;
+  const firstStarted = new Promise((resolve) => { notifyStarted = resolve; });
+  const manifest = Array.from({ length: 3 }, (_, index) => ({
+    id: `a${index}`,
+    source: `${index}.jpg`
+  }));
+
+  const loading = loadCriticalImages(manifest, {
+    selectCandidates: (entry) => [entry.source],
+    concurrency: 1,
+    signal: controller.signal,
+    loadImage: (src, { signal }) => new Promise((resolve, reject) => {
+      started.push(src);
+      notifyStarted();
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    })
+  });
+
+  await firstStarted;
+  controller.abort(new Error('skip requested'));
+  await assert.rejects(loading, /skip requested/);
+  assert.deepEqual(started, ['0.jpg']);
+});
+
 test('drains workers and aggregates async progress observer errors', async () => {
   const loaded = [];
   const unhandled = [];

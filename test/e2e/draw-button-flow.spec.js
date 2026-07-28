@@ -25,6 +25,7 @@ const installCovers = async (page, { hold = false } = {}) => {
 const waitForApp = async (page) => {
   await installCovers(page);
   await page.goto('./');
+  await page.locator('#loadingSkip').click();
   await expect(page.locator('#loadingScreen')).toHaveCount(0, { timeout: 20_000 });
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
 };

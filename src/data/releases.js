@@ -423,8 +423,8 @@ const releases = [
         title: '万兽之王演唱会录音',
         type: 'live-recording',
         releaseDate: '2026',
-        sourceArtworkUrl: `${COVER_BASE_URL}1.jpg`,
-        coverOssUrl: `${COVER_BASE_URL}1.jpg`,
+        sourceArtworkUrl: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/end.jpg',
+        coverOssUrl: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/end.jpg',
         palette: { a: [150, 201, 237], b: [190, 204, 235] },
         tracks: [
             makeTrack('粉钻', {

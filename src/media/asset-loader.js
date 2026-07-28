@@ -1,5 +1,10 @@
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const throwIfAborted = (signal) => {
+  if (!signal?.aborted) return;
+  throw signal.reason ?? new Error('Image loading aborted');
+};
+
 export class CriticalAssetError extends Error {
   constructor(failures) {
     super(`Critical images failed: ${failures.map(({ id }) => id).join(', ')}`);
@@ -28,7 +33,10 @@ export function loadAndDecodeImage(src, {
       cleanup();
       fn(value);
     };
-    const abort = () => settle(reject, new Error(`Image load aborted: ${src}`));
+    const abort = () => {
+      settle(reject, signal?.reason ?? new Error(`Image load aborted: ${src}`));
+      image.removeAttribute?.('src');
+    };
     const timer = setTimeout(
       () => settle(reject, new Error(`Image load timed out: ${src}`)),
       timeoutMs
@@ -63,9 +71,15 @@ async function loadSlot(asset, options) {
     const src = candidates[candidateIndex];
     const limit = candidateIndex === 0 ? options.retries + 1 : 1;
     for (let attempt = 1; attempt <= limit; attempt += 1) {
+      throwIfAborted(options.signal);
       try {
-        return { ...await options.loadImage(src), id: asset.id, alt: asset.alt };
+        return {
+          ...await options.loadImage(src, { signal: options.signal }),
+          id: asset.id,
+          alt: asset.alt
+        };
       } catch (error) {
+        throwIfAborted(options.signal);
         attempts.push({ src, attempt, error });
         if (attempt < limit) await wait(options.retryDelayMs);
       }
@@ -82,7 +96,8 @@ export async function loadCriticalImages(manifest, {
   retries = 2,
   concurrency = 2,
   retryDelayMs = 250,
-  onProgress = () => {}
+  onProgress = () => {},
+  signal
 }) {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new TypeError('concurrency must be a positive integer');
@@ -103,6 +118,7 @@ export async function loadCriticalImages(manifest, {
 
   const worker = async () => {
     while (nextIndex < manifest.length) {
+      throwIfAborted(signal);
       const index = nextIndex;
       nextIndex += 1;
       const entry = manifest[index];
@@ -112,9 +128,11 @@ export async function loadCriticalImages(manifest, {
           selectCandidates,
           loadImage,
           retries,
-          retryDelayMs
+          retryDelayMs,
+          signal
         });
       } catch (error) {
+        throwIfAborted(signal);
         failures[index] = { id: entry.id, error, attempts: error.attempts };
         await emitProgress({ id: entry.id, status: 'failed', completed, total: manifest.length });
         continue;
@@ -134,6 +152,7 @@ export async function loadCriticalImages(manifest, {
   await Promise.all(
     Array.from({ length: Math.min(concurrency, manifest.length) }, () => worker())
   );
+  throwIfAborted(signal);
   const orderedFailures = failures.filter(Boolean);
   if (orderedFailures.length > 0) throw new CriticalAssetError(orderedFailures);
   if (progressErrors.length > 0) {

@@ -16,8 +16,9 @@ const createFixture = () => new JSDOM(`
     <div class="loading-intake">
       <div class="loading-controls">
         <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
-        <p class="loading-copy" id="loadingCopy">影像读取中</p>
+        <p class="loading-copy" id="loadingCopy">讯号接入中</p>
         <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
+        <button class="loading-skip" id="loadingSkip" type="button">跳过</button>
       </div>
       <div class="loading-stage">
         <div class="loading-poster-stack">
@@ -62,7 +63,10 @@ const createControllerHarness = ({
       return Promise.resolve();
     }),
     freeze: () => calls.push('transition.freeze'),
-    reset: () => calls.push('transition.reset'),
+    reset(options) {
+      calls.push('transition.reset');
+      if (options) calls.push(['transition.reset.options', options]);
+    },
     setProfile: (profile) => calls.push(['transition.setProfile', profile]),
     destroy() {
       calls.push('transition.destroy');
@@ -147,7 +151,8 @@ const createGateFixture = () => new JSDOM(`
     <canvas id="loadingParticles"></canvas>
     <div id="loadingLightSlit"></div>
     <button id="loadingRetry" type="button" hidden>重新载入</button>
-    <p id="loadingCopy">影像读取中</p>
+    <button id="loadingSkip" type="button">跳过</button>
+    <p id="loadingCopy">讯号接入中</p>
   </div>
   <div class="app-root" id="appRoot" inert aria-hidden="true">
     <main id="appShell"></main>
@@ -330,7 +335,7 @@ test('successful exit clears loading handoff markers without clearing the visibl
   assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/visible-cover.jpg")');
 });
 
-test('loading screen validates required nodes and the exact slot count', () => {
+test('loading screen validates required nodes and requires at least one slot', () => {
   const missingProgress = createFixture();
   missingProgress.window.document.getElementById('loadingProgress').remove();
   assert.throws(
@@ -338,11 +343,18 @@ test('loading screen validates required nodes and the exact slot count', () => {
     /loadingProgress/
   );
 
-  const missingSlot = createFixture();
-  missingSlot.window.document.querySelector('[data-loading-slot="archive-05"]').remove();
+  const missingSkip = createFixture();
+  missingSkip.window.document.getElementById('loadingSkip').remove();
   assert.throws(
-    () => createLoadingScreen(missingSlot.window.document, createControllerHarness().factories),
-    /exactly 5 loading slots/
+    () => createLoadingScreen(missingSkip.window.document, createControllerHarness().factories),
+    /loadingSkip/
+  );
+
+  const missingSlots = createFixture();
+  missingSlots.window.document.querySelectorAll('[data-loading-slot]').forEach((slot) => slot.remove());
+  assert.throws(
+    () => createLoadingScreen(missingSlots.window.document, createControllerHarness().factories),
+    /at least one loading slot/
   );
 });
 
@@ -409,11 +421,11 @@ test('ready progress mounts the exact decoded image in its archive slot', () => 
   assert.strictEqual(enqueueCall[1], slot);
   assert.strictEqual(enqueueCall[2], decodedImage);
   assert.equal(dom.window.document.getElementById('loadingProgress').textContent, '01 / 05');
-  assert.equal(dom.window.document.getElementById('loadingCopy').textContent, '已归档 1 / 5');
+  assert.equal(dom.window.document.getElementById('loadingCopy').textContent, '讯号接入中');
   assert.equal(dom.window.document.getElementById('loadingScreen').style.getPropertyValue('--loading-progress'), '1');
 });
 
-test('rapid ready progress only synchronously enqueues visual playback', () => {
+test('duplicate ready progress cannot replace an already-admitted visual', () => {
   const dom = createFixture();
   const { view, harness } = createInjectedView(dom.window.document);
   const slot = dom.window.document.querySelector('[data-loading-slot="archive-01"]');
@@ -430,10 +442,317 @@ test('rapid ready progress only synchronously enqueues visual playback', () => {
   }), undefined);
 
   const enqueues = harness.calls.filter(([name]) => name === 'transition.enqueue');
-  assert.equal(enqueues.length, 2);
+  assert.equal(enqueues.length, 1);
   assert.strictEqual(enqueues[0][2], first);
-  assert.strictEqual(enqueues[1][2], second);
-  assert.strictEqual(slot.querySelector('img'), second);
+  assert.strictEqual(slot.querySelector('img'), first);
+  assert.equal(slot.contains(second), false);
+});
+
+test('out-of-order ready images enqueue strictly in DOM order with the final poster last', () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const { view, harness } = createInjectedView(document);
+  const images = new Map();
+  const reportReady = (id, completed) => {
+    const image = document.createElement('img');
+    image.src = id === 'archive-05'
+      ? 'https://example.test/end.jpg'
+      : `https://example.test/${id}.jpg`;
+    images.set(id, image);
+    view.setProgress({
+      id,
+      status: 'ready',
+      completed,
+      total: 5,
+      result: { id, alt: id, image }
+    });
+  };
+
+  ['archive-05', 'archive-03', 'archive-02', 'archive-04'].forEach((id, index) => {
+    reportReady(id, index + 1);
+  });
+  assert.equal(
+    harness.calls.filter(([name]) => name === 'transition.enqueue').length,
+    0
+  );
+
+  reportReady('archive-01', 5);
+
+  const enqueues = harness.calls.filter(([name]) => name === 'transition.enqueue');
+  assert.deepEqual(
+    enqueues.map(([, slot]) => slot.dataset.loadingSlot),
+    ['archive-01', 'archive-02', 'archive-03', 'archive-04', 'archive-05']
+  );
+  assert.deepEqual(
+    enqueues.map(([, , image]) => image),
+    ['archive-01', 'archive-02', 'archive-03', 'archive-04', 'archive-05']
+      .map((id) => images.get(id))
+  );
+  assert.strictEqual(enqueues.at(-1)[2], images.get('archive-05'));
+});
+
+test('skip cancels the visual queue and only admits the final mounted poster', () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  let skipCalls = 0;
+  const { view, harness } = createInjectedView(document, {
+    viewOptions: { onSkip: () => { skipCalls += 1; } }
+  });
+  const root = document.getElementById('loadingScreen');
+  const skip = document.getElementById('loadingSkip');
+
+  skip.click();
+
+  assert.equal(root.dataset.state, 'skipping');
+  assert.equal(root.dataset.skipRequested, 'true');
+  assert.equal(skip.hidden, true);
+  assert.equal(skip.disabled, true);
+  assert.equal(skipCalls, 1);
+  assert.equal(document.getElementById('loadingCopy').textContent, '讯号接入中');
+
+  view.setProgress({
+    id: 'archive-02', status: 'ready', completed: 1, total: 5,
+    result: { id: 'archive-02', alt: 'two', image: document.createElement('img') }
+  });
+  const finalImage = document.createElement('img');
+  view.setProgress({
+    id: 'archive-05', status: 'ready', completed: 2, total: 5,
+    result: { id: 'archive-05', alt: 'final', image: finalImage }
+  });
+
+  const enqueues = harness.calls.filter((call) => Array.isArray(call) && call[0] === 'transition.enqueue');
+  assert.equal(enqueues.length, 1);
+  assert.equal(enqueues[0][1].dataset.loadingSlot, 'archive-05');
+  assert.strictEqual(enqueues[0][2], finalImage);
+  assert.deepEqual(
+    harness.calls.filter((call) => typeof call === 'string').slice(-2),
+    ['transition.reset', 'particles.clear']
+  );
+  assert.equal(document.getElementById('loadingCopy').textContent, '讯号接入中');
+});
+
+test('skip preserves the current ordinary poster until the final image is ready', () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const { view, harness } = createInjectedView(document, {
+    viewOptions: { motionProfile: 'full' }
+  });
+  const currentImage = document.createElement('img');
+  const currentSlot = document.querySelector('[data-loading-slot="archive-01"]');
+
+  view.setProgress({
+    id: 'archive-01', status: 'ready', completed: 1, total: 5,
+    result: { id: 'archive-01', alt: 'current', image: currentImage }
+  });
+  currentSlot.classList.add('is-active', 'is-stable');
+  document.getElementById('loadingSkip').click();
+
+  assert.deepEqual(
+    harness.calls.find((call) => Array.isArray(call) && call[0] === 'transition.reset.options'),
+    ['transition.reset.options', { preserveActive: true }]
+  );
+  assert.equal(currentSlot.classList.contains('is-active'), true);
+  assert.equal(
+    harness.calls.filter((call) => Array.isArray(call) && call[0] === 'transition.enqueue').length,
+    1,
+    'no final visual is admitted before its image exists'
+  );
+
+  const finalImage = document.createElement('img');
+  view.setProgress({
+    id: 'archive-05', status: 'ready', completed: 2, total: 5,
+    result: { id: 'archive-05', alt: 'final', image: finalImage }
+  });
+
+  const enqueues = harness.calls.filter(
+    (call) => Array.isArray(call) && call[0] === 'transition.enqueue'
+  );
+  assert.equal(enqueues.length, 2);
+  assert.equal(enqueues.at(-1)[1].dataset.loadingSlot, 'archive-05');
+});
+
+test('late skip clears stale work while preserving the active final poster and its prewarm', () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const { view, harness } = createInjectedView(document, {
+    viewOptions: { motionProfile: 'full' }
+  });
+  const finalImage = document.createElement('img');
+  finalImage.src = 'https://example.test/end.jpg';
+
+  view.setProgress({
+    id: 'archive-05', status: 'ready', completed: 5, total: 5,
+    result: { id: 'archive-05', alt: 'final', image: finalImage }
+  });
+  const finalSlot = document.querySelector('[data-loading-slot="archive-05"]');
+  const targetCover = document.getElementById('vinylCoverA');
+  finalSlot.classList.add('is-active', 'is-stable');
+  const resetsBeforeSkip = harness.calls.filter((call) => call === 'transition.reset').length;
+  const clearsBeforeSkip = harness.calls.filter((call) => call === 'particles.clear').length;
+  const enqueuesBeforeSkip = harness.calls.filter(
+    (call) => Array.isArray(call) && call[0] === 'transition.enqueue'
+  ).length;
+
+  document.getElementById('loadingSkip').click();
+  view.setProgress({
+    id: 'archive-04', status: 'ready', completed: 5, total: 5,
+    result: { id: 'archive-04', alt: 'stale', image: document.createElement('img') }
+  });
+
+  assert.equal(finalSlot.classList.contains('is-active'), true);
+  assert.equal(finalSlot.classList.contains('is-stable'), true);
+  assert.equal(
+    harness.calls.filter((call) => call === 'transition.reset').length,
+    resetsBeforeSkip + 1
+  );
+  assert.equal(
+    harness.calls.filter((call) => call === 'particles.clear').length,
+    clearsBeforeSkip + 1
+  );
+  assert.deepEqual(
+    harness.calls.find((call) => Array.isArray(call) && call[0] === 'transition.reset.options'),
+    ['transition.reset.options', { preserveActive: true }]
+  );
+  assert.equal(
+    harness.calls.filter((call) => Array.isArray(call) && call[0] === 'transition.enqueue').length,
+    enqueuesBeforeSkip
+  );
+  assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/end.jpg")');
+  assert.equal(targetCover.dataset.loadingPrewarm, 'true');
+});
+
+test('skip reuses a mounted final image when the final asset reports ready again', () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const { view, harness } = createInjectedView(document);
+  const firstFinalImage = document.createElement('img');
+
+  view.setProgress({
+    id: 'archive-05', status: 'ready', completed: 4, total: 5,
+    result: { id: 'archive-05', alt: 'final', image: firstFinalImage }
+  });
+  document.getElementById('loadingSkip').click();
+  const replacement = document.createElement('img');
+  view.setProgress({
+    id: 'archive-05', status: 'ready', completed: 5, total: 5,
+    result: { id: 'archive-05', alt: 'final', image: replacement }
+  });
+
+  const finalSlot = document.querySelector('[data-loading-slot="archive-05"]');
+  assert.strictEqual(finalSlot.querySelector('img'), firstFinalImage);
+  assert.equal(finalSlot.contains(replacement), false);
+  assert.equal(
+    harness.calls.filter((call) => Array.isArray(call) && call[0] === 'transition.enqueue').length,
+    1
+  );
+});
+
+test('late reduced-motion skip preserves and activates the prewarmed final cover', async () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const { view } = createInjectedView(document, {
+    viewOptions: { motionProfile: 'reduce' }
+  });
+  const finalImage = document.createElement('img');
+  finalImage.src = 'https://example.test/end.jpg';
+  const targetCover = document.getElementById('vinylCoverA');
+
+  view.setProgress({
+    id: 'archive-05', status: 'ready', completed: 5, total: 5,
+    result: { id: 'archive-05', alt: 'final', image: finalImage }
+  });
+  assert.equal(targetCover.dataset.loadingPrewarm, 'true');
+  assert.equal(targetCover.classList.contains('is-active'), false);
+
+  document.getElementById('loadingSkip').click();
+  assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/end.jpg")');
+  assert.equal(targetCover.dataset.loadingPrewarm, 'true');
+  assert.equal(targetCover.classList.contains('is-active'), true);
+
+  await view.playReadySequence('reduce');
+  const exiting = view.exit('reduce');
+  document.getElementById('loadingScreen').dispatchEvent(transitionEnd(dom.window, 'opacity'));
+  await exiting;
+
+  assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/end.jpg")');
+  assert.equal(targetCover.hasAttribute('data-loading-prewarm'), false);
+  assert.equal(targetCover.classList.contains('is-active'), true);
+});
+
+test('bootstrap skip abandons a blocked full load and requests only the final asset', async () => {
+  const dom = createGateFixture();
+  const document = dom.window.document;
+  const calls = [];
+  let requestSkip;
+
+  const ready = startCriticalAssetGate({
+    documentRef: document,
+    viewportWidth: 390,
+    motionProfile: 'reduce',
+    createView(_documentRef, options) {
+      requestSkip = options.onSkip;
+      return {
+        reset: () => calls.push('reset'),
+        setProgress: (event) => calls.push(['progress', event]),
+        showError: (error) => assert.fail(error),
+        playReadySequence: () => Promise.resolve(),
+        exit: () => Promise.resolve()
+      };
+    },
+    load: (manifest, options) => {
+      calls.push(['load', manifest.map(({ id }) => id), options]);
+      if (manifest.length > 1) return new Promise(() => {});
+      const result = { id: manifest[0].id };
+      options.onProgress({
+        id: result.id,
+        status: 'ready',
+        completed: 1,
+        total: 1,
+        result
+      });
+      return Promise.resolve([result]);
+    }
+  });
+
+  await nextTurn();
+  requestSkip();
+  const results = await ready;
+
+  const loadCalls = calls.filter(([name]) => name === 'load');
+  assert.equal(loadCalls.length, 2);
+  assert.equal(loadCalls[0][1].length, 10);
+  assert.equal(loadCalls[0][2].signal.aborted, true);
+  assert.deepEqual(loadCalls[1][1], ['archive-10']);
+  assert.deepEqual(results, [{ id: 'archive-10' }]);
+  const finalProgress = calls.find(
+    ([name, event]) => name === 'progress' && event.id === 'archive-10'
+  );
+  assert.equal(finalProgress[1].completed, 10);
+  assert.equal(finalProgress[1].total, 10);
+});
+
+test('ready sequence follows a skip revision instead of exiting on stale completion', async () => {
+  const dom = createFixture();
+  const resolvers = [];
+  const { view } = createInjectedView(dom.window.document, {
+    finish: () => new Promise((resolve) => resolvers.push(resolve))
+  });
+  let settled = false;
+  const ready = view.playReadySequence('full').then(() => { settled = true; });
+
+  await Promise.resolve();
+  assert.equal(resolvers.length, 1);
+  dom.window.document.getElementById('loadingSkip').click();
+  resolvers[0]();
+  await nextTurn();
+
+  assert.equal(settled, false);
+  assert.equal(resolvers.length, 2);
+  resolvers[1]();
+  await ready;
+
+  assert.equal(settled, true);
+  assert.equal(dom.window.document.getElementById('loadingScreen').dataset.state, 'ready');
 });
 
 test('showError exposes a retry that resets the view and invokes its callback once', () => {
@@ -441,6 +760,7 @@ test('showError exposes a retry that resets the view and invokes its callback on
   const { view, harness } = createInjectedView(dom.window.document);
   const root = dom.window.document.getElementById('loadingScreen');
   const retry = dom.window.document.getElementById('loadingRetry');
+  const skip = dom.window.document.getElementById('loadingSkip');
   let retryCalls = 0;
 
   view.showError(new CriticalAssetError([{ id: 'archive-01' }]), () => {
@@ -451,6 +771,7 @@ test('showError exposes a retry that resets the view and invokes its callback on
   assert.equal(root.dataset.errorKind, 'asset');
   assert.equal(root.querySelector('[data-loading-slot="archive-01"] figcaption').getAttribute('aria-hidden'), null);
   assert.equal(retry.hidden, false);
+  assert.equal(skip.hidden, true);
   assert.strictEqual(dom.window.document.activeElement, retry);
   assert.equal(dom.window.document.getElementById('loadingCopy').textContent, '影像读取失败：archive-01');
 
@@ -460,6 +781,8 @@ test('showError exposes a retry that resets the view and invokes its callback on
   assert.equal(retryCalls, 1);
   assert.equal(root.dataset.state, 'loading');
   assert.equal(retry.hidden, true);
+  assert.equal(skip.hidden, false);
+  assert.equal(skip.disabled, false);
   assert.deepEqual(
     harness.calls.filter((call) => typeof call === 'string').slice(0, 4),
     ['transition.freeze', 'particles.clear', 'transition.reset', 'particles.clear']
@@ -898,7 +1221,10 @@ test('bootstrap waits for visual finish before releasing the application and res
 
   await nextTurn();
   assert.equal(appRoot.hasAttribute('inert'), true);
-  assert.deepEqual(calls[0], ['createView', document, { motionProfile: 'compact' }]);
+  assert.equal(calls[0][0], 'createView');
+  assert.strictEqual(calls[0][1], document);
+  assert.equal(calls[0][2].motionProfile, 'compact');
+  assert.equal(typeof calls[0][2].onSkip, 'function');
   assert.deepEqual(calls.find(([name]) => name === 'load'), ['load', 2, 2]);
 
   finishVisual();
@@ -1027,15 +1353,15 @@ test('application markup starts as one inert root outside the loading screen', (
   }
 
   const slots = [...loadingScreen.querySelectorAll('figure.loading-frame[data-loading-slot]')];
-  assert.deepEqual(slots.map((slot) => slot.dataset.loadingSlot), [
-    'archive-01', 'archive-02', 'archive-03', 'archive-04', 'archive-05'
-  ]);
-  assert.deepEqual(slots.map((slot) => slot.textContent.trim()), ['AR-01', 'AR-02', 'AR-03', 'AR-04', 'AR-05']);
+  const expectedOrdinals = Array.from({ length: 10 }, (_, index) => String(index + 1).padStart(2, '0'));
+  assert.deepEqual(slots.map((slot) => slot.dataset.loadingSlot), expectedOrdinals.map((id) => `archive-${id}`));
+  assert.deepEqual(slots.map((slot) => slot.textContent.trim()), expectedOrdinals.map((id) => `AR-${id}`));
   assert.ok(slots.every((slot) => slot.querySelector('figcaption').getAttribute('aria-hidden') === 'true'));
   assert.doesNotMatch(loadingScreen.textContent, /LIGHT ARCHIVE|PROJECTION/);
   assert.equal(loadingScreen.querySelectorAll('canvas#loadingParticles').length, 1);
   assert.equal(loadingScreen.querySelectorAll('div#loadingLightSlit').length, 1);
-  assert.equal(loadingScreen.querySelectorAll('button').length, 1);
+  assert.equal(loadingScreen.querySelectorAll('button').length, 2);
+  assert.equal(loadingScreen.querySelector('#loadingSkip').textContent.trim(), '跳过');
   assert.equal(loadingScreen.querySelectorAll('img').length, 0);
   assert.equal(loadingScreen.querySelector('[src]'), null);
   assert.equal(document.querySelectorAll('#loadingProgress.sr-only').length, 1);
@@ -1484,12 +1810,48 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s var\(--loading-motion-ease\)/s);
   assert.match(
     loadingBlock,
+    /\.loading-copy\s*\{[^}]*animation:\s*copy-fade 1\.6s var\(--loading-motion-ease\) infinite/s
+  );
+  expectKeyframeStops(loadingBlock, 'copy-fade', {
+    '0%, 100%': { opacity: '0.55', transform: 'translateY(0)' },
+    '50%': { opacity: '1', transform: 'translateY(-2px)' }
+  });
+  assert.match(
+    loadingBlock,
     /\.loading-status\s*\{[^}]*transition:\s*opacity 180ms var\(--loading-motion-ease\)/s
   );
-  assert.match(
+  assert.doesNotMatch(
     loadingBlock,
     /\.loading-screen\.is-portal-active \.loading-status\s*\{[^}]*opacity:\s*0/s
   );
+  expectDeclarations(
+    extractCssBlock(loadingBlock, '.loading-screen.is-final-resolving .loading-status'),
+    {
+      animation: 'loading-status-final-fade var(--final-resolve-ms, 1100ms) var(--loading-motion-ease) both'
+    },
+    'final status crossfade'
+  );
+  expectKeyframeStops(loadingBlock, 'loading-status-final-fade', {
+    '0%, 6%': { opacity: '1' },
+    '18%, 100%': { opacity: '0' }
+  });
+  expectDeclarations(
+    extractCssBlock(
+      loadingBlock,
+      '.loading-screen[data-motion-profile="reduce"].is-final-resolving .loading-status'
+    ),
+    { opacity: '0', animation: 'none' },
+    'reduced-motion final status'
+  );
+  expectDeclarations(extractCssBlock(loadingBlock, '.loading-skip'), {
+    position: 'fixed',
+    bottom: 'max(18px, env(safe-area-inset-bottom))',
+    left: '50%',
+    'min-width': '88px',
+    'min-height': '44px',
+    'border-radius': '999px',
+    transform: 'translate3d(-50%, 0, 0)'
+  }, 'centered loading skip control');
   assert.deepEqual(loadingBlock.match(/transition:[^;]*linear;/g), [
     'transition: opacity 120ms linear;',
     'transition: opacity 120ms linear;'
@@ -1502,7 +1864,10 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     );
   }
   assert.doesNotMatch(loadingBlock, /letter-spacing:\s*-/);
-  assert.doesNotMatch(loadingBlock, /(?:url\(|background-image|backdrop-filter)/);
+  assert.doesNotMatch(loadingBlock, /(?:url\(|background-image)/);
+  const loadingSkip = extractCssBlock(loadingBlock, '.loading-skip');
+  assert.match(loadingSkip, /var\(--glass-fill\)/);
+  assert.doesNotMatch(loadingSkip, /backdrop-filter\s*:/, 'the small control must not allocate another live blur surface');
   assert.match(
     extractCssBlock(
       loadingBlock,
@@ -1532,7 +1897,7 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-image[\s\S]*120ms/s);
 });
 
-test('application startup assigns only the five critical images and leaves player artwork unset', async () => {
+test('application startup assigns only the ten critical images and leaves player artwork unset', async () => {
   const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, {
     pretendToBeVisual: true,
@@ -1595,9 +1960,9 @@ test('application startup assigns only the five critical images and leaves playe
     }
 
     assert.equal(document.getElementById('loadingScreen'), null);
-    assert.equal(srcAssignments.length, 5);
-    assert.equal(new Set(srcAssignments).size, 5);
-    assert.ok(srcAssignments.every((src) => src.includes('/cover/') && src.includes('x-oss-process=')));
+    assert.equal(srcAssignments.length, 10);
+    assert.equal(new Set(srcAssignments).size, 10);
+    assert.ok(srcAssignments.every((src) => src.includes('/covers/') && src.includes('x-oss-process=')));
     assert.equal(document.getElementById('vinylCoverA').style.backgroundImage, '');
     assert.equal(document.getElementById('vinylCoverB').style.backgroundImage, '');
     assert.equal(document.documentElement.style.getPropertyValue('--cover-art-url'), '');

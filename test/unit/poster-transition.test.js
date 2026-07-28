@@ -234,14 +234,71 @@ test('timing tables are deeply frozen and preserve fast portal travel with a rea
   }
 });
 
-test('poster transition removes legacy edge feathers and measures a horizontal portal', () => {
+test('poster transition removes legacy edge feathers and fixes horizontal portal geometry per run', () => {
   const source = readFileSync(new URL('../../src/ui/poster-transition.js', import.meta.url), 'utf8');
 
   assert.doesNotMatch(source, /poster-fade|sideFade|leftSoft|rightSoft/);
   assert.match(source, /const portalOrientation = 'horizontal'/);
-  assert.match(source, /const gateWidth = Math\.max\(1, Math\.min\(artWidth \* 1\.08, availableWidth\)\)/);
-  assert.match(source, /const gateHeight = Math\.max\(112, Math\.min\(168, gateWidth \/ 4\.4\)\)/);
+  assert.match(source, /let fixedPortalGeometry = null/);
+  assert.match(source, /if \(!fixedPortalGeometry\)/);
+  assert.match(source, /const width = Math\.max\(1, Math\.min\(artWidth \* 1\.08, availableWidth\)\)/);
+  assert.match(source, /const height = Math\.max\(112, Math\.min\(168, width \/ 4\.4\)\)/);
   assert.match(source, /const desiredGap = Math\.max\(20, Math\.min\(38, artHeight \* 0\.055\)\)/);
+});
+
+test('top and bottom portals keep one geometry across differently proportioned posters', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, images, root, slots } = makeFixture({ scheduler });
+  root.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    right: 600,
+    bottom: 400,
+    width: 600,
+    height: 400
+  });
+  const dimensions = [
+    [600, 300],
+    [300, 400],
+    [240, 520]
+  ];
+  dimensions.forEach(([width, height], index) => {
+    Object.defineProperties(images[index], {
+      naturalWidth: { configurable: true, value: width },
+      naturalHeight: { configurable: true, value: height }
+    });
+    controller.enqueue(slots[index]);
+  });
+  await flush();
+
+  const signatures = { top: new Set(), bottom: new Set() };
+  const portalGaps = { top: [], bottom: [] };
+  let guard = 0;
+  while (controller.getState().processing) {
+    assert.ok(guard < 64, 'portal sequence exceeded its scheduler bound');
+    const side = root.dataset.portalSide;
+    if (side === 'top' || side === 'bottom') {
+      const signature = [
+        '--gate-x', '--gate-y', '--gate-width', '--gate-height'
+      ].map((property) => root.style.getPropertyValue(property)).join('|');
+      if (signature.replaceAll('|', '')) signatures[side].add(signature);
+      const portalGap = Number.parseFloat(root.style.getPropertyValue('--portal-gap'));
+      if (Number.isFinite(portalGap)) portalGaps[side].push(portalGap);
+    }
+    assert.ok(scheduler.pending > 0);
+    scheduler.releaseNext();
+    await flush();
+    guard += 1;
+  }
+
+  assert.equal(signatures.top.size, 1);
+  assert.equal(signatures.bottom.size, 1);
+  assert.ok(portalGaps.top.length > 0 && portalGaps.bottom.length > 0);
+  assert.ok(portalGaps.top[0] >= 18 && portalGaps.bottom[0] >= 18, 'the lead poster keeps a visible gate gap');
+  assert.ok(
+    [...portalGaps.top, ...portalGaps.bottom].every((gap) => gap >= 0),
+    'per-artwork portal gaps are clamped when a later contained image reaches the fixed gate'
+  );
 });
 
 test('top portal leaves measured space above the artwork and forwards its actual travel distance', async () => {
@@ -1207,6 +1264,44 @@ test('freeze aborts queued work but keeps the current poster active and stable',
   assert.equal(slit.classList.contains('is-lit'), false);
   assert.equal(root.style.getPropertyValue('--slit-duration'), '');
   assert.equal(controller.enqueue(slots[2]), false);
+});
+
+test('reset can discard queued work while preserving the active poster for a new finish run', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, root, slots } = makeFixture({ scheduler });
+  controller.enqueue(slots[0]);
+  controller.enqueue(slots[1]);
+  controller.enqueue(slots[2]);
+  await flush();
+
+  let guard = 0;
+  while (!slots[0].classList.contains('is-active')) {
+    assert.ok(guard < 8);
+    assert.ok(scheduler.pending > 0);
+    scheduler.releaseNext();
+    await flush();
+    guard += 1;
+  }
+  const interruptedSignals = scheduler.signals;
+
+  controller.reset({ preserveActive: true });
+  await flush();
+
+  assert.equal(interruptedSignals.every((signal) => signal.aborted), true);
+  assert.deepEqual(controller.getState(), {
+    profile: 'full',
+    queued: 0,
+    activeId: 'archive-01',
+    processing: false,
+    sealed: false,
+    destroyed: false
+  });
+  assert.equal(root.querySelectorAll('.is-active').length, 1);
+  assert.equal(slots[0].classList.contains('is-active'), true);
+  assert.equal(slots[0].classList.contains('is-stable'), true);
+  assert.equal(slots[1].classList.contains('is-active'), false);
+  assert.equal(slots[2].classList.contains('is-active'), false);
+  assert.equal(controller.enqueue(slots[0]), false);
 });
 
 test('reduce profile uses direct fades without gather, scatter, or a lit slit', async () => {

@@ -438,15 +438,25 @@ test('animation cleanup uses a compatibility adapter and settles without finishe
 const makeTransitionFakes = ({
   playError = null,
   loadError = null,
+  moveError = null,
+  refreshError = null,
   blockMove = null,
   pendingPlayArm = null,
   pendingPlay = null,
+  pendingReset = null,
+  pendingRestore = null,
+  pendingOpen = null,
   pendingCoverReveal = null,
   pendingLyricHold = null,
   loadResult = undefined,
   playResult = undefined
 } = {}) => {
   const events = [];
+  const mechanics = {
+    arm: 'rest',
+    rate: 0,
+    spinning: false
+  };
   const normalizedTrack = {
     title: 'Normalized title',
     artist: 'Artist',
@@ -456,23 +466,46 @@ const makeTransitionFakes = ({
   };
   const turntable = {
     readState: () => ({ arm: -72, rate: 0.42 }),
-    setSpinning: (active) => events.push(['spin', active]),
+    setSpinning: (active) => {
+      mechanics.spinning = active;
+      events.push(['spin', active]);
+    },
     moveArmTo: async (target, options) => {
       events.push(['arm', target, options]);
+      if (moveError && target === 'rest') throw moveError;
       if (blockMove && target === 'rest') await blockMove(options.signal);
       if (pendingPlayArm && target === 'play') await pendingPlayArm.promise;
+      if (!options.signal?.aborted) mechanics.arm = target;
     },
-    rampRateTo: async (rate, options) => events.push(['rate', rate, options]),
-    resetAfterPlaybackError: async (options) => events.push(['reset', options]),
+    rampRateTo: async (rate, options) => {
+      events.push(['rate', rate, options]);
+      if (!options.signal?.aborted) mechanics.rate = rate;
+    },
+    resetAfterPlaybackError: async (options) => {
+      events.push(['reset', options]);
+      if (pendingReset) await pendingReset.promise;
+      mechanics.arm = 'rest';
+      mechanics.rate = 0;
+      mechanics.spinning = false;
+    },
     setDocumentVisible: () => {},
     dispose: () => {}
   };
   const overlays = {
     closeAll: async (options) => { events.push(['closeAll', options]); return { anyVisible: true }; },
-    open: async (kind, options) => events.push(['open', kind, options]),
+    open: async (kind, options) => {
+      events.push(['open', kind, options]);
+      if (pendingOpen) await pendingOpen.promise;
+    },
     close: async (kind, options) => events.push(['close', kind, options]),
-    restoreAfterTrackSwitch: async (state, options) => events.push(['restore', state, options]),
-    refresh: async (options) => events.push(['refresh', options]),
+    restoreAfterTrackSwitch: async (state, options) => {
+      events.push(['restore', state, options]);
+      if (pendingRestore) await pendingRestore.promise;
+    },
+    refresh: async (options) => {
+      events.push(['refresh', options]);
+      if (refreshError) throw refreshError;
+    },
     setDocumentVisible: () => {},
     dispose: () => {}
   };
@@ -507,6 +540,7 @@ const makeTransitionFakes = ({
   };
   return {
     events,
+    mechanics,
     normalizedTrack,
     turntable,
     overlays,
@@ -741,6 +775,206 @@ test('an interrupted pending play resets the turntable before its transition set
 
   await assert.rejects(draw, (error) => error === 'superseded');
   assert.equal(fakes.events.at(-1)[0], 'reset');
+  assert.equal(fakes.events.filter(([name]) => name === 'reset').length, 1);
+});
+
+test('an interrupted pending playlist play resets once with an immediate unsignaled rollback', async () => {
+  const pendingPlay = createDeferred();
+  const fakes = makeTransitionFakes({ pendingPlay });
+  const transitions = createAppTransitions(fakes);
+  const controller = new AbortController();
+  const switching = transitions.switchTrack({
+    signal: controller.signal,
+    targetIndex: 3,
+    profile: 'compact',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 },
+    showLyrics: true
+  });
+
+  while (!fakes.events.some(([name]) => name === 'play')) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  controller.abort('superseded');
+  pendingPlay.resolve(false);
+
+  await assert.rejects(switching, (error) => error === 'superseded');
+  const resets = fakes.events.filter(([name]) => name === 'reset');
+  assert.equal(resets.length, 1);
+  assert.deepEqual(resets[0][1], { duration: 0 });
+  assert.deepEqual(fakes.mechanics, {
+    arm: 'rest',
+    rate: 0,
+    spinning: false
+  });
+});
+
+test('hiding the document during a playlist switch restores the paused mechanics', async () => {
+  const switchStarted = createDeferred();
+  const fakes = makeTransitionFakes({
+    blockMove: (signal) => new Promise((resolve) => {
+      switchStarted.resolve();
+      signal.addEventListener('abort', resolve, { once: true });
+    })
+  });
+  const motion = createMotionController({
+    profile: 'full',
+    transitions: createAppTransitions(fakes)
+  });
+
+  const switching = motion.switchTrack(2, { showLyrics: true });
+  await switchStarted.promise;
+  motion.setDocumentVisible(false);
+
+  assert.deepEqual(await switching, { status: 'cancelled', name: 'switch-track' });
+  assert.equal(fakes.events.some(([name]) => name === 'select'), false);
+  assert.equal(fakes.events.some(([name]) => name === 'play'), false);
+  assert.equal(fakes.events.at(-1)[0], 'reset');
+  assert.equal(fakes.events.at(-1)[1].duration, 0);
+  assert.deepEqual(fakes.mechanics, {
+    arm: 'rest',
+    rate: 0,
+    spinning: false
+  });
+});
+
+test('changing motion profile waits for an interrupted playlist switch rollback', async () => {
+  const switchStarted = createDeferred();
+  const pendingReset = createDeferred();
+  const fakes = makeTransitionFakes({
+    pendingReset,
+    blockMove: (signal) => new Promise((resolve) => {
+      switchStarted.resolve();
+      signal.addEventListener('abort', resolve, { once: true });
+    })
+  });
+  const motion = createMotionController({
+    profile: 'full',
+    transitions: createAppTransitions(fakes)
+  });
+
+  const switching = motion.switchTrack(2, { showLyrics: true });
+  await switchStarted.promise;
+  const profileChange = motion.setProfile('reduce');
+  let profileChangeSettled = false;
+  void profileChange.then(() => { profileChangeSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(profileChangeSettled, false);
+  assert.equal(fakes.events.some(([name]) => name === 'select'), false);
+  assert.equal(fakes.events.some(([name]) => name === 'play'), false);
+  assert.deepEqual(fakes.events.filter(([name]) => name === 'reset')[0][1], { duration: 0 });
+
+  pendingReset.resolve();
+  assert.deepEqual(await switching, { status: 'cancelled', name: 'switch-track' });
+  await profileChange;
+  assert.equal(profileChangeSettled, true);
+  assert.deepEqual(fakes.mechanics, {
+    arm: 'rest',
+    rate: 0,
+    spinning: false
+  });
+});
+
+for (const [phase, options, expectedError] of [
+  ['bridge motion', { moveError: new Error('bridge failed') }, /bridge failed/],
+  ['overlay refresh', { refreshError: new Error('refresh failed') }, /refresh failed/]
+]) {
+  test(`a ${phase} failure restores mechanics before rejecting a track switch`, async () => {
+    const fakes = makeTransitionFakes(options);
+    const transitions = createAppTransitions(fakes);
+
+    await assert.rejects(transitions.switchTrack({
+      signal: new AbortController().signal,
+      targetIndex: 2,
+      profile: 'full',
+      tokens: { enter: 20, move: 40, settle: 60, itemStagger: 16 }
+    }), expectedError);
+
+    assert.equal(fakes.events.some(([name]) => name === 'pause'), true);
+    assert.equal(fakes.events.filter(([name]) => name === 'reset').length, 1);
+    assert.ok(
+      fakes.events.findIndex(([name]) => name === 'pause')
+        < fakes.events.findIndex(([name]) => name === 'reset')
+    );
+    assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
+  });
+}
+
+test('a superseding command waits for an interrupted track switch rollback', async () => {
+  const switchStarted = createDeferred();
+  const pendingReset = createDeferred();
+  const fakes = makeTransitionFakes({
+    pendingReset,
+    blockMove: (signal) => new Promise((resolve) => {
+      switchStarted.resolve();
+      signal.addEventListener('abort', resolve, { once: true });
+    })
+  });
+  const motion = createMotionController({
+    profile: 'full',
+    transitions: createAppTransitions(fakes)
+  });
+
+  const switching = motion.switchTrack(2);
+  await switchStarted.promise;
+  const opening = motion.openOverlay('lyrics');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(fakes.events.some(([name]) => name === 'reset'), true);
+  assert.equal(fakes.events.some(([name]) => name === 'open'), false);
+
+  pendingReset.resolve();
+  assert.deepEqual(await switching, { status: 'cancelled', name: 'switch-track' });
+  assert.deepEqual(await opening, { status: 'completed', name: 'open:lyrics' });
+  assert.ok(
+    fakes.events.findIndex(([name]) => name === 'reset')
+      < fakes.events.findIndex(([name]) => name === 'open')
+  );
+});
+
+test('an interruption after playback starts does not roll the turntable back to rest', async () => {
+  const pendingRestore = createDeferred();
+  const fakes = makeTransitionFakes({ pendingRestore });
+  const motion = createMotionController({
+    profile: 'full',
+    transitions: createAppTransitions(fakes)
+  });
+
+  const switching = motion.switchTrack(2);
+  while (!fakes.events.some(([name]) => name === 'restore')) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  motion.setDocumentVisible(false);
+  pendingRestore.resolve();
+
+  assert.deepEqual(await switching, { status: 'cancelled', name: 'switch-track' });
+  assert.equal(fakes.events.some(([name]) => name === 'play'), true);
+  assert.equal(fakes.events.some(([name]) => name === 'reset'), false);
+});
+
+test('hiding while lyrics open after playback keeps the new track mechanics running', async () => {
+  const pendingOpen = createDeferred();
+  const fakes = makeTransitionFakes({ pendingOpen });
+  const motion = createMotionController({
+    profile: 'full',
+    transitions: createAppTransitions(fakes)
+  });
+
+  const switching = motion.switchTrack(2, { showLyrics: true });
+  while (!fakes.events.some(([name]) => name === 'open')) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  motion.setDocumentVisible(false);
+  pendingOpen.resolve();
+
+  assert.deepEqual(await switching, { status: 'cancelled', name: 'switch-track' });
+  assert.equal(fakes.events.filter(([name]) => name === 'play').length, 1);
+  assert.equal(fakes.events.some(([name]) => name === 'reset'), false);
+  assert.deepEqual(fakes.mechanics, {
+    arm: 'play',
+    rate: 0.68,
+    spinning: true
+  });
 });
 
 test('a track switch snapshots its overlay before pausing and restores it after playback', async () => {
@@ -756,8 +990,20 @@ test('a track switch snapshots its overlay before pausing and restores it after 
 
   assert.deepEqual(
     fakes.events.map(([name]) => name),
-    ['closeAll', 'pause', 'select', 'load', 'refresh', 'play', 'restore']
+    [
+      'closeAll', 'pause', 'spin', 'arm', 'rate', 'select', 'load', 'refresh',
+      'arm', 'rate', 'play', 'restore'
+    ]
   );
+  assert.deepEqual(
+    fakes.events.filter(([name]) => name === 'arm').map(([, target]) => target),
+    ['rest', 'play']
+  );
+  assert.deepEqual(
+    fakes.events.filter(([name]) => name === 'rate').map(([, rate]) => rate),
+    [1.85, 0.68]
+  );
+  assert.equal(fakes.events.find(([name]) => name === 'spin')[1], true);
 });
 
 test('a playlist-directed track switch replaces the playlist with lyrics after playback', async () => {
@@ -774,11 +1020,38 @@ test('a playlist-directed track switch replaces the playlist with lyrics after p
 
   assert.deepEqual(
     fakes.events.map(([name]) => name),
-    ['closeAll', 'pause', 'select', 'load', 'play', 'open']
+    [
+      'closeAll', 'pause', 'spin', 'arm', 'rate', 'select', 'load',
+      'arm', 'rate', 'play', 'open'
+    ]
   );
   assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['open', 'lyrics']);
   assert.equal(fakes.events.some(([name]) => name === 'refresh'), false);
   assert.equal(fakes.events.some(([name]) => name === 'restore'), false);
+});
+
+test('a headless track switch synchronizes the playing mechanics without transition delays', async () => {
+  const fakes = makeTransitionFakes();
+  const transitions = createAppTransitions(fakes);
+
+  await transitions.switchTrack({
+    signal: new AbortController().signal,
+    targetIndex: 2,
+    profile: 'full',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 16 },
+    headless: true
+  });
+
+  assert.deepEqual(
+    fakes.events.map(([name]) => name),
+    ['pause', 'select', 'load', 'spin', 'arm', 'rate', 'play']
+  );
+  const arm = fakes.events.find(([name]) => name === 'arm');
+  const rate = fakes.events.find(([name]) => name === 'rate');
+  assert.deepEqual(arm.slice(0, 2), ['arm', 'play']);
+  assert.equal(arm[2].duration, 0);
+  assert.equal(rate[1], 0.68);
+  assert.equal(rate[2].duration, 0);
 });
 
 test('the composition root routes player commands through exclusive motion ownership', () => {

@@ -152,6 +152,7 @@ const waitForApp = async (page) => {
   await installDeterministicCovers(page);
   await installDeterministicMedia(page);
   await page.goto('./');
+  await page.locator('#loadingSkip').click();
   await expect(page.locator('#loadingScreen')).toHaveCount(0, { timeout: 20_000 });
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
 };
@@ -163,6 +164,7 @@ const waitForAppWithMediaFailure = async (page) => {
     return route.fallback();
   });
   await page.goto('./');
+  await page.locator('#loadingSkip').click();
   await expect(page.locator('#loadingScreen')).toHaveCount(0, { timeout: 20_000 });
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
 };
@@ -183,6 +185,19 @@ const drawAndCloseLyrics = async (page) => {
   await expect.poll(() => page.locator('#dynamicIsland').evaluate((island) => (
     island.classList.contains('is-opening') || island.classList.contains('is-collapsing')
   ))).toBe(false);
+  await page.evaluate(async () => {
+    const controls = [
+      document.querySelector('#playerPill'),
+      document.querySelector('#playlistToggleBtn'),
+      document.querySelector('#lyricToggleBtn')
+    ];
+    const finiteAnimations = controls.flatMap((control) => (
+      control.getAnimations().filter((animation) => (
+        Number.isFinite(Number(animation.effect?.getTiming().iterations))
+      ))
+    ));
+    await Promise.allSettled(finiteAnimations.map((animation) => animation.finished));
+  });
 };
 
 const readTurntableState = (page) => page.evaluate(() => {
@@ -236,6 +251,42 @@ const expectCompleteRestState = async (page) => {
   expect(state.sheenAnimations).toEqual([{ playState: 'paused', playbackRate: 0, duration: 7_000 }]);
   expect(state.armAngle).toBeCloseTo(-96, 1);
 };
+
+const setDocumentVisibility = (page, visible) => page.evaluate((isVisible) => {
+  Object.defineProperties(document, {
+    hidden: {
+      configurable: true,
+      get: () => !isVisible
+    },
+    visibilityState: {
+      configurable: true,
+      get: () => isVisible ? 'visible' : 'hidden'
+    }
+  });
+  document.dispatchEvent(new Event('visibilitychange'));
+}, visible);
+
+const stallPlaybackCoverPreloads = (page) => page.evaluate(() => {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+  if (!descriptor?.get || !descriptor?.set) {
+    throw new Error('HTMLImageElement.src is not interceptable');
+  }
+
+  window.__stalledPlaybackCoverUrls = [];
+  Object.defineProperty(HTMLImageElement.prototype, 'src', {
+    configurable: descriptor.configurable,
+    enumerable: descriptor.enumerable,
+    get: descriptor.get,
+    set(value) {
+      const source = String(value || '');
+      if (!this.isConnected && /^https?:/i.test(source)) {
+        window.__stalledPlaybackCoverUrls.push(source);
+        return;
+      }
+      descriptor.set.call(this, value);
+    }
+  });
+});
 
 const hitTestControlCenter = (page, selector) => page.locator(selector).evaluate((control) => {
   const rect = control.getBoundingClientRect();
@@ -573,6 +624,85 @@ test('媚人 publishes its independent release cover and metadata', async ({ pag
   expect(artworkState.coverArtUrl).toContain('4896016816485.jpg');
   expect(artworkState.activeCoverCount).toBe(1);
   expect(artworkState.inlineCovers.some((value) => value.includes('4896016816485.jpg'))).toBe(true);
+});
+
+test('playlist selection restarts the record and tonearm after a full pause', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile-reduce');
+  await waitForApp(page);
+  await drawAndCloseLyrics(page);
+
+  await page.locator('#playerToggleBtn').click();
+  await expectCompleteRestState(page);
+  await stallPlaybackCoverPreloads(page);
+
+  await page.locator('#playlistToggleBtn').click();
+  await expect(page.locator('#playlistArea')).toHaveClass(/is-visible/);
+  await page.locator('.playlist-item:not(.is-current)').first().click();
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+  await expect(page.locator('#playerToggleBtn')).toHaveClass(/is-playing/);
+  await expect.poll(() => page.evaluate(() => window.__stalledPlaybackCoverUrls.length))
+    .toBeGreaterThan(0);
+
+  await expect.poll(async () => {
+    const state = await readTurntableState(page);
+    return {
+      turntablePlaying: state.turntablePlaying,
+      armAtPlay: Math.abs(state.armAngle + 34) <= 0.15,
+      vinylRunning: state.vinylAnimations.length === 1
+        && state.vinylAnimations[0].playState === 'running'
+        && state.vinylAnimations[0].playbackRate > 0,
+      sheenRunning: state.sheenAnimations.length === 1
+        && state.sheenAnimations[0].playState === 'running'
+        && state.sheenAnimations[0].playbackRate > 0
+    };
+  }, { timeout: 12_000 }).toEqual({
+    turntablePlaying: true,
+    armAtPlay: true,
+    vinylRunning: true,
+    sheenRunning: true
+  });
+});
+
+test('hiding during a playlist switch cannot strand paused playback in a spinning state', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile-reduce');
+  await waitForApp(page);
+  await drawAndCloseLyrics(page);
+
+  await page.locator('#playerToggleBtn').click();
+  await expectCompleteRestState(page);
+  await stallPlaybackCoverPreloads(page);
+
+  await page.locator('#playlistToggleBtn').click();
+  await expect(page.locator('#playlistArea')).toHaveClass(/is-visible/);
+  await page.locator('.playlist-item:not(.is-current)').first().click();
+
+  await expect.poll(async () => {
+    const state = await readTurntableState(page);
+    return {
+      audioPaused: await page.evaluate(() => window.__testAudio?.paused),
+      playerPlaying: state.playerPlaying,
+      turntablePlaying: state.turntablePlaying,
+      bridgeRateStarted: state.vinylAnimations[0]?.playbackRate > 0
+    };
+  }, { timeout: 8_000 }).toEqual({
+    audioPaused: true,
+    playerPlaying: false,
+    turntablePlaying: true,
+    bridgeRateStarted: true
+  });
+
+  await expect.poll(
+    () => page.evaluate(() => window.__stalledPlaybackCoverUrls.length),
+    { timeout: 8_000 }
+  ).toBeGreaterThan(0);
+
+  await setDocumentVisibility(page, false);
+  await expectCompleteRestState(page);
+  await setDocumentVisibility(page, true);
+
+  await expectCompleteRestState(page);
+  await expect(page.locator('body')).not.toHaveClass(/is-track-transitioning/);
+  expect(await page.evaluate(() => window.__testAudio?.paused)).toBe(true);
 });
 
 for (const viewport of VIEWPORTS) {

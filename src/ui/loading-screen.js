@@ -17,6 +17,7 @@ const VISUAL_SLOT_CLASSES = Object.freeze([
   'is-exiting-to-portal',
   'is-stable'
 ]);
+const LOADING_COPY = '讯号接入中';
 
 export class VisualTransitionError extends Error {
   constructor(cause) {
@@ -149,12 +150,14 @@ export function createLoadingScreen(documentRef = document, {
   particleFactory = createLightParticleField,
   transitionFactory = createPosterTransition,
   setTimer = setTimeout,
-  clearTimer = clearTimeout
+  clearTimer = clearTimeout,
+  onSkip = () => {}
 } = {}) {
   const root = documentRef.querySelector('#loadingScreen');
   const progress = documentRef.querySelector('#loadingProgress');
   const copy = documentRef.querySelector('#loadingCopy');
   const retry = documentRef.querySelector('#loadingRetry');
+  const skip = documentRef.querySelector('#loadingSkip');
   const canvas = documentRef.querySelector('#loadingParticles');
   const slit = documentRef.querySelector('#loadingLightSlit');
   const requiredNodes = {
@@ -162,6 +165,7 @@ export function createLoadingScreen(documentRef = document, {
     loadingProgress: progress,
     loadingCopy: copy,
     loadingRetry: retry,
+    loadingSkip: skip,
     loadingParticles: canvas,
     loadingLightSlit: slit
   };
@@ -172,9 +176,11 @@ export function createLoadingScreen(documentRef = document, {
     throw new TypeError(`Loading screen is missing required nodes: ${missingNodes.join(', ')}`);
   }
   const slotNodes = [...root.querySelectorAll('[data-loading-slot]')];
-  if (slotNodes.length !== 5) {
-    throw new TypeError(`Loading screen requires exactly 5 loading slots; found ${slotNodes.length}`);
+  if (slotNodes.length === 0) {
+    throw new TypeError('Loading screen requires at least one loading slot');
   }
+  const totalSlots = slotNodes.length;
+  const finalSlot = slotNodes.at(-1);
   const slots = new Map(
     slotNodes
       .map((slot) => [slot.dataset.loadingSlot, slot])
@@ -260,8 +266,19 @@ export function createLoadingScreen(documentRef = document, {
     });
   };
 
+  const prewarmTargetCover = (source, { activate = false } = {}) => {
+    const targetCover = documentRef.querySelector('#vinylCoverA');
+    const artworkSource = source?.currentSrc || source?.src;
+    if (!targetCover || !artworkSource) return;
+    targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
+    targetCover.dataset.loadingPrewarm = 'true';
+    if (activate) targetCover.classList.add('is-active');
+  };
+
   const prepareFinalHandoff = (profile, source) => {
     clearFinalHandoff();
+    skip.disabled = true;
+    skip.hidden = true;
     if (profile === 'reduce' || !source) return;
 
     const sourceFrame = source.closest?.('.loading-frame') ?? source;
@@ -367,11 +384,20 @@ export function createLoadingScreen(documentRef = document, {
   let controllersDestroyed = false;
   let destroyed = false;
   let currentMotionProfile = motionProfile;
+  let transitionRevision = 0;
+  let skipRequested = false;
+  let nextVisualSlotIndex = 0;
+  const admittedSlots = new Set();
 
   const applyMotionProfile = (nextProfile) => {
     transition.setProfile(nextProfile);
     currentMotionProfile = nextProfile;
-    if (nextProfile === 'reduce') clearFinalHandoff();
+    if (nextProfile === 'reduce') {
+      clearFinalHandoff();
+      if (skipRequested) {
+        prewarmTargetCover(finalSlot.querySelector('img'), { activate: true });
+      }
+    }
   };
 
   const cancelExit = ({ clearFallback = false } = {}) => {
@@ -421,6 +447,16 @@ export function createLoadingScreen(documentRef = document, {
   const mountImage = (result) => {
     const slot = slots.get(result.id);
     if (!slot) return null;
+    const existingImage = slot.querySelector('img');
+    if (skipRequested && slot !== finalSlot) return slot;
+    if (existingImage && (admittedSlots.has(slot) || skipRequested)) {
+      if (slot === finalSlot) {
+        prewarmTargetCover(existingImage, {
+          activate: skipRequested && currentMotionProfile === 'reduce'
+        });
+      }
+      return slot;
+    }
     slot.querySelector('img')?.remove();
     let artworkViewport = slot.querySelector('.loading-artwork-viewport');
     if (!artworkViewport) {
@@ -434,31 +470,83 @@ export function createLoadingScreen(documentRef = document, {
     result.image.dataset.assetId = result.id;
     result.image.setAttribute('aria-hidden', 'true');
     artworkViewport.replaceChildren(result.image);
-    if (slot.dataset.loadingSlot === 'archive-05') {
-      const targetCover = documentRef.querySelector('#vinylCoverA');
-      const artworkSource = result.image.currentSrc || result.image.src;
-      if (targetCover && artworkSource) {
-        targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
-        targetCover.dataset.loadingPrewarm = 'true';
-      }
+    if (slot === finalSlot) {
+      prewarmTargetCover(result.image, {
+        activate: skipRequested && currentMotionProfile === 'reduce'
+      });
     }
+    return slot;
+  };
+
+  const enqueueVisual = (slot) => {
+    if (!slot || admittedSlots.has(slot)) return;
+    admittedSlots.add(slot);
     try {
       transition.enqueue(slot);
     } catch (error) {
       visualQueueError ||= error;
     }
-    return slot;
   };
+
+  const enqueueReadyVisuals = () => {
+    if (skipRequested) {
+      if (finalSlot.querySelector('img')) enqueueVisual(finalSlot);
+      return;
+    }
+
+    while (nextVisualSlotIndex < slotNodes.length) {
+      const slot = slotNodes[nextVisualSlotIndex];
+      if (slot.dataset.status !== 'ready' || !slot.querySelector('img')) return;
+      enqueueVisual(slot);
+      nextVisualSlotIndex += 1;
+    }
+  };
+
+  const requestSkip = () => {
+    if (destroyed || skipRequested || root.dataset.state === 'error') return;
+    const finalImage = finalSlot.querySelector('img');
+    const activeId = transition.getState?.().activeId;
+    const activeSlot = slots.get(activeId)
+      ?? root.querySelector('.loading-frame.is-active, .loading-frame.is-outgoing');
+    const preserveCurrent = Boolean(activeSlot);
+    const finalIsCurrent = activeSlot === finalSlot;
+    skipRequested = true;
+    transitionRevision += 1;
+    root.dataset.state = 'skipping';
+    root.dataset.skipRequested = 'true';
+    copy.textContent = LOADING_COPY;
+    skip.disabled = true;
+    skip.hidden = true;
+    cancelExit({ clearFallback: true });
+    if (!finalIsCurrent) clearFinalHandoff();
+    nextVisualSlotIndex = slotNodes.length;
+    admittedSlots.clear();
+    transition.reset({ preserveActive: preserveCurrent });
+    particleField.clear();
+    if (activeSlot) admittedSlots.add(activeSlot);
+    onSkip();
+    if (finalImage) {
+      prewarmTargetCover(finalImage, { activate: currentMotionProfile === 'reduce' });
+      if (!finalIsCurrent) enqueueReadyVisuals();
+    }
+  };
+
+  skip.onclick = requestSkip;
 
   const view = {
     reset() {
       if (destroyed) return;
+      transitionRevision += 1;
+      skipRequested = false;
+      nextVisualSlotIndex = 0;
+      admittedSlots.clear();
       cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       transition.reset();
       particleField.clear();
       visualQueueError = null;
       root.dataset.state = 'loading';
+      delete root.dataset.skipRequested;
       delete root.dataset.errorKind;
       delete root.dataset.transitionSettled;
       delete root.dataset.finalSettled;
@@ -468,8 +556,11 @@ export function createLoadingScreen(documentRef = document, {
       root.style.setProperty('--loading-progress', '0');
       retry.hidden = true;
       retry.onclick = null;
-      copy.textContent = '影像读取中';
-      progress.textContent = '00 / 05';
+      skip.hidden = false;
+      skip.disabled = false;
+      skip.onclick = requestSkip;
+      copy.textContent = LOADING_COPY;
+      progress.textContent = `00 / ${twoDigits(totalSlots)}`;
       for (const slot of slots.values()) {
         delete slot.dataset.status;
         delete slot.dataset.transitionOrder;
@@ -489,7 +580,11 @@ export function createLoadingScreen(documentRef = document, {
     setProgress({ id, status, completed, total, result }) {
       if (destroyed) return;
       progress.textContent = `${twoDigits(completed)} / ${twoDigits(total)}`;
-      const progressValue = Math.min(5, Math.max(0, Math.trunc(Number(completed) || 0)));
+      const progressTotal = Math.max(totalSlots, Math.trunc(Number(total) || 0));
+      const progressValue = Math.min(
+        progressTotal,
+        Math.max(0, Math.trunc(Number(completed) || 0))
+      );
       root.style.setProperty('--loading-progress', String(progressValue));
       const slot = slots.get(id);
       if (slot) {
@@ -499,8 +594,11 @@ export function createLoadingScreen(documentRef = document, {
         if (status === 'failed') slot.querySelector('figcaption')?.removeAttribute('aria-hidden');
         else slot.querySelector('figcaption')?.setAttribute('aria-hidden', 'true');
       }
-      if (status === 'ready' && result) mountImage(result);
-      if (status === 'ready') copy.textContent = `已归档 ${completed} / ${total}`;
+      if (status === 'ready' && result) {
+        mountImage(result);
+        enqueueReadyVisuals();
+      }
+      if (status === 'ready') copy.textContent = LOADING_COPY;
     },
     showError(error, onRetry) {
       if (destroyed) return;
@@ -509,6 +607,8 @@ export function createLoadingScreen(documentRef = document, {
       transition.freeze();
       particleField.clear();
       root.dataset.state = 'error';
+      skip.disabled = true;
+      skip.hidden = true;
       clearFinalHandoff();
       const isVisualError = error instanceof VisualTransitionError;
       root.dataset.errorKind = isVisualError ? 'visual' : 'asset';
@@ -544,11 +644,17 @@ export function createLoadingScreen(documentRef = document, {
     async playReadySequence(profile) {
       if (destroyed) return;
       root.dataset.state = 'ready';
-      copy.textContent = '档案接入完成';
+      copy.textContent = LOADING_COPY;
       try {
         applyMotionProfile(profile ?? currentMotionProfile);
-        await transition.finish();
+        let completedRevision;
+        do {
+          completedRevision = transitionRevision;
+          await transition.finish();
+        } while (!destroyed && completedRevision !== transitionRevision);
         if (destroyed) return;
+        root.dataset.state = 'ready';
+        copy.textContent = LOADING_COPY;
         if (visualQueueError) throw visualQueueError;
       } catch (error) {
         if (destroyed) return;
@@ -562,6 +668,8 @@ export function createLoadingScreen(documentRef = document, {
     },
     async exit(profile = currentMotionProfile) {
       if (destroyed) return;
+      skip.disabled = true;
+      skip.hidden = true;
       cancelExit();
       const exitToken = exitGeneration;
       const controller = new AbortController();
@@ -612,6 +720,7 @@ export function createLoadingScreen(documentRef = document, {
       if (destroyed) return;
       destroyed = true;
       retry.onclick = null;
+      skip.onclick = null;
       cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       clearFinalHandoff();

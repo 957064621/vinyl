@@ -51,14 +51,14 @@ const metadataEnv = (extra = {}) => ({
   OSS_REGION: 'oss-cn-hangzhou',
   OSS_ACCESS_KEY_ID: 'KEY_ID',
   OSS_ACCESS_KEY_SECRET: 'KEY_SECRET',
-  OSS_LOADING_BUCKET: 'yuko-portfolio',
+  OSS_LOADING_BUCKET: 'yuko-vinyl',
   OSS_AUDIO_BUCKET: 'yuko-vinyl',
   ...extra
 });
 const smallMetadataObjects = () => buildMetadataObjects({
   criticalManifest: [{
     id: 'archive-01',
-    source: 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg'
+    source: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/1.jpg'
   }],
   tracks: [{
     title: 'Fixture',
@@ -285,8 +285,8 @@ test('metadata dry-run lists every unique role, key, and intended header without
   });
 
   assert.equal(result.mode, 'dry-run');
-  assert.equal(result.count, 136);
-  assert.equal(result.objects.length, 136);
+  assert.equal(result.count, 141);
+  assert.equal(result.objects.length, 141);
   assert.deepEqual(new Set(result.objects.map(({ bucketRole }) => bucketRole)), new Set(['loading', 'audio']));
   assert.equal(result.objects.every(({ key }) => typeof key === 'string' && key.length > 0), true);
   assert.equal(result.objects.every(({ headers }) => headers['Content-Disposition'] === 'inline'), true);
@@ -298,7 +298,7 @@ test('metadata dry-run lists every unique role, key, and intended header without
 
 test('metadata object derivation rejects role origin mismatches and duplicate bucket keys', () => {
   assert.throws(() => buildMetadataObjects({
-    criticalManifest: [{ id: 'bad', source: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg' }],
+    criticalManifest: [{ id: 'bad', source: 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg' }],
     tracks: []
   }), /loading.*origin/i);
   assert.throws(() => buildMetadataObjects({
@@ -307,8 +307,8 @@ test('metadata object derivation rejects role origin mismatches and duplicate bu
   }), /audio.*origin/i);
   assert.throws(() => buildMetadataObjects({
     criticalManifest: [
-      { id: 'one', source: 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg' },
-      { id: 'two', source: 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg' }
+      { id: 'one', source: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/1.jpg' },
+      { id: 'two', source: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/1.jpg' }
     ],
     tracks: []
   }), /unique.*key/i);
@@ -329,7 +329,7 @@ test('metadata main revalidates injected object ownership before dry-run or appl
 test('metadata apply validates bucket ownership and normalizes only the Hangzhou region', async () => {
   for (const env of [
     metadataEnv({ OSS_REGION: 'oss-cn-beijing' }),
-    metadataEnv({ OSS_LOADING_BUCKET: 'yuko-vinyl' }),
+    metadataEnv({ OSS_LOADING_BUCKET: 'yuko-portfolio' }),
     metadataEnv({ OSS_AUDIO_BUCKET: 'other' })
   ]) {
     await assert.rejects(() => applyMetadata({
@@ -391,7 +391,7 @@ test('metadata apply preserves metadata, ACL, system fields, and ETag in same-ke
     assert.equal(copy.options.headers['x-oss-metadata-directive'], 'REPLACE');
     assert.equal(copy.options.headers['Content-Disposition'], 'inline');
   }
-  assert.deepEqual([...clients.keys()].sort(), ['yuko-portfolio', 'yuko-vinyl']);
+  assert.deepEqual([...clients.keys()], ['yuko-vinyl']);
 });
 
 test('metadata apply continues independent objects and reports ordered aggregate outcomes', async () => {
@@ -401,8 +401,8 @@ test('metadata apply continues independent objects and reports ordered aggregate
     env: metadataEnv(),
     objectsInput: smallMetadataObjects(),
     clientFactory: async ({ bucket }) => ({
-      head: async () => {
-        if (bucket === 'yuko-portfolio') throw new Error('fixture HEAD failure');
+      head: async (key) => {
+        if (key.startsWith('covers/')) throw new Error('fixture HEAD failure');
         return { meta: null, res: { headers: { etag: '"audio-etag"' } } };
       },
       getACL: async () => ({ acl: 'private' }),
@@ -467,10 +467,14 @@ test('media response validation parses exact disposition, cache, type, and range
 test('media URL validation enforces each configured OSS role', () => {
   assert.doesNotThrow(() => validateMediaUrl(
     'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/releases/v2026-07/001.jpg',
-    'versioned-cover'
+    'release-cover'
   ));
   assert.doesNotThrow(() => validateMediaUrl(
-    'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg',
+    'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/end.jpg',
+    'release-cover'
+  ));
+  assert.doesNotThrow(() => validateMediaUrl(
+    'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/1.jpg',
     'critical'
   ));
   assert.doesNotThrow(() => validateMediaUrl(
@@ -479,8 +483,12 @@ test('media URL validation enforces each configured OSS role', () => {
   ));
   assert.throws(() => validateMediaUrl(
     'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg',
-    'versioned-cover'
+    'release-cover'
   ), /origin/i);
+  assert.throws(() => validateMediaUrl(
+    'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/1.jpg',
+    'release-cover'
+  ), /release cover/i);
   assert.throws(() => validateMediaUrl('https://example.com/a.mp3', 'audio'), /origin/i);
 });
 
@@ -491,8 +499,8 @@ const verifierFixtures = () => ({
   }],
   criticalManifest: [{
     id: 'archive-01',
-    source: 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg',
-    mobile: 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com/cover/1.jpg?x-oss-process=image/resize,w_480/format,webp'
+    source: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/1.jpg',
+    mobile: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/1.jpg?x-oss-process=image/resize,w_480/format,webp'
   }],
   tracks: [{
     title: 'Audio',

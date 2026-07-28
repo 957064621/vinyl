@@ -9,11 +9,13 @@ import {
 } from './mirror-covers.mjs';
 
 const ROLE_ORIGINS = Object.freeze({
-  'versioned-cover': 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com',
-  critical: 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com',
+  'release-cover': 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com',
+  critical: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com',
   audio: 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com'
 });
 const CRITICAL_BUDGET_BYTES = 1.2 * 1024 * 1024;
+const VERSIONED_RELEASE_COVER = /^\/covers\/releases\/v2026-07\/\d{3}\.jpg$/;
+const SHARED_RELEASE_COVER = '/covers/end.jpg';
 
 const normalizedType = (value) => String(value || '').split(';', 1)[0].trim().toLowerCase();
 
@@ -92,11 +94,15 @@ export function validateMediaUrl(value, role) {
   if (url.protocol !== 'https:' || url.origin !== expectedOrigin) {
     throw new Error(`${role} media origin must be ${expectedOrigin}`);
   }
-  if (role === 'versioned-cover' && !/^\/covers\/releases\/v2026-07\/\d{3}\.jpg$/.test(url.pathname)) {
-    throw new Error('Versioned cover URL must use the v2026-07 ordinal path');
+  if (
+    role === 'release-cover'
+    && !VERSIONED_RELEASE_COVER.test(url.pathname)
+    && url.pathname !== SHARED_RELEASE_COVER
+  ) {
+    throw new Error('Release cover URL must use the v2026-07 ordinal path or covers/end.jpg');
   }
-  if (role === 'critical' && !url.pathname.startsWith('/cover/')) {
-    throw new Error('Critical image URL must use the cover/ prefix');
+  if (role === 'critical' && !url.pathname.startsWith('/covers/')) {
+    throw new Error('Critical image URL must use the covers/ prefix');
   }
   if (role === 'audio' && !url.pathname.startsWith('/musics/')) {
     throw new Error('Audio URL must use the musics/ prefix');
@@ -255,17 +261,19 @@ export async function verifyAllMedia({
 
   for (const release of releasesInput) {
     addTask('image', release.title, async () => {
+      const releaseUrl = validateMediaUrl(release.coverOssUrl, 'release-cover');
+      const immutable = VERSIONED_RELEASE_COVER.test(releaseUrl.pathname);
       const head = await fetchChecked({
         fetchImpl,
         url: release.coverOssUrl,
-        role: 'versioned-cover',
+        role: 'release-cover',
         options: { method: 'HEAD' },
         globalSignal,
         requestTimeoutMs
       });
       let length;
       try {
-        validateMediaResponse({ kind: 'image', status: head.status, headers: head.headers, immutable: true });
+        validateMediaResponse({ kind: 'image', status: head.status, headers: head.headers, immutable });
         length = readRequiredContentLength(head.headers);
       } finally {
         await cancelResponseBody(head);
@@ -274,12 +282,12 @@ export async function verifyAllMedia({
       const signature = await fetchChecked({
         fetchImpl,
         url: release.coverOssUrl,
-        role: 'versioned-cover',
+        role: 'release-cover',
         options: { headers: { Range: 'bytes=0-15' } },
         globalSignal,
         requestTimeoutMs
       });
-      await validateImageGet({ response: signature, role: 'versioned-cover', immutable: true, maxBytes: length });
+      await validateImageGet({ response: signature, role: 'release-cover', immutable, maxBytes: length });
       return length;
     });
   }

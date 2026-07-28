@@ -109,6 +109,7 @@ export function createPosterTransition({
   let errorReported = false;
   let finishPromise = null;
   let runToken = {};
+  let fixedPortalGeometry = null;
   const portalOrientation = 'horizontal';
   const idleWaiters = new Set();
 
@@ -219,27 +220,48 @@ export function createPosterTransition({
       const boundaryTop = hasRootBounds ? Number(rootBounds.top) : Number(stageBounds.top);
       const boundaryBottom = hasRootBounds ? Number(rootBounds.bottom) : Number(stageBounds.bottom);
       const desiredGap = Math.max(20, Math.min(38, artHeight * 0.055));
+      if (!fixedPortalGeometry) {
+        const topY = Math.max(boundaryTop + 12, artTop - desiredGap);
+        const bottomY = Math.min(boundaryBottom - 12, artBottom + desiredGap);
+        const availableWidth = Math.max(1, boundaryRight - boundaryLeft - 24);
+        const width = Math.max(1, Math.min(artWidth * 1.08, availableWidth));
+        const height = Math.max(112, Math.min(168, width / 4.4));
+        const minimumX = boundaryLeft + 12 + (width / 2);
+        const maximumX = boundaryRight - 12 - (width / 2);
+        const artworkCenterX = artLeft + (artWidth / 2);
+        const screenX = Math.min(maximumX, Math.max(minimumX, artworkCenterX));
+        fixedPortalGeometry = {
+          topY,
+          bottomY,
+          screenX,
+          width,
+          height,
+          offsets: {
+            top: Math.min(
+              124,
+              Math.max(110, 100 + (((Math.max(0, artTop - topY) + 10) / artHeight) * 100))
+            ),
+            bottom: Math.min(
+              124,
+              Math.max(110, 100 + (((Math.max(0, bottomY - artBottom) + 10) / artHeight) * 100))
+            )
+          }
+        };
+      }
       const portalScreenY = side === 'bottom'
-        ? Math.min(boundaryBottom - 12, artBottom + desiredGap)
-        : Math.max(boundaryTop + 12, artTop - desiredGap);
+        ? fixedPortalGeometry.bottomY
+        : fixedPortalGeometry.topY;
       const portalGap = side === 'bottom'
         ? Math.max(0, portalScreenY - artBottom)
         : Math.max(0, artTop - portalScreenY);
       const seamPercent = side === 'bottom'
         ? ((slotBounds.bottom - portalScreenY) / slotBounds.height) * 100
         : ((portalScreenY - slotBounds.top) / slotBounds.height) * 100;
-      const availableWidth = Math.max(1, boundaryRight - boundaryLeft - 24);
-      const gateWidth = Math.max(1, Math.min(artWidth * 1.08, availableWidth));
-      const gateHeight = Math.max(112, Math.min(168, gateWidth / 4.4));
-      const minimumGateX = (boundaryLeft - stageBounds.left) + 12 + (gateWidth / 2);
-      const maximumGateX = (boundaryRight - stageBounds.left) - 12 - (gateWidth / 2);
-      const artCenterInStage = (artLeft + (artWidth / 2)) - stageBounds.left;
-      const portalStageX = Math.min(maximumGateX, Math.max(minimumGateX, artCenterInStage));
-      const portalScreenX = portalStageX + stageBounds.left;
-      const portalOffset = Math.min(
-        124,
-        Math.max(110, 100 + (((portalGap + 10) / artHeight) * 100))
-      );
+      const gateWidth = fixedPortalGeometry.width;
+      const gateHeight = fixedPortalGeometry.height;
+      const portalScreenX = fixedPortalGeometry.screenX;
+      const portalStageX = portalScreenX - stageBounds.left;
+      const portalOffset = fixedPortalGeometry.offsets[side];
       const motionDistance = slotBounds.height * (portalOffset / 100);
       return {
         artBounds: {
@@ -583,6 +605,7 @@ export function createPosterTransition({
     currentItem = null;
     queue = [];
     compressedDrain = false;
+    if (!preserveActive) fixedPortalGeometry = null;
     clearPortalState();
     delete slit.dataset.direction;
     delete slit.dataset.motionProfile;
@@ -747,10 +770,10 @@ export function createPosterTransition({
       sealed = true;
     },
 
-    reset() {
+    reset({ preserveActive = false } = {}) {
       if (destroyed) return;
-      cancelWork({ preserveActive: false });
-      accepted = new Set();
+      cancelWork({ preserveActive });
+      accepted = new Set(preserveActive && activeItem ? [activeItem.slot] : []);
       sealed = false;
       lastError = null;
       errorReported = false;
@@ -770,6 +793,7 @@ export function createPosterTransition({
 
     resize() {
       if (destroyed || !activeItem || currentProfile === 'reduce') return;
+      fixedPortalGeometry = null;
       const side = activeItem.slot.dataset.portalSide === 'bottom' ? 'bottom' : 'top';
       applyGateMetrics(activeItem, side);
     },

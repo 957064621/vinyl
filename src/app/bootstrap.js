@@ -12,7 +12,12 @@ export function startCriticalAssetGate({
   load = loadCriticalImages,
   createView = createLoadingScreen
 } = {}) {
-  const view = createView(documentRef, { motionProfile });
+  const skipToken = Symbol('critical-asset-skip');
+  let requestRunSkip = () => {};
+  const view = createView(documentRef, {
+    motionProfile,
+    onSkip: () => requestRunSkip()
+  });
   const appRoot = documentRef.querySelector('#appRoot');
   const appShell = documentRef.querySelector('#appShell');
   let currentMotionProfile = motionProfile;
@@ -29,13 +34,56 @@ export function startCriticalAssetGate({
 
   const run = async () => {
     view.reset();
+    const loadController = new AbortController();
+    const loadedResults = new Map();
+    let skipRequested = false;
+    let resolveSkip;
+    const skipped = new Promise((resolve) => {
+      resolveSkip = () => {
+        if (skipRequested) return;
+        skipRequested = true;
+        loadController.abort(new Error('Critical image loading skipped'));
+        resolve(skipToken);
+      };
+    });
+    requestRunSkip = resolveSkip;
+
+    const onProgress = (event) => {
+      if (event.status === 'ready' && event.result) {
+        loadedResults.set(event.id, event.result);
+      }
+      view.setProgress(event);
+    };
+
     try {
-      const results = await load(CRITICAL_IMAGE_MANIFEST, {
+      const loading = Promise.resolve().then(() => load(CRITICAL_IMAGE_MANIFEST, {
         selectCandidates: (asset) => selectCriticalImageCandidates(asset, viewportWidth),
         retries: 2,
         concurrency: 2,
-        onProgress: (event) => view.setProgress(event)
-      });
+        signal: loadController.signal,
+        onProgress
+      }));
+      const outcome = await Promise.race([loading, skipped]);
+      let results = outcome;
+
+      if (outcome === skipToken) {
+        const finalAsset = CRITICAL_IMAGE_MANIFEST.at(-1);
+        const loadedFinal = loadedResults.get(finalAsset.id);
+        if (loadedFinal) {
+          results = [loadedFinal];
+        } else {
+          results = await load([finalAsset], {
+            selectCandidates: (asset) => selectCriticalImageCandidates(asset, viewportWidth),
+            retries: 2,
+            concurrency: 1,
+            onProgress: (event) => view.setProgress({
+              ...event,
+              completed: event.status === 'ready' ? CRITICAL_IMAGE_MANIFEST.length : 0,
+              total: CRITICAL_IMAGE_MANIFEST.length
+            })
+          });
+        }
+      }
       await view.playReadySequence(currentMotionProfile);
       appRoot.removeAttribute('inert');
       appRoot.removeAttribute('aria-hidden');
@@ -49,6 +97,8 @@ export function startCriticalAssetGate({
       view.showError(error, () => {
         void run();
       });
+    } finally {
+      if (requestRunSkip === resolveSkip) requestRunSkip = () => {};
     }
   };
 

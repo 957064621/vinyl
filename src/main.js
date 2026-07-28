@@ -1103,6 +1103,7 @@ const criticalAssetGate = startCriticalAssetGate({
         let activeCoverLayer = coverLayerA;
         let coverSwapRequestId = 0;
         let activeCoverReveal = Promise.resolve();
+        const COVER_PRELOAD_TIMEOUT_MS = 4000;
 
         const trackCoverReveal = (cover) => new Promise((resolve) => {
             requestAnimationFrame(() => {
@@ -1133,17 +1134,30 @@ const criticalAssetGate = startCriticalAssetGate({
         };
 
         // 预载后再交叉淡入，避免空白闪烁；两层互相淡入淡出
-        const preloadCoverImage = (src) => new Promise((resolve) => {
+        const loadCoverImage = (image, src, timeoutMs = COVER_PRELOAD_TIMEOUT_MS) => new Promise((resolve) => {
             if (!src) {
-                resolve();
+                resolve(false);
                 return;
             }
 
-            const pre = new Image();
-            pre.onload = () => resolve();
-            pre.onerror = () => resolve();
-            pre.src = src;
+            let settled = false;
+            let timer = null;
+            const finish = (loaded) => {
+                if (settled) return;
+                settled = true;
+                if (timer !== null) clearTimeout(timer);
+                image.onload = null;
+                image.onerror = null;
+                resolve(loaded);
+            };
+
+            image.onload = () => finish(true);
+            image.onerror = () => finish(false);
+            timer = setTimeout(() => finish(false), timeoutMs);
+            image.src = src;
         });
+
+        const preloadCoverImage = (src) => loadCoverImage(new Image(), src);
 
         const setCoverArtworkUrl = (artworkSrc) => {
             const artworkValue = artworkSrc ? `url("${artworkSrc}")` : 'none';
@@ -1194,13 +1208,8 @@ const criticalAssetGate = startCriticalAssetGate({
             img.decoding = 'async';
             img.referrerPolicy = 'no-referrer';
 
-            const loaded = new Promise((resolve, reject) => {
-                img.onload = () => resolve(img);
-                img.onerror = reject;
-            });
-
-            img.src = src;
-            await loaded;
+            const loaded = await loadCoverImage(img, src);
+            if (!loaded) return safeFallbackPalette;
 
             const canvas = document.createElement('canvas');
             canvas.width = 32;
@@ -1312,7 +1321,7 @@ const criticalAssetGate = startCriticalAssetGate({
             incoming.classList.add('is-active');
             activeCoverLayer.classList.remove('is-active');
             activeCoverLayer = incoming;
-            activeCoverReveal = trackCoverReveal(incoming);
+            await trackCoverReveal(incoming);
             return artworkSrc;
         };
 
@@ -1330,7 +1339,14 @@ const criticalAssetGate = startCriticalAssetGate({
             songEl.textContent = `- ${result.song}`;
             currentLyricIndex = index;
             updateArchiveMetadata(index, audioController.getState().status);
-            const coverReady = applyCoverVisual(index);
+            const coverReady = Promise.resolve(applyCoverVisual(index)).catch((error) => {
+                console.warn('[vinyl] Cover preparation failed.', {
+                    song: result.song,
+                    message: error?.message || String(error)
+                });
+                return '';
+            });
+            activeCoverReveal = coverReady;
             consumeLyricIndexFromQueue(index);
             updatePlaylistActiveTrack(index);
             return coverReady;
@@ -2108,7 +2124,11 @@ const criticalAssetGate = startCriticalAssetGate({
             },
             setSpinning(active) {
                 turntable.classList.toggle('is-playing', active);
-                if (active && !prefersReducedMotion) {
+                if (
+                    active
+                    && !prefersReducedMotion
+                    && document.visibilityState === 'visible'
+                ) {
                     spinAnimation.play();
                     sheenAnimation.play();
                 } else {
@@ -2162,7 +2182,7 @@ const criticalAssetGate = startCriticalAssetGate({
             const track = createAudioTrackByIndex(index);
             playerTime.innerText = '0:00';
             trackFill.style.transform = 'translate3d(-100%, 0, 0)';
-            await updateCurrentLyric(index);
+            updateCurrentLyric(index);
             if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
             if (resultArea.classList.contains('is-visible')) revealLyricContentImmediately();
             return track;

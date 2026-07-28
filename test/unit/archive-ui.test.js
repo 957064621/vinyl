@@ -174,6 +174,21 @@ test('applies the track fallback palette before remote cover preparation can set
   assert.ok(staleGuardIndex < refinedIndex);
 });
 
+test('keeps cover preparation bounded and outside the track-selection critical path', () => {
+  const selectStart = mainSource.indexOf('const selectTrack = async (index, { signal } = {}) => {');
+  const selectEnd = mainSource.indexOf('\n        };', selectStart);
+  const selectSource = mainSource.slice(selectStart, selectEnd);
+
+  assert.match(mainSource, /const COVER_PRELOAD_TIMEOUT_MS = 4000;/);
+  assert.match(mainSource, /timer = setTimeout\(\(\) => finish\(false\), timeoutMs\);/);
+  assert.match(selectSource, /updateCurrentLyric\(index\);/);
+  assert.doesNotMatch(selectSource, /await updateCurrentLyric\(index\)/);
+  assert.ok(
+    selectSource.indexOf('updateCurrentLyric(index);')
+      < selectSource.indexOf('return track;')
+  );
+});
+
 test('eases the portfolio-style pointer light with a finite animation-frame loop', () => {
   const pointerStart = mainSource.indexOf('const renderPointerLight = () => {');
   const pointerEnd = mainSource.indexOf('\n        const DRAW_BUTTON_SPOT_DEFAULT_X', pointerStart);

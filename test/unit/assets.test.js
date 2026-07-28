@@ -6,12 +6,16 @@ import {
   selectCriticalImageCandidates
 } from '../../src/config/assets.js';
 
-test('contains exactly five responsive variants of existing OSS covers', () => {
-  assert.equal(CRITICAL_IMAGE_MANIFEST.length, 5);
-  assert.equal(new Set(CRITICAL_IMAGE_MANIFEST.map(({ id }) => id)).size, 5);
+test('contains the nine numbered posters followed by the final responsive cover', () => {
+  assert.equal(CRITICAL_IMAGE_MANIFEST.length, 10);
+  assert.equal(new Set(CRITICAL_IMAGE_MANIFEST.map(({ id }) => id)).size, 10);
+  assert.deepEqual(
+    CRITICAL_IMAGE_MANIFEST.map(({ source }) => new URL(source).pathname),
+    [...Array.from({ length: 9 }, (_, index) => `/covers/${index + 1}.jpg`), '/covers/end.jpg']
+  );
   for (const asset of CRITICAL_IMAGE_MANIFEST) {
     const urls = ['source', 'mobile', 'desktop', 'fallback'].map((key) => new URL(asset[key]));
-    assert.ok(urls.every((url) => url.origin === 'https://yuko-portfolio.oss-cn-hangzhou.aliyuncs.com'));
+    assert.ok(urls.every((url) => url.origin === 'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com'));
     assert.equal(new Set(urls.map(({ pathname }) => pathname)).size, 1);
     assert.match(asset.mobile, /resize,w_480/);
     assert.match(asset.desktop, /resize,w_960/);

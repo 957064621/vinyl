@@ -50,7 +50,8 @@ export function createAppTransitions({
     targetIndex,
     profile,
     tokens,
-    onSelected = () => {}
+    onSelected = () => {},
+    resetOnError = true
   }) => {
     try {
       const track = await selectTrack(targetIndex, { signal });
@@ -61,17 +62,19 @@ export function createAppTransitions({
       assertActive(signal);
       return track;
     } catch (error) {
-      if (!signal.aborted) await resetAfterPlaybackError(signal, tokens, profile);
+      if (resetOnError && !signal.aborted) {
+        await resetAfterPlaybackError(signal, tokens, profile);
+      }
       throw error;
     }
   };
 
-  const playSelectedTrack = async (signal, tokens, profile) => {
+  const playSelectedTrack = async (signal, tokens, profile, { resetOnError = true } = {}) => {
     try {
       const played = await audio.play({ signal });
       if (played === false) throw new Error('Audio playback did not start');
     } catch (error) {
-      await resetAfterPlaybackError(signal, tokens, profile);
+      if (resetOnError) await resetAfterPlaybackError(signal, tokens, profile);
       assertActive(signal);
       throw error;
     }
@@ -153,40 +156,97 @@ export function createAppTransitions({
       headless = false,
       showLyrics = false
     }) {
-      const overlayState = headless
-        ? null
-        : await overlays.closeAll({ signal, duration: tokens.enter, profile });
-      assertActive(signal);
+      let pausedForSwitch = false;
+      let playbackStarted = false;
 
-      audio.pause();
-      assertActive(signal);
-
-      await loadSelectedTrack({ signal, targetIndex, profile, tokens });
-
-      if (!headless && !showLyrics) {
-        await overlays.refresh({ signal, duration: tokens.enter, profile });
+      try {
+        const overlayState = headless
+          ? null
+          : await overlays.closeAll({ signal, duration: tokens.enter, profile });
         assertActive(signal);
-      }
 
-      await playSelectedTrack(signal, tokens, profile);
-      assertActive(signal);
+        audio.pause();
+        pausedForSwitch = true;
+        assertActive(signal);
 
-      if (!headless) {
-        if (showLyrics) {
-          await overlays.open('lyrics', {
-            signal,
-            duration: tokens.enter,
-            profile,
-            previousState: overlayState
-          });
-        } else {
-          await overlays.restoreAfterTrackSwitch(overlayState, {
-            signal,
-            duration: tokens.enter,
-            profile
-          });
+        const current = turntable.readState();
+        const bridgeRate = Math.min(5.2, Math.max(1.85, current.rate + 0.92));
+        if (!headless) {
+          turntable.setSpinning(true);
+          await Promise.all([
+            turntable.moveArmTo('rest', {
+              signal,
+              duration: tokens.move,
+              from: current.arm,
+              profile
+            }),
+            turntable.rampRateTo(bridgeRate, {
+              signal,
+              duration: tokens.move,
+              from: current.rate,
+              profile
+            })
+          ]);
+          assertActive(signal);
         }
+
+        await loadSelectedTrack({
+          signal,
+          targetIndex,
+          profile,
+          tokens,
+          resetOnError: false
+        });
+
+        if (!headless && !showLyrics) {
+          await overlays.refresh({ signal, duration: tokens.enter, profile });
+          assertActive(signal);
+        }
+
+        if (headless) turntable.setSpinning(true);
+        await Promise.all([
+          turntable.moveArmTo('play', {
+            signal,
+            duration: headless ? 0 : tokens.settle,
+            profile
+          }),
+          turntable.rampRateTo(0.68, {
+            signal,
+            duration: headless ? 0 : tokens.settle,
+            profile
+          })
+        ]);
         assertActive(signal);
+
+        await playSelectedTrack(signal, tokens, profile, { resetOnError: false });
+        playbackStarted = true;
+        assertActive(signal);
+
+        if (!headless) {
+          if (showLyrics) {
+            await overlays.open('lyrics', {
+              signal,
+              duration: tokens.enter,
+              profile,
+              previousState: overlayState
+            });
+          } else {
+            await overlays.restoreAfterTrackSwitch(overlayState, {
+              signal,
+              duration: tokens.enter,
+              profile
+            });
+          }
+          assertActive(signal);
+        }
+      } finally {
+        if (pausedForSwitch && !playbackStarted) {
+          if (signal.aborted) {
+            await turntable.resetAfterPlaybackError({ duration: 0 });
+          } else {
+            await resetAfterPlaybackError(signal, tokens, profile);
+          }
+        }
       }
     },
 

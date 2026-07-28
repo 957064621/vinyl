@@ -16,6 +16,11 @@ test('uses the approved 粉钻 wording', () => {
 test('keeps the 2026 live recording limited to 粉钻 and 造物', () => {
   const release = liveRelease();
   assert.equal(release.releaseDate, '2026');
+  assert.equal(
+    release.sourceArtworkUrl,
+    'https://yuko-vinyl.oss-cn-hangzhou.aliyuncs.com/covers/end.jpg'
+  );
+  assert.equal(release.coverOssUrl, release.sourceArtworkUrl);
   assert.deepEqual(release.tracks.map(({ title, trackNumber }) => ({ title, trackNumber })), [
     { title: '粉钻', trackNumber: 1 },
     { title: '造物', trackNumber: 2 }

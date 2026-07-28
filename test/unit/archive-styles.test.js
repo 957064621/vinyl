@@ -624,7 +624,7 @@ test('posters travel vertically through geometric gates without edge transparenc
   assert.match(stableReflection, /loading-poster-floor-glow 6\.4s/);
 });
 
-test('portal geometry follows the measured artwork box with a gap and hold particles stay below it', () => {
+test('portal geometry follows the fixed poster stage while preserving artwork gaps and hold particles', () => {
   const posterTransition = readSource(new URL('../../src/ui/poster-transition.js', import.meta.url));
 
   assert.match(archiveCss, /--portal-y:\s*var\(--gate-y,\s*0px\)/);
@@ -649,9 +649,13 @@ test('portal geometry follows the measured artwork box with a gap and hold parti
   assert.match(posterTransition, /removeProperty\('--gate-width'\)/);
   assert.match(posterTransition, /removeProperty\('--portal-gap'\)/);
   assert.match(posterTransition, /removeProperty\('--seam-inset'\)/);
-  assert.match(posterTransition, /artWidth \* 1\.08/, 'the horizontal gate includes an eight-percent breathing margin');
+  assert.match(posterTransition, /artWidth \* 1\.08/, 'the fixed horizontal gate includes an eight-percent breathing margin');
   assert.match(posterTransition, /const desiredGap = Math\.max\(20, Math\.min\(38, artHeight \* 0\.055\)\)/);
-  assert.match(posterTransition, /side === 'bottom'\s*\?\s*Math\.min\(boundaryBottom - 12, artBottom \+ desiredGap\)/);
+  assert.match(posterTransition, /const topY = Math\.max\(boundaryTop \+ 12, artTop - desiredGap\)/);
+  assert.match(posterTransition, /const bottomY = Math\.min\(boundaryBottom - 12, artBottom \+ desiredGap\)/);
+  assert.match(posterTransition, /const artworkCenterX = artLeft \+ \(artWidth \/ 2\)/);
+  assert.match(posterTransition, /\? fixedPortalGeometry\.bottomY\s*:\s*fixedPortalGeometry\.topY/);
+  assert.match(posterTransition, /\? Math\.max\(0, portalScreenY - artBottom\)\s*:\s*Math\.max\(0, artTop - portalScreenY\)/);
   assert.match(posterTransition, /activatePortal\('bottom', 'exit', sceneProfile, PORTAL_DURATION\)/);
   assert.match(posterTransition, /activatePortal\('top', 'enter', sceneProfile, PORTAL_DURATION\)/);
   assert.match(posterTransition, /particleField\.hold|holdParticles/, 'resting posters keep a bounded floating field below the art');
