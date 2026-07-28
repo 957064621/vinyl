@@ -7,8 +7,6 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "audit": "node scripts/generate-audits.mjs",
-    "audit:check": "node scripts/generate-audits.mjs --check",
     "media:mirror": "node scripts/media/mirror-covers.mjs",
     "media:mirror:apply": "node scripts/media/mirror-covers.mjs --apply",
     "media:metadata": "node scripts/media/apply-metadata.mjs",
@@ -18,7 +16,7 @@
     "test:build": "node --test test/build/*.test.js",
     "test:e2e": "playwright test",
     "test": "npm run test:unit",
-    "verify": "npm run test:unit && npm run audit:check && npm run build && npm run test:build"
+    "verify": "npm run test:unit && npm run build && npm run test:build"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

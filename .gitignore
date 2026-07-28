@@ -3,5 +3,6 @@ dist/
 /test-results/
 /playwright-report/
 /.claude/
-/.superpowers/sdd/review-*.diff
+/.superpowers/
+/docs/superpowers/
 .DS_Store
