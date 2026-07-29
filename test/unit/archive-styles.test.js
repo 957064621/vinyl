@@ -633,10 +633,10 @@ test('portal geometry follows the fixed poster stage while preserving artwork ga
   assert.match(posterTransition, /setProperty\('--gate-height'/);
   assert.match(posterTransition, /setProperty\('--gate-width'/);
   assert.match(posterTransition, /setProperty\('--portal-gap'/);
-  assert.match(posterTransition, /setProperty\('--portal-x'/);
-  assert.match(posterTransition, /setProperty\('--portal-y'/);
-  assert.match(posterTransition, /setProperty\('--portal-width'/);
-  assert.match(posterTransition, /setProperty\('--portal-height'/);
+  assert.match(posterTransition, /setProperty\(\s*'--portal-x'/);
+  assert.match(posterTransition, /setProperty\(\s*'--portal-y'/);
+  assert.match(posterTransition, /setProperty\(\s*'--portal-width'/);
+  assert.match(posterTransition, /setProperty\(\s*'--portal-height'/);
   assert.match(posterTransition, /particleBounds:\s*\{/);
   assert.match(
     css,
@@ -656,7 +656,7 @@ test('portal geometry follows the fixed poster stage while preserving artwork ga
   assert.match(posterTransition, /artWidth \* 1\.08/, 'the fixed horizontal gate includes an eight-percent breathing margin');
   assert.match(posterTransition, /const desiredGap = Math\.max\(20, Math\.min\(38, artHeight \* 0\.055\)\)/);
   assert.match(posterTransition, /const topY = Math\.max\(boundaryTop \+ 12, artTop - desiredGap\)/);
-  assert.match(posterTransition, /const bottomY = Math\.min\(boundaryBottom - 168, artBottom \+ desiredGap\)/);
+  assert.match(posterTransition, /const bottomY = artBottom \+ desiredGap/);
   assert.match(posterTransition, /const artworkCenterX = artLeft \+ \(artWidth \/ 2\)/);
   assert.match(posterTransition, /\? fixedPortalGeometry\.bottomY\s*:\s*fixedPortalGeometry\.topY/);
   assert.match(posterTransition, /\? Math\.max\(0, portalScreenY - artBottom\)\s*:\s*Math\.max\(0, artTop - portalScreenY\)/);

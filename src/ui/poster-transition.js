@@ -229,9 +229,7 @@ export function createPosterTransition({
       const desiredGap = Math.max(20, Math.min(38, artHeight * 0.055));
       if (!fixedPortalGeometry) {
         const topY = Math.max(boundaryTop + 12, artTop - desiredGap);
-        // The lower gate is measured once, but must leave the fixed skip control clear
-        // in compact-height viewports before any poster starts moving.
-        const bottomY = Math.min(boundaryBottom - 168, artBottom + desiredGap);
+        const bottomY = artBottom + desiredGap;
         const availableWidth = Math.max(1, boundaryRight - boundaryLeft - 24);
         const width = Math.max(1, Math.min(artWidth * 1.08, availableWidth));
         const height = Math.max(112, Math.min(168, width / 4.4));
@@ -298,6 +296,8 @@ export function createPosterTransition({
         portalScreenY,
         portalStageX,
         portalStageY: portalScreenY - stageBounds.top,
+        stageLeft: stageBounds.left,
+        stageTop: stageBounds.top,
         seamPercent,
         artWidth,
         artBottomInSlot: insetY + artHeight,
@@ -338,8 +338,11 @@ export function createPosterTransition({
       [portalFor('top'), fixedPortalGeometry.topY],
       [portalFor('bottom'), fixedPortalGeometry.bottomY]
     ]) {
-      portal.style.setProperty('--portal-x', `${fixedPortalGeometry.screenX.toFixed(2)}px`);
-      portal.style.setProperty('--portal-y', `${portalY.toFixed(2)}px`);
+      portal.style.setProperty(
+        '--portal-x',
+        `${(fixedPortalGeometry.screenX - metrics.stageLeft).toFixed(2)}px`
+      );
+      portal.style.setProperty('--portal-y', `${(portalY - metrics.stageTop).toFixed(2)}px`);
       portal.style.setProperty('--portal-width', `${fixedPortalGeometry.width.toFixed(2)}px`);
       portal.style.setProperty('--portal-height', `${fixedPortalGeometry.height.toFixed(2)}px`);
     }

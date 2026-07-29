@@ -592,6 +592,7 @@
         }
 
         .loading-copy {
+            position: relative;
             min-height: 1.5em;
             text-align: center;
             color: rgba(237, 245, 255, 0.9);

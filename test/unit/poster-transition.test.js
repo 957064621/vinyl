@@ -1299,7 +1299,54 @@ test('assigns activation to the fixed portal for the requested side', async () =
   assert.equal(bottom.classList.contains('is-lit'), false);
   assert.equal(top.dataset.portalPhase, 'enter');
   assert.equal(top.style.getPropertyValue('--portal-y'), '12.00px');
-  assert.equal(bottom.style.getPropertyValue('--portal-y'), '232.00px');
+  assert.equal(bottom.style.getPropertyValue('--portal-y'), '260.00px');
+  controller.freeze();
+});
+
+test('writes fixed portal geometry in loading-stage coordinates', async () => {
+  const scheduler = makeManualScheduler();
+  const dom = new JSDOM(`
+    <div id="root">
+      <div id="stage">
+        <div id="top"></div><div id="bottom"></div>
+        <figure data-loading-slot="archive-01"><img alt="one"></figure>
+      </div>
+    </div>
+  `);
+  const root = dom.window.document.getElementById('root');
+  const stage = dom.window.document.getElementById('stage');
+  const top = dom.window.document.getElementById('top');
+  const bottom = dom.window.document.getElementById('bottom');
+  const slot = root.querySelector('[data-loading-slot]');
+  root.getBoundingClientRect = () => ({
+    left: 100, top: 40, right: 900, bottom: 640, width: 800, height: 600
+  });
+  stage.getBoundingClientRect = () => ({
+    left: 160, top: 88, right: 840, bottom: 528, width: 680, height: 440
+  });
+  slot.getBoundingClientRect = () => ({
+    left: 320, top: 128, right: 680, bottom: 488, width: 360, height: 360
+  });
+  const image = slot.querySelector('img');
+  Object.defineProperties(image, {
+    naturalWidth: { value: 1000 },
+    naturalHeight: { value: 1000 }
+  });
+  const particleField = { gather() {}, scatter() {}, finish() {}, setProfile() {} };
+  const controller = createPosterTransition({
+    root,
+    portals: { top, bottom },
+    particleField,
+    scheduler
+  });
+
+  controller.enqueue(slot);
+  await flush();
+
+  assert.equal(top.style.getPropertyValue('--portal-x'), '340.00px');
+  assert.equal(bottom.style.getPropertyValue('--portal-x'), '340.00px');
+  assert.equal(top.style.getPropertyValue('--portal-y'), '20.00px');
+  assert.equal(bottom.style.getPropertyValue('--portal-y'), '420.00px');
   controller.freeze();
 });
 
