@@ -199,16 +199,16 @@ test('timing tables are deeply frozen and preserve fast portal travel with a rea
   assert.equal(PORTAL_DURATION, 760, 'the established stretch/luminance portal envelope must not change');
   assert.deepEqual(VISUAL8_TIMING, {
     full: {
-      normal: { gather: 300, handoff: 420, exit: 340, hold: 500 },
-      compressed: { gather: 300, handoff: 340, exit: 280, hold: 440 },
+      normal: { gather: 220, handoff: 520, exit: 520, hold: 700 },
+      compressed: { gather: 220, handoff: 520, exit: 520, hold: 480 },
       finalHold: 840,
       finalResolve: 1100,
       exitLead: 1100,
       rootFade: 680
     },
     compact: {
-      normal: { gather: 300, handoff: 420, exit: 340, hold: 440 },
-      compressed: { gather: 300, handoff: 340, exit: 280, hold: 380 },
+      normal: { gather: 140, handoff: 520, exit: 440, hold: 560 },
+      compressed: { gather: 140, handoff: 520, exit: 440, hold: 380 },
       finalHold: 720,
       finalResolve: 1100,
       exitLead: 1100,
@@ -218,11 +218,11 @@ test('timing tables are deeply frozen and preserve fast portal travel with a rea
   });
   const firstPosterTime = ({ hold }) => PORTAL_DURATION + hold;
   const exchangeTime = ({ hold }) => (PORTAL_DURATION * 2) + hold;
-  assert.equal(firstPosterTime(VISUAL8_TIMING.full.normal), 1260);
-  assert.equal(exchangeTime(VISUAL8_TIMING.full.normal), 2020);
-  assert.equal(firstPosterTime(VISUAL8_TIMING.full.compressed), 1200);
-  assert.equal(exchangeTime(VISUAL8_TIMING.full.compressed), 1960);
-  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.normal), 1200);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.full.normal), 1460);
+  assert.equal(exchangeTime(VISUAL8_TIMING.full.normal), 2220);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.full.compressed), 1240);
+  assert.equal(exchangeTime(VISUAL8_TIMING.full.compressed), 2000);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.normal), 1320);
   assert.equal(firstPosterTime(VISUAL8_TIMING.compact.compressed), 1140);
   assert.equal(Object.isFrozen(VISUAL8_TIMING), true);
   for (const profile of ['full', 'compact', 'reduce']) {
@@ -346,6 +346,12 @@ test('top portal leaves measured space above the artwork and forwards its actual
   assert.equal(gatherBounds.height, 0, 'particles are born on the measured light core');
   assert.equal(gatherOptions?.portalSide, 'top');
   assert.ok(Math.abs(gatherOptions?.motionDistance - 268) < 0.001);
+  assert.deepEqual(gatherOptions?.trajectory, {
+    distance: gatherOptions.motionDistance,
+    duration: POSTER_TIMING.normal.handoff,
+    easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+    directionY: 1
+  });
 
   controller.freeze();
   assert.equal(slots[0].style.getPropertyValue('--seam-inset'), '');
@@ -568,7 +574,7 @@ test('rapid backlog stays compressed through one drain and a later isolated run 
       + POSTER_TIMING.fast.exit
       + POSTER_TIMING.fast.handoff
       + POSTER_TIMING.fast.hold,
-    1660
+    1960
   );
   assert.equal(
     slots.at(-1).style.getPropertyValue('--poster-handoff-ms'),
@@ -734,7 +740,15 @@ test('poster exchange descends into the bottom portal before the next poster eme
   assert.equal(root.querySelectorAll('.is-active').length, 0);
   assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 1);
   assert.equal(root.style.getPropertyValue('--slit-duration'), `${PORTAL_DURATION}ms`);
-  assert.ok(particleCalls.some(([name]) => name === 'scatter'));
+  const scatterCall = particleCalls.find(([name]) => name === 'scatter');
+  assert.ok(scatterCall);
+  assert.equal(scatterCall[3]?.portalSide, 'bottom');
+  assert.deepEqual(scatterCall[3]?.trajectory, {
+    distance: scatterCall[3].motionDistance,
+    duration: POSTER_TIMING.normal.exit,
+    easing: 'cubic-bezier(0.64, 0, 0.78, 0)',
+    directionY: 1
+  });
   assert.ok(scheduler.durations.includes(POSTER_TIMING.normal.exit));
   assert.equal(
     outgoing.style.getPropertyValue('--poster-exit-ms'),

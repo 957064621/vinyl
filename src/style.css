@@ -5095,19 +5095,19 @@
             animation:
                 loading-poster-glide-in var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) both,
                 loading-poster-arrive var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) both;
-            animation-timing-function: cubic-bezier(0.4, 0.14, 0.3, 1), cubic-bezier(0.32, 0.72, 0, 1);
+            animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1), cubic-bezier(0.22, 1, 0.36, 1);
         }
 
         .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"]::before {
             animation:
-                loading-poster-glide-in var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0.14, 0.3, 1) both,
-                loading-poster-aura-arrive var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.32, 0.72, 0, 1) both;
+                loading-poster-glide-in var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.16, 1, 0.3, 1) both,
+                loading-poster-aura-arrive var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.22, 1, 0.36, 1) both;
         }
 
         .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"]::after {
             animation:
-                loading-poster-glide-in var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0.14, 0.3, 1) both,
-                loading-poster-floor-arrive var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.32, 0.72, 0, 1) both;
+                loading-poster-glide-in var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.16, 1, 0.3, 1) both,
+                loading-poster-floor-arrive var(--poster-enter-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.22, 1, 0.36, 1) both;
         }
 
         .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"] .loading-image {
@@ -5116,18 +5116,18 @@
             animation:
                 loading-poster-glide-out var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) both,
                 loading-poster-depart var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) both;
-            animation-timing-function: cubic-bezier(0.4, 0.14, 0.3, 1), cubic-bezier(0.4, 0, 0.2, 1);
+            animation-timing-function: cubic-bezier(0.64, 0, 0.78, 0), cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"]::before {
             animation:
-                loading-poster-glide-out var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0.14, 0.3, 1) both,
+                loading-poster-glide-out var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.64, 0, 0.78, 0) both,
                 loading-poster-aura-depart var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0, 0.2, 1) both;
         }
 
         .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting.is-exiting-to-portal[data-portal-side="bottom"]::after {
             animation:
-                loading-poster-glide-out var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0.14, 0.3, 1) both,
+                loading-poster-glide-out var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.64, 0, 0.78, 0) both,
                 loading-poster-floor-depart var(--poster-exit-ms, var(--poster-handoff-ms, 600ms)) cubic-bezier(0.4, 0, 0.2, 1) both;
         }
 
@@ -5183,7 +5183,7 @@
         @keyframes loading-poster-arrive {
             0% {
                 opacity: 1;
-                scale: 0.76;
+                scale: 0.92;
             }
             100% {
                 opacity: 1;
@@ -5227,7 +5227,7 @@
             }
             100% {
                 opacity: 1;
-                scale: 0.74;
+                scale: 0.82;
             }
         }
 

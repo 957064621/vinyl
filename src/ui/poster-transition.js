@@ -2,16 +2,16 @@ export const PORTAL_DURATION = 760;
 
 export const POSTER_TIMING = Object.freeze({
   full: Object.freeze({
-    normal: Object.freeze({ gather: 300, handoff: 420, exit: 340, hold: 500 }),
-    compressed: Object.freeze({ gather: 300, handoff: 340, exit: 280, hold: 440 }),
+    normal: Object.freeze({ gather: 220, handoff: 520, exit: 520, hold: 700 }),
+    compressed: Object.freeze({ gather: 220, handoff: 520, exit: 520, hold: 480 }),
     finalHold: 840,
     finalResolve: 1100,
     exitLead: 1100,
     rootFade: 680
   }),
   compact: Object.freeze({
-    normal: Object.freeze({ gather: 300, handoff: 420, exit: 340, hold: 440 }),
-    compressed: Object.freeze({ gather: 300, handoff: 340, exit: 280, hold: 380 }),
+    normal: Object.freeze({ gather: 140, handoff: 520, exit: 440, hold: 560 }),
+    compressed: Object.freeze({ gather: 140, handoff: 520, exit: 440, hold: 380 }),
     finalHold: 720,
     finalResolve: 1100,
     exitLead: 1100,
@@ -445,7 +445,16 @@ export function createPosterTransition({
         Promise.resolve(particleField.scatter(
           exitMetrics?.particleBounds ?? outgoing.slot.getBoundingClientRect(),
           timing.exit,
-          { portalSide: 'bottom', motionDistance: exitMetrics?.motionDistance }
+          {
+            portalSide: 'bottom',
+            motionDistance: exitMetrics?.motionDistance,
+            trajectory: {
+              distance: exitMetrics?.motionDistance,
+              duration: timing.exit,
+              easing: 'cubic-bezier(0.64, 0, 0.78, 0)',
+              directionY: 1
+            }
+          }
         )),
         sleep(timing.exit, token)
       ]);
@@ -475,7 +484,16 @@ export function createPosterTransition({
       Promise.resolve(particleField.gather(
         enterMetrics?.particleBounds ?? activeItem.slot.getBoundingClientRect(),
         timing.handoff,
-        { portalSide: 'top', motionDistance: enterMetrics?.motionDistance }
+        {
+          portalSide: 'top',
+          motionDistance: enterMetrics?.motionDistance,
+          trajectory: {
+            distance: enterMetrics?.motionDistance,
+            duration: timing.handoff,
+            easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+            directionY: 1
+          }
+        }
       )),
       sleep(timing.handoff, token)
     ]);

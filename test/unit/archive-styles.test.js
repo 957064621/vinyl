@@ -598,7 +598,7 @@ test('posters travel vertically through geometric gates without edge transparenc
   assert.match(enterBinding, /loading-poster-glide-in[\s\S]*loading-poster-arrive/, 'translate and scale ride separate tracks');
   assert.match(
     enterBinding,
-    /animation-timing-function:\s*cubic-bezier\(0\.4, 0\.14, 0\.3, 1\), cubic-bezier\(0\.32, 0\.72, 0, 1\);/,
+    /animation-timing-function:\s*cubic-bezier\(0\.16, 1, 0\.3, 1\), cubic-bezier\(0\.22, 1, 0\.36, 1\);/,
     'translation and scale use separate bounded settling curves'
   );
   assert.match(exitBinding, /loading-poster-glide-out[\s\S]*loading-poster-depart/);
@@ -611,9 +611,9 @@ test('posters travel vertically through geometric gates without edge transparenc
 
   assert.match(enter, /translate:\s*0 var\(--poster-portal-offset, -112%\)/, 'the poster emerges from above the separated gate');
   assert.match(enter, /translate:\s*0 0%/);
-  assert.match(blockBody(archiveCss, '@keyframes loading-poster-arrive {'), /scale:\s*0\.76/, 'scale settles on its own track');
+  assert.match(blockBody(archiveCss, '@keyframes loading-poster-arrive {'), /scale:\s*0\.92/, 'scale settles on its own track');
   assert.match(exit, /translate:\s*0 var\(--poster-portal-offset, 112%\)/);
-  assert.match(blockBody(archiveCss, '@keyframes loading-poster-depart {'), /scale:\s*0\.74/, 'the poster shrinks as the bottom lamp consumes it');
+  assert.match(blockBody(archiveCss, '@keyframes loading-poster-depart {'), /scale:\s*0\.82/, 'the poster shrinks as the bottom lamp consumes it');
   for (const body of [enter, exit]) {
     assert.doesNotMatch(body, /clip-path|transform:/, 'flight keyframes carry only the split translate track');
   }
