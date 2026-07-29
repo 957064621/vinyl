@@ -23,129 +23,294 @@ const waitForAbortableDelay = (duration, signal) => new Promise((resolve) => {
   signal.addEventListener('abort', finish, { once: true });
 });
 
+const createCleanupSignal = () => new AbortController().signal;
+
+const markAudioFailure = (failure, operation) => {
+  const error = failure instanceof Error
+    ? failure
+    : new Error(`Audio ${operation} failed: ${String(failure)}`);
+  try {
+    Object.defineProperty(error, 'audioOperation', {
+      configurable: true,
+      value: operation
+    });
+  } catch {
+    // Frozen host errors retain their original identity and message.
+  }
+  return error;
+};
+
+const createOperationScope = (parentSignal) => {
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(
+    parentSignal.reason || new DOMException('Aborted', 'AbortError')
+  );
+  parentSignal.addEventListener('abort', forwardAbort, { once: true });
+  if (parentSignal.aborted) forwardAbort();
+
+  return {
+    signal: controller.signal,
+    abort(reason) {
+      if (!controller.signal.aborted) controller.abort(reason);
+    },
+    dispose() {
+      parentSignal.removeEventListener('abort', forwardAbort);
+    }
+  };
+};
+
+const createInFlightTracker = () => {
+  const pending = new Set();
+  return {
+    track(task) {
+      const promise = Promise.resolve(task);
+      pending.add(promise);
+      promise.then(
+        () => pending.delete(promise),
+        () => pending.delete(promise)
+      );
+      return promise;
+    },
+    settle() {
+      return Promise.allSettled([...pending]);
+    }
+  };
+};
+
 export function createAppTransitions({
   turntable,
   overlays,
   controls,
   audio,
-  selectTrack,
+  prepareTrack,
+  commitTrack,
+  rollbackTrack,
   waitForCoverReveal = () => Promise.resolve(),
   waitForDelay = waitForAbortableDelay
 }) {
-  const resetAfterPlaybackError = async (signal, tokens, profile) => {
-    await turntable.resetAfterPlaybackError({
-      signal,
-      duration: tokens.settle
-    });
-    if (signal.aborted) return;
-    await controls.setLabel('再次抽取', {
-      signal,
-      duration: tokens.enter,
+  const setStableLabel = async (label, tokens, profile) => {
+    await controls.setLabel(label, {
+      signal: createCleanupSignal(),
+      duration: 0,
       profile
     });
   };
 
-  const loadSelectedTrack = async ({
+  const getRestoredLabel = (transaction) => (
+    Number.isInteger(transaction?.previousIndex) && transaction.previousIndex >= 0
+      ? '再次抽取'
+      : '抽取'
+  );
+
+  const restoreInterruptedSelection = async ({
+    transaction,
+    mechanics,
+    overlayState,
     signal,
-    targetIndex,
-    profile,
     tokens,
-    onSelected = () => {},
-    resetOnError = true
+    profile
   }) => {
-    try {
-      const track = await selectTrack(targetIndex, { signal });
-      assertActive(signal);
-      onSelected();
-      const loaded = await audio.load(track);
-      if (loaded === false) throw new Error('Audio load did not complete');
-      assertActive(signal);
-      return track;
-    } catch (error) {
-      if (resetOnError && !signal.aborted) {
-        await resetAfterPlaybackError(signal, tokens, profile);
+    let playbackRestored = false;
+
+    if (transaction) {
+      try {
+        const failure = signal.reason;
+        const retryable = audio.getState?.().status === 'error'
+          || ['load', 'playback'].includes(failure?.audioOperation)
+          || (failure instanceof Error && /^Audio (?:load|playback)/.test(failure.message));
+        const result = await rollbackTrack(transaction, {
+          resumePlayback: true,
+          retryable
+        });
+        playbackRestored = result?.playbackRestored === true;
+      } catch {
+        playbackRestored = false;
       }
-      throw error;
     }
+
+    if (playbackRestored && typeof turntable.restoreState === 'function') {
+      await turntable.restoreState(mechanics, {
+        duration: signal.aborted ? 0 : tokens.settle
+      });
+    } else {
+      await turntable.resetAfterPlaybackError({
+        duration: signal.aborted ? 0 : tokens.settle
+      });
+    }
+
+    if (overlayState && typeof overlays.restoreAfterTrackSwitch === 'function') {
+      await overlays.restoreAfterTrackSwitch(overlayState, {
+        signal: createCleanupSignal(),
+        duration: 0,
+        profile
+      });
+    }
+
+    await setStableLabel(getRestoredLabel(transaction), tokens, profile);
   };
 
-  const playSelectedTrack = async (signal, tokens, profile, { resetOnError = true } = {}) => {
-    try {
-      const played = await audio.play({ signal });
-      if (played === false) throw new Error('Audio playback did not start');
-    } catch (error) {
-      if (resetOnError) await resetAfterPlaybackError(signal, tokens, profile);
-      assertActive(signal);
-      throw error;
+  const settleCommittedSelection = async ({ tokens, profile }) => {
+    if (typeof audio.getState === 'function' && audio.getState().status !== 'playing') {
+      await turntable.resetAfterPlaybackError({ duration: 0 });
+      await setStableLabel('再次抽取', tokens, profile);
+      return;
     }
+    turntable.setSpinning(true);
+    await Promise.all([
+      turntable.moveArmTo('play', {
+        signal: createCleanupSignal(),
+        duration: 0,
+        profile
+      }),
+      turntable.rampRateTo(0.68, {
+        signal: createCleanupSignal(),
+        duration: 0,
+        profile
+      })
+    ]);
+    await setStableLabel('再次抽取', tokens, profile);
+  };
+
+  const loadPreparedTrack = async (transaction, signal, profile) => {
+    const loadAudio = async () => {
+      try {
+        return await audio.load(transaction.track, { signal });
+      } catch (error) {
+        throw markAudioFailure(error, 'load');
+      }
+    };
+    const [loaded] = await Promise.all([
+      loadAudio(),
+      transaction.ready || Promise.resolve()
+    ]);
+    assertActive(signal);
+    if (loaded === false) throw new Error('Audio load did not complete');
+    await commitTrack(transaction, { signal, profile });
+    assertActive(signal);
+    return transaction.track;
+  };
+
+  const playPreparedTrack = async (signal) => {
+    let played;
+    try {
+      played = await audio.play({ signal });
+    } catch (error) {
+      throw markAudioFailure(error, 'playback');
+    }
+    assertActive(signal);
+    if (played === false) throw new Error('Audio playback did not start');
   };
 
   return {
     async draw({ signal, targetIndex, profile, tokens }) {
-      const overlayState = await overlays.closeAll({
-        signal,
-        duration: tokens.enter,
-        profile
-      });
-      assertActive(signal);
+      let transaction = null;
+      let playbackStarted = false;
+      let overlayState = overlays.readState?.() || null;
+      const mechanics = turntable.readState();
+      const scope = createOperationScope(signal);
+      const operationSignal = scope.signal;
+      const inFlight = createInFlightTracker();
 
-      audio.pause();
-      assertActive(signal);
+      try {
+        transaction = prepareTrack(targetIndex, { signal: operationSignal });
+        assertActive(operationSignal);
 
-      const current = turntable.readState();
-      turntable.setSpinning(true);
-      await Promise.all([
-        controls.setLabel('读取中', { signal, duration: tokens.enter, profile }),
-        turntable.moveArmTo('rest', {
-          signal,
-          duration: tokens.move,
-          from: current.arm,
+        const overlayStatePromise = inFlight.track(overlays.closeAll({
+          signal: operationSignal,
+          duration: tokens.enter,
           profile
-        }),
-        turntable.rampRateTo(5.2, {
-          signal,
-          duration: tokens.move,
-          from: current.rate,
+        }));
+        const busyLabel = controls.setLabel('抽取中', {
+          signal: operationSignal,
+          duration: tokens.enter,
           profile
-        })
-      ]);
-      assertActive(signal);
+        });
 
-      let lyricHold = Promise.resolve();
-      await loadSelectedTrack({
-        signal,
-        targetIndex,
-        profile,
-        tokens,
-        onSelected: () => {
-          lyricHold = Promise.resolve(waitForCoverReveal({ signal }))
-            .then(() => waitForDelay(DRAW_LYRIC_HOLD_MS, signal));
+        audio.pause();
+        turntable.setSpinning(true);
+
+        const bridge = inFlight.track(Promise.all([
+          busyLabel,
+          turntable.moveArmTo('rest', {
+            signal: operationSignal,
+            duration: tokens.move,
+            from: mechanics.arm,
+            profile
+          }),
+          turntable.rampRateTo(5.2, {
+            signal: operationSignal,
+            duration: tokens.move,
+            from: mechanics.rate,
+            profile
+          })
+        ]));
+        const loading = inFlight.track(loadPreparedTrack(transaction, operationSignal, profile));
+        const coverSettled = inFlight.track(loading.then(async () => {
+          assertActive(operationSignal);
+          await waitForCoverReveal({ signal: operationSignal });
+          assertActive(operationSignal);
+        }));
+        const coverHold = inFlight.track(coverSettled.then(() => (
+          waitForDelay(DRAW_LYRIC_HOLD_MS, operationSignal)
+        )));
+        const turntableSettling = inFlight.track(coverSettled.then(() => Promise.all([
+          turntable.moveArmTo('play', {
+            signal: operationSignal,
+            duration: Math.min(tokens.settle, DRAW_LYRIC_HOLD_MS),
+            profile
+          }),
+          turntable.rampRateTo(0.68, {
+            signal: operationSignal,
+            duration: tokens.settle,
+            profile
+          })
+        ])));
+        const [closedOverlayState] = await Promise.all([overlayStatePromise, bridge, loading]);
+        overlayState ||= closedOverlayState;
+        assertActive(operationSignal);
+
+        await coverHold;
+        assertActive(operationSignal);
+
+        await playPreparedTrack(operationSignal);
+        playbackStarted = true;
+
+        await overlays.open('lyrics', {
+          signal: operationSignal,
+          duration: tokens.enter,
+          profile,
+          previousState: overlayState
+        });
+        assertActive(operationSignal);
+
+        await turntableSettling;
+        assertActive(operationSignal);
+
+        await controls.setLabel('再次抽取', {
+          signal: operationSignal,
+          duration: tokens.enter,
+          profile
+        });
+        assertActive(operationSignal);
+      } catch (error) {
+        scope.abort(error);
+        await inFlight.settle();
+        if (playbackStarted) {
+          await settleCommittedSelection({ tokens, profile });
+        } else {
+          await restoreInterruptedSelection({
+            transaction,
+            mechanics,
+            overlayState,
+            signal: operationSignal,
+            tokens,
+            profile
+          });
         }
-      });
-
-      const turntableSettling = Promise.all([
-        turntable.moveArmTo('play', { signal, duration: tokens.settle, profile }),
-        turntable.rampRateTo(0.68, { signal, duration: tokens.settle, profile })
-      ]);
-
-      await lyricHold;
-      assertActive(signal);
-
-      await overlays.open('lyrics', {
-        signal,
-        duration: tokens.enter,
-        profile,
-        previousState: overlayState
-      });
-      assertActive(signal);
-
-      await turntableSettling;
-      assertActive(signal);
-
-      await playSelectedTrack(signal, tokens, profile);
-      assertActive(signal);
-      await controls.setLabel('再次抽取', { signal, duration: tokens.enter, profile });
-      assertActive(signal);
+        throw error;
+      } finally {
+        scope.dispose();
+      }
     },
 
     async switchTrack({
@@ -156,97 +321,131 @@ export function createAppTransitions({
       headless = false,
       showLyrics = false
     }) {
-      let pausedForSwitch = false;
+      let transaction = null;
       let playbackStarted = false;
+      let overlayState = headless ? null : overlays.readState?.() || null;
+      const mechanics = turntable.readState();
+      const scope = createOperationScope(signal);
+      const operationSignal = scope.signal;
+      const inFlight = createInFlightTracker();
 
       try {
-        const overlayState = headless
-          ? null
-          : await overlays.closeAll({ signal, duration: tokens.enter, profile });
-        assertActive(signal);
+        transaction = prepareTrack(targetIndex, { signal: operationSignal });
+        assertActive(operationSignal);
+
+        const overlayStatePromise = headless
+          ? Promise.resolve(null)
+          : inFlight.track(overlays.closeAll({
+              signal: operationSignal,
+              duration: tokens.enter,
+              profile
+            }));
+        const busyLabel = headless
+          ? Promise.resolve()
+          : controls.setLabel('抽取中', {
+              signal: operationSignal,
+              duration: tokens.enter,
+              profile
+            });
 
         audio.pause();
-        pausedForSwitch = true;
-        assertActive(signal);
+        const bridgeRate = Math.min(5.2, Math.max(1.85, mechanics.rate + 0.92));
+        const bridge = headless
+          ? Promise.resolve()
+          : (() => {
+              turntable.setSpinning(true);
+              return inFlight.track(Promise.all([
+                busyLabel,
+                turntable.moveArmTo('rest', {
+                  signal: operationSignal,
+                  duration: tokens.move,
+                  from: mechanics.arm,
+                  profile
+                }),
+                turntable.rampRateTo(bridgeRate, {
+                  signal: operationSignal,
+                  duration: tokens.move,
+                  from: mechanics.rate,
+                  profile
+                })
+              ]));
+            })();
+        const loading = inFlight.track(loadPreparedTrack(transaction, operationSignal, profile));
+        const [closedOverlayState] = await Promise.all([overlayStatePromise, bridge, loading]);
+        overlayState ||= closedOverlayState;
+        assertActive(operationSignal);
 
-        const current = turntable.readState();
-        const bridgeRate = Math.min(5.2, Math.max(1.85, current.rate + 0.92));
         if (!headless) {
-          turntable.setSpinning(true);
-          await Promise.all([
-            turntable.moveArmTo('rest', {
-              signal,
-              duration: tokens.move,
-              from: current.arm,
+          await waitForCoverReveal({ signal: operationSignal });
+          assertActive(operationSignal);
+          if (!showLyrics) {
+            await overlays.refresh({
+              signal: operationSignal,
+              duration: tokens.enter,
               profile
-            }),
-            turntable.rampRateTo(bridgeRate, {
-              signal,
-              duration: tokens.move,
-              from: current.rate,
-              profile
-            })
-          ]);
-          assertActive(signal);
-        }
-
-        await loadSelectedTrack({
-          signal,
-          targetIndex,
-          profile,
-          tokens,
-          resetOnError: false
-        });
-
-        if (!headless && !showLyrics) {
-          await overlays.refresh({ signal, duration: tokens.enter, profile });
-          assertActive(signal);
+            });
+            assertActive(operationSignal);
+          }
         }
 
         if (headless) turntable.setSpinning(true);
         await Promise.all([
           turntable.moveArmTo('play', {
-            signal,
+            signal: operationSignal,
             duration: headless ? 0 : tokens.settle,
             profile
           }),
           turntable.rampRateTo(0.68, {
-            signal,
+            signal: operationSignal,
             duration: headless ? 0 : tokens.settle,
             profile
           })
         ]);
-        assertActive(signal);
+        assertActive(operationSignal);
 
-        await playSelectedTrack(signal, tokens, profile, { resetOnError: false });
+        await playPreparedTrack(operationSignal);
         playbackStarted = true;
-        assertActive(signal);
 
         if (!headless) {
           if (showLyrics) {
             await overlays.open('lyrics', {
-              signal,
+              signal: operationSignal,
               duration: tokens.enter,
               profile,
               previousState: overlayState
             });
           } else {
             await overlays.restoreAfterTrackSwitch(overlayState, {
-              signal,
+              signal: operationSignal,
               duration: tokens.enter,
               profile
             });
           }
-          assertActive(signal);
+          assertActive(operationSignal);
+          await controls.setLabel('再次抽取', {
+            signal: operationSignal,
+            duration: tokens.enter,
+            profile
+          });
         }
+      } catch (error) {
+        scope.abort(error);
+        await inFlight.settle();
+        if (playbackStarted) {
+          await settleCommittedSelection({ tokens, profile });
+        } else {
+          await restoreInterruptedSelection({
+            transaction,
+            mechanics,
+            overlayState,
+            signal: operationSignal,
+            tokens,
+            profile
+          });
+        }
+        throw error;
       } finally {
-        if (pausedForSwitch && !playbackStarted) {
-          if (signal.aborted) {
-            await turntable.resetAfterPlaybackError({ duration: 0 });
-          } else {
-            await resetAfterPlaybackError(signal, tokens, profile);
-          }
-        }
+        scope.dispose();
       }
     },
 

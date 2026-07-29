@@ -19,9 +19,29 @@ export function createAudioController({
     const updatePlaybackState = () => {
         if (!mediaSession) return;
         try {
-            mediaSession.playbackState = status === 'playing' ? 'playing' : 'paused';
+            mediaSession.playbackState = status === 'playing'
+                ? 'playing'
+                : status === 'idle'
+                    ? 'none'
+                    : 'paused';
         } catch {
             // Partial Media Session implementations may reject state writes.
+        }
+    };
+    const setMediaMetadata = (metadata) => {
+        if (!mediaSession) return;
+        try {
+            mediaSession.metadata = metadata || null;
+        } catch {
+            // Media Session metadata is optional and may be read-only in embedded webviews.
+        }
+    };
+    const clearPositionState = () => {
+        if (typeof mediaSession?.setPositionState !== 'function') return;
+        try {
+            mediaSession.setPositionState();
+        } catch {
+            // Clearing position state is optional in partial Media Session implementations.
         }
     };
     const updatePositionState = () => {
@@ -55,6 +75,11 @@ export function createAudioController({
     const onError = () => {
         invalidatePlayAttempt();
         audio.pause();
+        if (!track) {
+            clearPositionState();
+            if (status !== 'error') setStatus('idle');
+            return;
+        }
         setStatus('error', new Error(`Audio failed: ${track?.title || 'unknown'}`));
     };
     const onPlay = () => {
@@ -92,6 +117,43 @@ export function createAudioController({
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.preload = 'metadata';
     audio.setAttribute('playsinline', '');
+
+    const hasLoadedMetadata = () => (
+        Number.isFinite(audio.readyState) && audio.readyState >= 1
+    );
+    const createMetadataGate = ({ signal, timeoutMs = 8000 } = {}) => {
+        let settle = () => {};
+        const promise = new Promise((resolve) => {
+            let settled = false;
+            let timer = null;
+            const finish = (ready) => {
+                if (settled) return;
+                settled = true;
+                if (timer !== null) clearTimeout(timer);
+                audio.removeEventListener('loadedmetadata', onReady);
+                audio.removeEventListener('canplay', onReady);
+                audio.removeEventListener('error', onErrorEvent);
+                signal?.removeEventListener('abort', onAbort);
+                resolve(ready);
+            };
+            const onReady = () => finish(true);
+            const onErrorEvent = () => finish(false);
+            const onAbort = () => finish(false);
+            settle = finish;
+
+            audio.addEventListener('loadedmetadata', onReady, { once: true });
+            audio.addEventListener('canplay', onReady, { once: true });
+            audio.addEventListener('error', onErrorEvent, { once: true });
+            signal?.addEventListener('abort', onAbort, { once: true });
+            timer = setTimeout(() => finish(false), timeoutMs);
+            if (signal?.aborted) finish(false);
+        });
+
+        return {
+            promise,
+            cancel() { settle(false); }
+        };
+    };
 
     const load = async (nextTrack) => {
         const id = ++requestId;
@@ -182,6 +244,82 @@ export function createAudioController({
         }
     };
 
+    const clear = ({ nextStatus = 'idle', nextError = null } = {}) => {
+        requestId += 1;
+        invalidatePlayAttempt();
+        track = null;
+        status = nextStatus;
+        error = nextError;
+        audio.pause();
+        audio.removeAttribute?.('src');
+        audio.load();
+        setMediaMetadata(null);
+        clearPositionState();
+        setStatus(nextStatus, nextError);
+        return { status, error, track };
+    };
+
+    const restore = async (snapshot, {
+        resumePlayback = true,
+        restoreVolume = true,
+        signal,
+        metadataTimeoutMs = 8000,
+        emptyStatus = 'idle',
+        emptyError = null
+    } = {}) => {
+        if (!snapshot?.track?.musicOssUrl) {
+            clear({ nextStatus: emptyStatus, nextError: emptyError });
+            return { playbackRestored: false };
+        }
+
+        const restoredTime = Number.isFinite(snapshot.currentTime)
+            ? Math.max(0, snapshot.currentTime)
+            : 0;
+        const metadataGate = restoredTime > 0
+            ? createMetadataGate({ signal, timeoutMs: metadataTimeoutMs })
+            : null;
+        setMediaMetadata(snapshot.mediaMetadata);
+        clearPositionState();
+
+        try {
+            const loaded = await load(snapshot.track);
+            if (loaded === false) return { playbackRestored: false };
+
+            if (metadataGate) {
+                const metadataReady = hasLoadedMetadata() || await metadataGate.promise;
+                if (!metadataReady) {
+                    throw new Error(`Audio metadata recovery timed out: ${snapshot.track.title || 'unknown'}`);
+                }
+            }
+
+            audio.currentTime = restoredTime;
+            if (restoreVolume && Number.isFinite(snapshot.volume)) {
+                try {
+                    audio.volume = snapshot.volume;
+                } catch {
+                    // iOS and embedded browsers may expose a read-only media volume.
+                }
+            }
+            setMediaMetadata(snapshot.mediaMetadata);
+            updatePositionState();
+
+            if (resumePlayback && snapshot.status === 'playing') {
+                return { playbackRestored: await play({ signal }) !== false };
+            }
+
+            if (snapshot.status === 'error') {
+                setStatus('error', snapshot.error || new Error(`Audio failed: ${snapshot.track.title || 'unknown'}`));
+            } else if (snapshot.status === 'paused' || snapshot.status === 'playing') {
+                setStatus('paused');
+            } else {
+                setStatus('ready');
+            }
+            return { playbackRestored: false };
+        } finally {
+            metadataGate?.cancel();
+        }
+    };
+
     const safeAction = (handler) => (details) => {
         try {
             Promise.resolve(handler?.(details)).catch(() => {});
@@ -239,15 +377,33 @@ export function createAudioController({
     return {
         load,
         play,
+        clear,
+        restore,
         pause() {
             invalidatePlayAttempt();
             audio.pause();
             if (status !== 'error' && status !== 'paused') setStatus('paused');
         },
-        async retry() {
+        async retry({ signal, metadataTimeoutMs = 8000 } = {}) {
             if (!track?.musicOssUrl) throw new Error('No audio track is loaded');
+            const retryTime = Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
+            const metadataGate = retryTime > 0
+                ? createMetadataGate({ signal, timeoutMs: metadataTimeoutMs })
+                : null;
             audio.load();
-            return play();
+            try {
+                if (metadataGate) {
+                    const metadataReady = hasLoadedMetadata() || await metadataGate.promise;
+                    if (!metadataReady) {
+                        throw new Error(`Audio metadata retry timed out: ${track.title || 'unknown'}`);
+                    }
+                    audio.currentTime = retryTime;
+                    updatePositionState();
+                }
+                return play({ signal });
+            } finally {
+                metadataGate?.cancel();
+            }
         },
         seekToFraction(fraction) {
             if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;

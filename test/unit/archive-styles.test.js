@@ -75,6 +75,17 @@ const splitTopLevel = (value, separator) => {
 
 const normalizeCssIdentifier = (value) => value.trim().toLowerCase();
 
+const interactionTransitionProperties = new Set([
+  'transform',
+  'opacity',
+  'color',
+  'background',
+  'border-color',
+  'box-shadow',
+  'text-shadow',
+  'none'
+]);
+
 const transitionProperties = (declaration) => {
   const value = declaration.trim().replace(/\s*!important\b/gi, '');
   if (normalizeCssIdentifier(value) === 'none') return ['none'];
@@ -94,7 +105,7 @@ const transitionProperties = (declaration) => {
     const properties = tokens
       .map(normalizeCssIdentifier)
       .filter((token) => !time.test(token) && !timingKeywords.has(token) && !behaviorKeywords.has(token) && !timingFunction.test(token));
-    return properties.length === 1 && ['transform', 'opacity', 'none'].includes(properties[0])
+    return properties.length === 1 && interactionTransitionProperties.has(properties[0])
       ? properties[0]
       : null;
   });
@@ -132,7 +143,7 @@ const assertActiveTransitionsSafe = (source) => {
     assert.ok(!invalidShorthand, `${selector} contains an unparseable or forbidden active transition shorthand`);
     assert.deepEqual(forbiddenLonghands, [], `${selector} contains forbidden active transition longhands: ${forbiddenLonghands.join(', ')}`);
     assert.ok(
-      properties.every((property) => ['transform', 'opacity', 'none'].includes(property)),
+      properties.every((property) => interactionTransitionProperties.has(property)),
       `${selector} transitions forbidden active-state properties: ${properties.join(', ')}`
     );
   }
@@ -199,17 +210,18 @@ test('the viewport uses only two directional projector fields', () => {
 test('overlay surfaces are true glass with a graceful non-blur fallback', () => {
   const overlayShell = archiveRuleBody('.result-area,\n        .playlist-area');
 
-  assert.match(overlayShell, /-webkit-backdrop-filter:\s*blur\(28px\) saturate\(1\.24\)/);
-  assert.match(overlayShell, /backdrop-filter:\s*blur\(28px\) saturate\(1\.24\)/);
+  assert.match(overlayShell, /--overlay-backdrop-filter:\s*blur\(28px\) saturate\(1\.24\)/);
+  assert.match(overlayShell, /-webkit-backdrop-filter:\s*var\(--overlay-backdrop-filter\)/);
+  assert.match(overlayShell, /(?<!-webkit-)backdrop-filter:\s*var\(--overlay-backdrop-filter\)/);
   assert.match(overlayShell, /color-mix\(in srgb, var\(--archive-void\) 30%, transparent\)/, 'the veil must stay sheer enough to see the stage');
   assert.match(
     archiveCss,
-    /\.playlist-content\s*\{[^}]*-webkit-backdrop-filter:\s*blur\(18px\) saturate\(1\.3\)/s,
+    /\.playlist-content\s*\{[^}]*--playlist-panel-backdrop-filter:\s*blur\(18px\) saturate\(1\.3\)[^}]*-webkit-backdrop-filter:\s*var\(--playlist-panel-backdrop-filter\)/s,
     'the playlist panel needs its own glass layer'
   );
   assert.match(
     archiveCss,
-    /\.playlist-content\s*\{[^}]*(?<!-webkit-)backdrop-filter:\s*blur\(18px\) saturate\(1\.3\)/s,
+    /\.playlist-content\s*\{[^}]*(?<!-webkit-)backdrop-filter:\s*var\(--playlist-panel-backdrop-filter\)/s,
     'the playlist panel needs its own glass layer'
   );
 
@@ -218,8 +230,10 @@ test('overlay surfaces are true glass with a graceful non-blur fallback', () => 
   ) || [];
   assert.equal(fallbackGates.length, 2, 'both glass surfaces need a denser non-blur fallback');
 
-  const glassDeclarations = css.match(/(?<!-webkit-)backdrop-filter\s*:\s*blur\((?!1px)/g) || [];
+  const glassDeclarations = css.match(/(?<!-webkit-)backdrop-filter\s*:\s*var\(--(?:overlay|playlist-panel)-backdrop-filter\)/g) || [];
   assert.equal(glassDeclarations.length, 2, 'glass blur stays confined to the two overlay surfaces');
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area\s*\{[^}]*--overlay-backdrop-filter:\s*blur\(16px\) saturate\(1\.12\)/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-content\s*\{[^}]*--playlist-panel-backdrop-filter:\s*none/s);
 });
 
 test('fullscreen layers use a stable fallback and dynamic viewport height', () => {
@@ -306,30 +320,30 @@ test('terminal interaction and error states use the archive palette with compact
   assert.ok(fixedRadii.every((radius) => radius <= 8), `terminal panel/tile radius exceeds 8px: ${fixedRadii.join(', ')}`);
 });
 
-test('active states transition only composited properties', () => {
-  const terminalActiveRules = [
-    '.play-btn:active',
-    '.player-ctrl-btn:active',
-    '.lyric-toggle-btn.is-visible:active,\n        .playlist-toggle-btn.is-visible:active,\n        .playlist-mode-switch:active,\n        .audio-status .audio-retry:not(:disabled):active',
-    '.result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active'
-  ];
+test('active states use an explicit interaction-property whitelist', () => {
+  const terminalActiveRules = new Map([
+    ['.play-btn:active', ['transform', 'opacity', 'background', 'box-shadow']],
+    ['.player-ctrl-btn:active', ['transform', 'opacity', 'color', 'border-color', 'background', 'box-shadow']],
+    ['.lyric-toggle-btn.is-visible:active,\n        .playlist-toggle-btn.is-visible:active,\n        .playlist-mode-switch:active,\n        .audio-status .audio-retry:not(:disabled):active', ['transform', 'opacity', 'border-color', 'background', 'box-shadow']],
+    ['.result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active', ['transform', 'opacity', 'border-color', 'background', 'box-shadow']]
+  ]);
 
-  for (const selector of terminalActiveRules) {
+  for (const [selector, expectedProperties] of terminalActiveRules) {
     const rule = archiveRuleBody(selector);
     const properties = [...rule.matchAll(/\btransition\s*:\s*([\s\S]*?);/g)]
       .flatMap((match) => transitionProperties(match[1]));
-    assert.deepEqual(properties, ['transform', 'opacity'], `${selector} must explicitly transition only transform and opacity`);
+    assert.deepEqual(properties, expectedProperties, `${selector} must explicitly transition its active visual state`);
   }
 
   assert.match(
     sourceRuleBody('.overlay-close-btn:active'),
-    /transition:\s*transform\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*opacity\s+0\.1s\s+var\(--continuity-ease\)\s+0s;/,
+    /transition:\s*transform\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*opacity\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*border-color\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*background\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*box-shadow\s+0\.1s\s+var\(--continuity-ease\)\s+0s;/,
     'the base overlay-close press transition must retain its 100ms continuity curve and zero delay'
   );
 
   assert.match(
     archiveRuleBody('.result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active'),
-    /transition:\s*transform\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*opacity\s+0\.1s\s+var\(--continuity-ease\)\s+0s;/,
+    /transition:\s*transform\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*opacity\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*border-color\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*background\s+0\.1s\s+var\(--continuity-ease\)\s+0s,\s*box-shadow\s+0\.1s\s+var\(--continuity-ease\)\s+0s;/,
     'the terminal visible overlay-close rule must win the cascade with the restored 100ms continuity timing'
   );
 
@@ -340,12 +354,12 @@ test('active states transition only composited properties', () => {
   );
 
   for (const [description, stylesheet] of [
-    ['reordered shorthand', '.reordered:active { transition: background ease 180ms; }'],
-    ['uppercase shorthand and active selector', '.uppercase:ACTIVE { TRANSITION: background 180ms; }'],
-    ['compact forbidden rule', 'a {} .compact:AcTiVe { transition: background 180ms; }'],
+    ['reordered shorthand', '.reordered:active { transition: filter ease 180ms; }'],
+    ['uppercase shorthand and active selector', '.uppercase:ACTIVE { TRANSITION: filter 180ms; }'],
+    ['compact forbidden rule', 'a {} .compact:AcTiVe { transition: filter 180ms; }'],
     ['opaque shorthand', '.opaque:active { transition: var(--active-transition); }'],
     ['forbidden longhand', '.longhand:active { transition: transform 180ms; transition-duration: 180ms; }'],
-    ['uppercase transition-property', '.property:ACTIVE { TRANSITION-PROPERTY: background; }']
+    ['uppercase transition-property', '.property:ACTIVE { TRANSITION-PROPERTY: filter; }']
   ]) {
     assert.throws(
       () => assertActiveTransitionsSafe(stylesheet),
@@ -355,6 +369,28 @@ test('active states transition only composited properties', () => {
   }
 
   assertActiveTransitionsSafe(css);
+});
+
+test('interactive controls smoothly transition only intentional visual properties', () => {
+  const controls = [
+    [sourceRuleBody('.loading-retry'), ['transform', 'color', 'border-color', 'background', 'box-shadow']],
+    [sourceRuleBody('.loading-skip'), ['transform', 'opacity', 'color', 'border-color', 'background', 'box-shadow']],
+    [archiveRuleBody('.play-btn'), ['transform', 'opacity', 'color', 'border-color', 'background', 'box-shadow']],
+    [archiveRuleBody('.lyric-toggle-btn,\n        .playlist-toggle-btn,\n        .overlay-close-btn'), ['transform', 'opacity', 'color', 'border-color', 'background', 'box-shadow']],
+    [archiveRuleBody('.playlist-mode-switch'), ['transform', 'opacity', 'color', 'border-color', 'background', 'box-shadow']],
+    [archiveRuleBody('.player-ctrl-btn'), ['transform', 'opacity', 'color', 'border-color', 'background', 'box-shadow']],
+    [archiveRuleBody('.audio-retry'), ['transform', 'opacity', 'color', 'border-color', 'background', 'box-shadow']],
+    [archiveRuleBody('.playlist-item'), ['transform', 'opacity', 'color', 'background', 'box-shadow', 'text-shadow']],
+    [sourceRuleBody('.footer-link'), ['transform', 'color', 'border-color', 'text-shadow']]
+  ];
+
+  for (const [rule, expectedProperties] of controls) {
+    const transitions = [...rule.matchAll(/\btransition\s*:\s*([\s\S]*?);/g)]
+      .flatMap((match) => transitionProperties(match[1]));
+    assert.deepEqual(transitions, expectedProperties);
+  }
+
+  assert.doesNotMatch(css, /\btransition\s*:\s*all\b/i);
 });
 
 test('archive transitions are composited and reduce states are instant', () => {
@@ -385,11 +421,11 @@ test('archive transitions are composited and reduce states are instant', () => {
 
   assert.ok(properties.length > 0, 'expected archive transition declarations');
   assert.ok(
-    properties.every((property) => ['opacity', 'transform', 'none'].includes(property)),
-    `archive transitions include non-composited properties: ${properties.join(', ')}`
+    properties.every((property) => interactionTransitionProperties.has(property)),
+    `archive transitions include unapproved properties: ${properties.join(', ')}`
   );
   assert.doesNotMatch(archiveCss, /\btransition(?:-property)?\s*:\s*all\b/);
-  assert.match(archiveRuleBody('.vinyl-cover'), /transition:\s*opacity\s+0\.82s\s+var\(--crossfade-ease\),\s*transform\s+0\.82s\s+var\(--continuity-ease\)/);
+  assert.match(archiveRuleBody('.vinyl-cover'), /transition:\s*none/);
   assert.match(archiveRuleBody('.tonearm-dock'), /transition:\s*opacity\s+0\.32s\s+var\(--continuity-ease\)/);
   assert.match(archiveRuleBody('body.is-track-transitioning .playlist-content'), /filter:\s*none/);
   assert.match(archiveRuleBody('body.is-track-transitioning .playlist-content'), /transition:\s*transform\s+0\.24s\s+var\(--continuity-ease\),\s*opacity\s+0\.24s\s+var\(--continuity-ease\)/);
@@ -408,10 +444,12 @@ test('linear wrappers are limited to physical motion and keyframes with explicit
   );
 
   assert.deepEqual(declarationCounts, {
-    'animation: loading-poster-to-player-motion var(--final-resolve-ms, 1100ms) linear both, loading-poster-to-player-shape var(--final-resolve-ms, 1100ms) linear both;': 1,
-    'animation: loading-target-cover-reveal 1100ms linear both;': 1,
+    'animation: loading-poster-to-player-motion var(--loading-handoff-morph-ms, 1280ms) linear both, loading-poster-to-player-shape var(--loading-handoff-morph-ms, 1280ms) linear both;': 1,
+    'animation: loading-vinyl-grooves-reveal var(--loading-player-reveal-ms, 794ms) linear var(--loading-player-reveal-delay-ms, 486ms) both;': 1,
+    'animation: loading-vinyl-highlight-reveal var(--loading-player-reveal-ms, 794ms) linear var(--loading-player-reveal-delay-ms, 486ms) both;': 1,
+    'animation: loading-vinyl-surface-reveal var(--loading-player-reveal-ms, 794ms) linear var(--loading-player-reveal-delay-ms, 486ms) both;': 1,
     'animation: loading-portal-stretch var(--portal-phase-ms, 760ms) linear both, loading-portal-luminance var(--portal-phase-ms, 760ms) linear both;': 2,
-    'animation: loading-backdrop-reveal var(--final-resolve-ms, 1100ms) linear both;': 1,
+    'animation: loading-backdrop-reveal var(--final-resolve-ms, 1280ms) linear both;': 1,
     'animation: playlist-ring-orbit 16s linear infinite, playlist-panel-edge-breathe 9.8s var(--continuity-ease) infinite;': 1,
     'transition: opacity 120ms linear;': 2,
     'transition: transform 0.2s linear;': 2,
@@ -495,6 +533,7 @@ test('lamp portal separates Carbon stretch and luminance tracks around one bound
   const bottomHalo = archiveRuleBody('.loading-light-slit[data-portal-side="bottom"] .loading-light-core::before');
   const warm = archiveRuleBody('.loading-light-slit[data-portal-side="top"] .loading-light-edge.is-warm,\n        .loading-light-slit[data-portal-side="bottom"] .loading-light-edge.is-warm');
   const cool = archiveRuleBody('.loading-light-slit[data-portal-side="top"] .loading-light-edge.is-cool,\n        .loading-light-slit[data-portal-side="bottom"] .loading-light-edge.is-cool');
+  const finalGate = archiveRuleBody('.loading-screen.is-final-resolving .loading-light-slit');
   const stretch = blockBody(archiveCss, '@keyframes loading-portal-stretch {');
   const luminance = blockBody(archiveCss, '@keyframes loading-portal-luminance {');
 
@@ -534,7 +573,13 @@ test('lamp portal separates Carbon stretch and luminance tracks around one bound
   assert.doesNotMatch(`${core}\n${topHalo}\n${bottomHalo}`, /rgba\(0,\s*0,\s*0/, 'the portal must not paint a black core');
   assert.match(warm, /display:\s*none/);
   assert.match(cool, /display:\s*none/);
-  assert.match(archiveCss, /\.loading-light-slit\.is-lit > span\s*\{[^}]*animation:\s*none/s);
+  assert.match(finalGate, /display:\s*none/);
+  assert.match(finalGate, /opacity:\s*0/);
+  assert.match(finalGate, /animation:\s*none !important/);
+  assert.match(
+    archiveCss,
+    /\.loading-light-slit\.is-lit\[data-portal-phase\] > \.loading-light-core,[\s\S]*\.loading-light-slit\.is-lit\[data-portal-phase\] > \.loading-light-edge\.is-cool\s*\{[^}]*animation:\s*none;[^}]*opacity:\s*1/s
+  );
   assert.equal(
     (archiveCss.match(
       /loading-portal-stretch var\(--portal-phase-ms, 760ms\) linear both,\s*loading-portal-luminance var\(--portal-phase-ms, 760ms\) linear both/g
@@ -553,7 +598,7 @@ test('lamp portal separates Carbon stretch and luminance tracks around one bound
   assert.match(stretch, /78%\s*\{[^}]*scale3d\(1\.004, 1, 1\)[^}]*cubic-bezier\(0\.4, 0, 1, 1\)/s);
   assert.match(stretch, /100%\s*\{[^}]*scale3d\(1\.018, 1, 1\)/s);
   assert.match(luminance, /0%\s*\{[^}]*opacity:\s*0[^}]*cubic-bezier\(0\.2, 0, 0, 1\)/s);
-  assert.match(luminance, /12%\s*\{[^}]*opacity:\s*0\.38[^}]*cubic-bezier\(0, 0, 0\.3, 1\)/s);
+  assert.match(luminance, /12%\s*\{[^}]*opacity:\s*0\.58[^}]*cubic-bezier\(0, 0, 0\.3, 1\)/s);
   assert.match(luminance, /40%\s*\{\s*opacity:\s*1/);
   assert.match(luminance, /78%\s*\{[^}]*opacity:\s*0\.98[^}]*cubic-bezier\(0\.4, 0, 1, 1\)/s);
   assert.match(luminance, /100%\s*\{\s*opacity:\s*0/);
@@ -573,7 +618,7 @@ test('posters travel vertically through geometric gates without edge transparenc
   const enterViewport = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering-from-portal[data-portal-side="top"] .loading-artwork-viewport');
   const exitViewport = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting-to-portal[data-portal-side="bottom"] .loading-artwork-viewport');
   const posterImage = archiveRuleBody('.loading-screen .loading-frame .loading-image');
-  const floatingFrame = archiveRuleBody('.loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing)');
+  const floatingFrame = archiveRuleBody('.loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing):not([data-final-poster="true"])');
   const litImage = archiveRuleBody('.loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing) .loading-image');
   const enterBinding = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"] .loading-image');
   const enterAura = archiveRuleBody('.loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering.is-entering-from-portal[data-portal-side="top"]::before');

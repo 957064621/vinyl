@@ -106,6 +106,7 @@ const installDeterministicMedia = async (page) => {
       state.currentTime = 0;
       state.ended = false;
       window.__testAudio = this;
+      queueMicrotask(() => this.dispatchEvent(new Event('loadedmetadata')));
     };
     HTMLMediaElement.prototype.play = function play() {
       const state = stateFor(this);
@@ -307,13 +308,40 @@ test('draw keeps the switched record cover visible for 500ms before lyrics appea
     const coverRoot = document.querySelector('.vinyl-sticker');
     const resultArea = document.querySelector('#resultArea');
     const archiveState = document.querySelector('#archivePlaybackState');
+    const archiveSong = document.querySelector('#archiveTrackSong');
     const initialActiveCover = coverRoot.querySelector('.vinyl-cover.is-active');
+    const initialArchiveSong = archiveSong.textContent;
     window.__drawRevealTiming = {
       coverChangedAt: null,
       coverAt: null,
       lyricsAt: null,
-      archiveStates: [archiveState.textContent]
+      archiveStates: [archiveState.textContent],
+      activeCoverCounts: [coverRoot.querySelectorAll('.vinyl-cover.is-active').length],
+      metadataCommits: [],
+      sawRadialReveal: false
     };
+
+    const recordCoverState = () => {
+      const timing = window.__drawRevealTiming;
+      timing.activeCoverCounts.push(coverRoot.querySelectorAll('.vinyl-cover.is-active').length);
+      timing.sawRadialReveal ||= Array.from(coverRoot.querySelectorAll('.vinyl-cover'))
+        .some((cover) => cover.style.clipPath.startsWith('circle('));
+    };
+    new MutationObserver(recordCoverState).observe(coverRoot, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ['class', 'style']
+    });
+
+    new MutationObserver(() => {
+      if (archiveSong.textContent === initialArchiveSong) return;
+      const activeCover = coverRoot.querySelector('.vinyl-cover.is-active');
+      window.__drawRevealTiming.metadataCommits.push({
+        song: archiveSong.textContent,
+        activeCoverCount: coverRoot.querySelectorAll('.vinyl-cover.is-active').length,
+        activeCoverId: activeCover?.id || ''
+      });
+    }).observe(archiveSong, { childList: true, subtree: true, characterData: true });
 
     const sampleCover = () => {
       const timing = window.__drawRevealTiming;
@@ -369,6 +397,13 @@ test('draw keeps the switched record cover visible for 500ms before lyrics appea
   expect(timing.lyricsAt - timing.coverAt)
     .toBeLessThanOrEqual(DRAW_LYRIC_HOLD_MS + 150);
   expect(timing.activeCoverCount).toBe(1);
+  expect(Math.max(...timing.activeCoverCounts)).toBe(1);
+  expect(timing.sawRadialReveal).toBe(true);
+  expect(timing.metadataCommits.length).toBeGreaterThan(0);
+  expect(timing.metadataCommits.every(({ activeCoverCount }) => activeCoverCount === 1)).toBe(true);
+  expect(timing.metadataCommits.at(-1).activeCoverId).toBe(
+    await page.locator('.vinyl-cover.is-active').getAttribute('id')
+  );
   expect(timing.archiveStates).toContain('抽取中');
   expect(timing.archiveStates.at(-1)).toBe('播放');
   const drawingIndex = timing.archiveStates.indexOf('抽取中');
@@ -385,8 +420,12 @@ test('redraw keeps the replacement cover fully visible for 500ms before reopenin
     const resultArea = document.querySelector('#resultArea');
     const initialActiveCover = coverRoot.querySelector('.vinyl-cover.is-active');
     let resolveMidHold;
-    window.__redrawCoverHoldPromise = new Promise((resolve) => {
+    let resolveLyrics;
+    const midHoldPromise = new Promise((resolve) => {
       resolveMidHold = resolve;
+    });
+    const lyricsPromise = new Promise((resolve) => {
+      resolveLyrics = resolve;
     });
     window.__redrawRevealTiming = {
       initialActiveCoverId: initialActiveCover?.id || '',
@@ -409,6 +448,7 @@ test('redraw keeps the replacement cover fully visible for 500ms before reopenin
         timing.lyricsClosedAt ??= performance.now();
       } else if (timing.sawLyricsClosed && timing.lyricsAt === null) {
         timing.lyricsAt = performance.now();
+        resolveLyrics();
       }
     };
     new MutationObserver(readLyricsState).observe(resultArea, {
@@ -450,33 +490,134 @@ test('redraw keeps the replacement cover fully visible for 500ms before reopenin
       }
     };
     requestAnimationFrame(sampleCover);
+    window.__redrawTimingPromise = Promise.all([midHoldPromise, lyricsPromise])
+      .then(() => ({ ...window.__redrawRevealTiming }));
   }, DRAW_LYRIC_HOLD_MS);
 
   await page.locator('#playButton').click();
-  await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/, { timeout: 5_000 });
-  await page.evaluate(() => window.__redrawCoverHoldPromise);
-  expect(await page.evaluate(() => window.__redrawRevealTiming.midHoldLyricsVisible)).toBe(false);
-  await testInfo.attach('redraw-cover-hold', {
-    body: await page.screenshot(),
-    contentType: 'image/png'
-  });
-  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
-  await expect.poll(() => page.evaluate(() => (
-    window.__redrawRevealTiming.coverSettledAt !== null
-      && window.__redrawRevealTiming.lyricsAt !== null
-  )), { timeout: 5_000 }).toBe(true);
-
-  const timing = await page.evaluate(() => ({ ...window.__redrawRevealTiming }));
+  const timing = await page.evaluate(() => window.__redrawTimingPromise);
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/);
+  expect(timing.midHoldLyricsVisible).toBe(false);
   expect(timing.replacementCoverId).not.toBe(timing.initialActiveCoverId);
   expect(timing.replacementHadLoadingHandoff).toBe(false);
   expect(timing.replacementAnimationName).not.toContain('loading-target-cover-reveal');
   expect(timing.coverChangedAt).not.toBeNull();
   expect(timing.coverSettledAt).not.toBeNull();
+  expect(timing.lyricsClosedAt).not.toBeNull();
   expect(timing.lyricsAt).not.toBeNull();
   expect(timing.lyricsAt - timing.coverSettledAt)
     .toBeGreaterThanOrEqual(DRAW_LYRIC_HOLD_MS - 20);
   expect(timing.lyricsAt - timing.coverSettledAt)
     .toBeLessThanOrEqual(DRAW_LYRIC_HOLD_MS + 150);
+  await testInfo.attach('redraw-after-cover-hold', {
+    body: await page.screenshot(),
+    contentType: 'image/png'
+  });
+});
+
+test('a failed redraw restores the last playable track, cover, lyrics, and playback position', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await waitForApp(page);
+  await drawAndOpenLyrics(page);
+
+  const before = await page.evaluate(() => {
+    const audio = window.__testAudio;
+    audio.currentTime = 137;
+    audio.dispatchEvent(new Event('timeupdate'));
+    const activeCover = document.querySelector('.vinyl-cover.is-active');
+    return {
+      song: document.querySelector('#songName').textContent,
+      archiveSong: document.querySelector('#archiveTrackSong').textContent,
+      coverId: activeCover?.id || '',
+      coverImage: activeCover?.style.backgroundImage || '',
+      metadataTitle: window.__mediaSession.metadata?.title || ''
+    };
+  });
+
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    let rejectNextPlay = true;
+    HTMLMediaElement.prototype.play = function playWithOneFailure() {
+      if (rejectNextPlay) {
+        rejectNextPlay = false;
+        return Promise.reject(new Error('deterministic redraw failure'));
+      }
+      return originalPlay.call(this);
+    };
+  });
+
+  await page.locator('#playButton').click();
+  await expect(page.locator('#playButton')).not.toHaveAttribute('data-busy', '', { timeout: 12_000 });
+  await expect(page.locator('body')).toHaveAttribute('data-audio-state', 'playing');
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/);
+  await expect(page.locator('#btnText')).toHaveText('再次抽取');
+
+  const after = await page.evaluate(() => {
+    const activeCover = document.querySelector('.vinyl-cover.is-active');
+    return {
+      song: document.querySelector('#songName').textContent,
+      archiveSong: document.querySelector('#archiveTrackSong').textContent,
+      coverId: activeCover?.id || '',
+      coverImage: activeCover?.style.backgroundImage || '',
+      activeCoverCount: document.querySelectorAll('.vinyl-cover.is-active').length,
+      metadataTitle: window.__mediaSession.metadata?.title || '',
+      currentTime: window.__testAudio.currentTime
+    };
+  });
+
+  expect(after).toMatchObject({
+    ...before,
+    activeCoverCount: 1,
+    currentTime: 137
+  });
+});
+
+test('retrying a failed first draw reruns the transaction before exposing the track', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await waitForApp(page);
+
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    let rejectNextPlay = true;
+    HTMLMediaElement.prototype.play = function playWithOneFailure() {
+      if (rejectNextPlay) {
+        rejectNextPlay = false;
+        return Promise.reject(new Error('deterministic first draw failure'));
+      }
+      return originalPlay.call(this);
+    };
+  });
+
+  await page.locator('#playButton').click();
+  await expect(page.locator('body')).toHaveAttribute('data-audio-state', 'error', { timeout: 12_000 });
+  await expect(page.locator('#archiveTrackSong')).toHaveText('未抽取');
+  await expect(page.locator('#btnText')).toHaveText('抽取');
+  await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/);
+
+  await page.locator('#audioRetry').click();
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+  await expect(page.locator('body')).toHaveAttribute('data-audio-state', 'playing');
+  await expect(page.locator('#archiveTrackSong')).not.toHaveText('未抽取');
+  await expect(page.locator('#btnText')).toHaveText('再次抽取');
+});
+
+test('rapid repeated draws leave only the last transaction committed and playing', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await waitForApp(page);
+
+  await page.locator('#playButton').click();
+  await page.waitForTimeout(60);
+  await page.locator('#playButton').click();
+
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+  await expect(page.locator('body')).toHaveAttribute('data-audio-state', 'playing');
+  await expect(page.locator('#btnText')).toHaveText('再次抽取');
+  await expect(page.locator('#playButton')).not.toHaveAttribute('data-busy', '');
+  await expect(page.locator('.vinyl-cover.is-active')).toHaveCount(1);
+
+  const state = await readTurntableState(page);
+  expect(state.turntablePlaying).toBe(true);
+  expect(state.playerPlaying).toBe(true);
 });
 
 test('normal pause settles the record, sheen, and tonearm at rest', async ({ page }, testInfo) => {
@@ -486,6 +627,28 @@ test('normal pause settles the record, sheen, and tonearm at rest', async ({ pag
 
   await page.locator('#playerToggleBtn').click();
 
+  await expectCompleteRestState(page);
+});
+
+test('opening the playlist during pause fade preserves the complete pause intent', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await waitForApp(page);
+  await drawAndCloseLyrics(page);
+
+  await page.locator('#playerToggleBtn').click();
+  await page.waitForTimeout(80);
+  await page.locator('#playlistToggleBtn').click();
+  await expect(page.locator('#playlistArea')).toHaveClass(/is-visible/);
+
+  await expect.poll(() => page.evaluate(() => ({
+    status: document.body.dataset.audioState,
+    paused: window.__testAudio?.paused,
+    volume: window.__testAudio?.volume
+  })), { timeout: 5_000 }).toEqual({
+    status: 'paused',
+    paused: true,
+    volume: 1
+  });
   await expectCompleteRestState(page);
 });
 
@@ -525,6 +688,73 @@ test('rapid pause then play is not overwritten by the old stop tween', async ({ 
   expect(state.sheenAnimations[0].playState).toBe('running');
   expect(state.vinylAnimations[0].playbackRate).toBeGreaterThan(0);
   expect(state.sheenAnimations[0].playbackRate).toBeGreaterThan(0);
+});
+
+test('a stale direct play rejection cannot reset an in-flight playlist switch', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await waitForApp(page);
+  await drawAndCloseLyrics(page);
+
+  await page.locator('#playerToggleBtn').click();
+  await expectCompleteRestState(page);
+
+  await page.evaluate(() => {
+    const originalPlay = HTMLMediaElement.prototype.play;
+    let deferFirstPlay = true;
+    HTMLMediaElement.prototype.play = function deferDirectPlay() {
+      if (!deferFirstPlay) return originalPlay.call(this);
+      deferFirstPlay = false;
+      return new Promise((resolve, reject) => {
+        window.__rejectDeferredDirectPlay = () => reject(new Error('stale direct play rejection'));
+      });
+    };
+  });
+
+  await page.locator('#playerToggleBtn').click();
+  await expect.poll(() => page.evaluate(() => typeof window.__rejectDeferredDirectPlay)).toBe('function');
+
+  await page.locator('#playlistToggleBtn').click();
+  await expect(page.locator('#playlistArea')).toHaveClass(/is-visible/);
+  await page.locator('.playlist-item:not(.is-current)').first().click();
+
+  await expect.poll(async () => {
+    const state = await readTurntableState(page);
+    const rate = state.vinylAnimations[0]?.playbackRate || 0;
+    return {
+      rateReturning: rate > 0.68 && rate < 1.8,
+      vinylRunning: state.vinylAnimations[0]?.playState === 'running' && rate > 0
+    };
+  }, { timeout: 12_000 }).toEqual({ rateReturning: true, vinylRunning: true });
+
+  const afterStaleRejection = await page.evaluate(async () => {
+    window.__rejectDeferredDirectPlay();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const tonearm = document.querySelector('#tonearm');
+    const vinyl = document.querySelector('#vinylRecord');
+    const animation = vinyl.getAnimations().find((candidate) => candidate.effect?.target === vinyl);
+    return {
+      armAtRest: Number.parseFloat(getComputedStyle(tonearm).getPropertyValue('--arm-angle')) <= -95,
+      vinylRunning: animation?.playState === 'running' && animation.playbackRate > 0
+    };
+  });
+  expect(afterStaleRejection).toEqual({ armAtRest: true, vinylRunning: true });
+
+  await expect(page.locator('body')).toHaveAttribute('data-audio-state', 'playing', { timeout: 12_000 });
+
+  await expect.poll(async () => {
+    const state = await readTurntableState(page);
+    return {
+      armAtPlay: Math.abs(state.armAngle + 34) <= 0.15,
+      vinylRunning: state.vinylAnimations[0]?.playState === 'running'
+        && state.vinylAnimations[0].playbackRate > 0,
+      sheenRunning: state.sheenAnimations[0]?.playState === 'running'
+        && state.sheenAnimations[0].playbackRate > 0
+    };
+  }, { timeout: 12_000 }).toEqual({
+    armAtPlay: true,
+    vinylRunning: true,
+    sheenRunning: true
+  });
 });
 
 test('rapid pause, play, then pause settles the latest intent completely', async ({ page }, testInfo) => {
@@ -862,6 +1092,11 @@ for (const viewport of AUDIO_ERROR_VIEWPORTS) {
     await expect(page.locator('body')).toHaveAttribute('data-audio-state', 'error', { timeout: 12_000 });
     await expect(page.locator('#audioStatus')).toBeVisible();
     await expect(page.locator('#audioRetry')).toBeEnabled();
+    await expect(page.locator('#btnText')).toHaveText('抽取');
+    await expect(page.locator('#playButton')).not.toHaveAttribute('data-busy', '');
+    await expect(page.locator('#archiveTrackSong')).toHaveText('未抽取');
+    await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/);
+    await expect(page.locator('#playerToggleBtn')).not.toHaveClass(/is-playing/);
 
     const geometry = await page.evaluate(() => {
       const rectOf = (selector) => {

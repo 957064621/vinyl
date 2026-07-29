@@ -456,6 +456,8 @@ test('animation cleanup uses a compatibility adapter and settles without finishe
 const makeTransitionFakes = ({
   playError = null,
   loadError = null,
+  prepareError = null,
+  commitError = null,
   moveError = null,
   refreshError = null,
   blockMove = null,
@@ -466,8 +468,12 @@ const makeTransitionFakes = ({
   pendingOpen = null,
   pendingCoverReveal = null,
   pendingLyricHold = null,
+  pendingLoad = null,
+  pendingTrackReady = null,
   loadResult = undefined,
-  playResult = undefined
+  playResult = undefined,
+  previousIndex = 0,
+  playbackRestored = false
 } = {}) => {
   const events = [];
   const mechanics = {
@@ -483,7 +489,7 @@ const makeTransitionFakes = ({
     artwork: [{ src: 'https://example.test/cover.jpg' }]
   };
   const turntable = {
-    readState: () => ({ arm: -72, rate: 0.42 }),
+    readState: () => ({ arm: -72, rate: 0.42, spinning: true }),
     setSpinning: (active) => {
       mechanics.spinning = active;
       events.push(['spin', active]);
@@ -506,10 +512,17 @@ const makeTransitionFakes = ({
       mechanics.rate = 0;
       mechanics.spinning = false;
     },
+    restoreState: async (state, options) => {
+      events.push(['restoreMechanics', state, options]);
+      mechanics.arm = state.arm;
+      mechanics.rate = state.rate;
+      mechanics.spinning = state.spinning;
+    },
     setDocumentVisible: () => {},
     dispose: () => {}
   };
   const overlays = {
+    readState: () => ({ lyrics: true, playlist: false, split: true }),
     closeAll: async (options) => { events.push(['closeAll', options]); return { anyVisible: true }; },
     open: async (kind, options) => {
       events.push(['open', kind, options]);
@@ -531,10 +544,12 @@ const makeTransitionFakes = ({
     setLabel: async (label, options) => events.push(['label', label, options])
   };
   const audio = {
+    getState: () => ({ status: 'playing' }),
     pause: () => events.push(['pause']),
     load: async (track) => {
       events.push(['load', track]);
       if (loadError) throw loadError;
+      if (pendingLoad) await pendingLoad.promise;
       return loadResult;
     },
     play: async (options) => {
@@ -544,9 +559,23 @@ const makeTransitionFakes = ({
       return playResult;
     }
   };
-  const selectTrack = async (index, options) => {
-    events.push(['select', index, options]);
-    return normalizedTrack;
+  const preparedTransaction = {
+    previousIndex,
+    track: normalizedTrack,
+    ready: pendingTrackReady?.promise || Promise.resolve()
+  };
+  const prepareTrack = (index, options) => {
+    events.push(['prepare', index, options]);
+    if (prepareError) throw prepareError;
+    return preparedTransaction;
+  };
+  const commitTrack = async (transaction, options) => {
+    events.push(['commit', transaction, options]);
+    if (commitError) throw commitError;
+  };
+  const rollbackTrack = async (transaction, options) => {
+    events.push(['rollback', transaction, options]);
+    return { playbackRestored };
   };
   const waitForCoverReveal = async ({ signal }) => {
     events.push(['coverReveal', signal]);
@@ -564,13 +593,15 @@ const makeTransitionFakes = ({
     overlays,
     controls,
     audio,
-    selectTrack,
+    prepareTrack,
+    commitTrack,
+    rollbackTrack,
     waitForCoverReveal,
     waitForDelay
   };
 };
 
-test('draw stops old audio, loads the normalized track, and forwards motion context', async () => {
+test('draw prepares, loads, and commits the normalized track with motion context', async () => {
   const fakes = makeTransitionFakes();
   const transitions = createAppTransitions(fakes);
   const signal = new AbortController().signal;
@@ -578,15 +609,75 @@ test('draw stops old audio, loads the normalized track, and forwards motion cont
 
   await transitions.draw({ signal, targetIndex: 7, profile: 'compact', tokens });
 
-  assert.equal(fakes.events[0][0], 'closeAll');
-  assert.equal(fakes.events[1][0], 'pause');
+  assert.equal(fakes.events[0][0], 'prepare');
+  assert.ok(
+    fakes.events.findIndex(([name]) => name === 'closeAll')
+      < fakes.events.findIndex(([name]) => name === 'pause')
+  );
   assert.deepEqual(fakes.events.find(([name]) => name === 'load')[1], fakes.normalizedTrack);
-  assert.equal(fakes.events.find(([name]) => name === 'select')[2].signal, signal);
+  assert.equal(fakes.events.find(([name]) => name === 'prepare')[2].signal.aborted, false);
+  assert.ok(
+    fakes.events.findIndex(([name]) => name === 'load')
+      < fakes.events.findIndex(([name]) => name === 'commit')
+  );
   assert.equal(fakes.events.find(([name, target]) => name === 'arm' && target === 'rest')[2].duration, tokens.move);
-  assert.equal(fakes.events.find(([name]) => name === 'play')[1].signal, signal);
+  assert.equal(fakes.events.find(([name]) => name === 'play')[1].signal.aborted, false);
 });
 
-test('draw holds the switched cover for 500ms while the turntable settles before opening lyrics', async () => {
+test('draw does not commit visible track state until audio and cover preparation both finish', async () => {
+  const pendingLoad = createDeferred();
+  const pendingTrackReady = createDeferred();
+  const fakes = makeTransitionFakes({ pendingLoad, pendingTrackReady });
+  const transitions = createAppTransitions(fakes);
+
+  const drawing = transitions.draw({
+    signal: new AbortController().signal,
+    targetIndex: 6,
+    profile: 'compact',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
+  });
+
+  while (!fakes.events.some(([name]) => name === 'load')) await Promise.resolve();
+  assert.equal(fakes.events.some(([name]) => name === 'commit'), false);
+  assert.equal(
+    fakes.events.some(([name, label]) => name === 'label' && label === '抽取中'),
+    true
+  );
+
+  pendingLoad.resolve(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fakes.events.some(([name]) => name === 'commit'), false);
+
+  pendingTrackReady.resolve();
+  await drawing;
+  assert.equal(fakes.events.filter(([name]) => name === 'commit').length, 1);
+});
+
+test('a failed parallel branch cancels late preparation before rollback can be overwritten', async () => {
+  const pendingTrackReady = createDeferred();
+  const moveError = new Error('bridge failed');
+  const fakes = makeTransitionFakes({ moveError, pendingTrackReady });
+  const transitions = createAppTransitions(fakes);
+
+  const switching = transitions.switchTrack({
+    signal: new AbortController().signal,
+    targetIndex: 2,
+    profile: 'full',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 16 }
+  });
+
+  while (!fakes.events.some(([name]) => name === 'load')) await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fakes.events.some(([name]) => name === 'commit'), false);
+  assert.equal(fakes.events.some(([name]) => name === 'rollback'), false);
+
+  pendingTrackReady.resolve();
+  await assert.rejects(switching, (error) => error === moveError);
+  assert.equal(fakes.events.some(([name]) => name === 'commit'), false);
+  assert.equal(fakes.events.filter(([name]) => name === 'rollback').length, 1);
+});
+
+test('draw anchors the 500ms lyric hold to the settled cover without waiting on slower mechanics', async () => {
   const pendingCoverReveal = createDeferred();
   const pendingLyricHold = createDeferred();
   const pendingPlayArm = createDeferred();
@@ -603,41 +694,52 @@ test('draw holds the switched cover for 500ms while the turntable settles before
 
   while (
     !fakes.events.some(([name]) => name === 'coverReveal')
-    || !fakes.events.some(([name, target]) => name === 'arm' && target === 'play')
   ) {
     await Promise.resolve();
   }
 
   let eventNames = fakes.events.map(([name]) => name);
-  assert.ok(eventNames.indexOf('select') < eventNames.indexOf('coverReveal'));
-  assert.ok(eventNames.indexOf('coverReveal') < eventNames.indexOf('load'));
+  assert.ok(eventNames.indexOf('prepare') < eventNames.indexOf('load'));
+  assert.ok(eventNames.indexOf('load') < eventNames.indexOf('commit'));
+  assert.ok(eventNames.indexOf('commit') < eventNames.indexOf('coverReveal'));
   assert.equal(fakes.events.some(([name]) => name === 'wait'), false);
   assert.equal(
     fakes.events.some(([name, target]) => name === 'arm' && target === 'play'),
-    true
+    false
   );
   assert.equal(fakes.events.some(([name]) => name === 'open'), false);
 
   pendingCoverReveal.resolve();
-  while (!fakes.events.some(([name]) => name === 'wait')) await Promise.resolve();
+  while (
+    !fakes.events.some(([name]) => name === 'wait')
+    || !fakes.events.some(([name, target]) => name === 'arm' && target === 'play')
+  ) {
+    await Promise.resolve();
+  }
   eventNames = fakes.events.map(([name]) => name);
   assert.equal(fakes.events.find(([name]) => name === 'wait')[1], DRAW_LYRIC_HOLD_MS);
-  assert.ok(eventNames.indexOf('load') < eventNames.indexOf('wait'));
+  assert.ok(eventNames.indexOf('coverReveal') < eventNames.indexOf('wait'));
 
   pendingLyricHold.resolve();
   while (!fakes.events.some(([name]) => name === 'open')) await Promise.resolve();
 
-  assert.equal(fakes.events.some(([name]) => name === 'play'), false);
-  pendingPlayArm.resolve();
-  await draw;
-
+  const revealEventNames = fakes.events.map(([name]) => name);
+  assert.ok(revealEventNames.indexOf('play') < revealEventNames.indexOf('open'));
   assert.deepEqual(fakes.events.find(([name]) => name === 'open').slice(0, 2), [
     'open',
     'lyrics'
   ]);
+
+  let drawSettled = false;
+  void draw.then(() => { drawSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(drawSettled, false);
+
+  pendingPlayArm.resolve();
+  await draw;
 });
 
-test('an aborted draw does not select, open, play, or set its final label', async () => {
+test('an aborted draw rolls back its prepared track before any overlay or playback starts', async () => {
   const started = createDeferred();
   const fakes = makeTransitionFakes({
     blockMove: (signal) => new Promise((resolve) => {
@@ -657,10 +759,11 @@ test('an aborted draw does not select, open, play, or set its final label', asyn
   controller.abort('superseded');
 
   await assert.rejects(draw, (error) => error === 'superseded');
-  assert.equal(fakes.events.some(([name]) => name === 'select'), false);
+  assert.equal(fakes.events.some(([name]) => name === 'prepare'), true);
+  assert.equal(fakes.events.some(([name]) => name === 'rollback'), true);
   assert.equal(fakes.events.some(([name]) => name === 'open'), false);
   assert.equal(fakes.events.some(([name]) => name === 'play'), false);
-  assert.equal(fakes.events.some(([name, label]) => name === 'label' && label === '再次抽取'), false);
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
 });
 
 test('a play rejection resets the turntable and remains recoverable by the caller', async () => {
@@ -675,9 +778,16 @@ test('a play rejection resets the turntable and remains recoverable by the calle
     tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
   }), (error) => error === playError);
 
-  assert.equal(fakes.events[0][0], 'closeAll');
-  assert.equal(fakes.events[1][0], 'pause');
+  assert.equal(fakes.events[0][0], 'prepare');
+  assert.ok(
+    fakes.events.findIndex(([name]) => name === 'closeAll')
+      < fakes.events.findIndex(([name]) => name === 'pause')
+  );
   assert.equal(fakes.events.some(([name]) => name === 'reset'), true);
+  assert.equal(
+    fakes.events.find(([name]) => name === 'rollback')[2].retryable,
+    true
+  );
   assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
   assert.equal(
     fakes.events.findIndex(([name]) => name === 'reset')
@@ -698,6 +808,10 @@ test('a load rejection resets the turntable and remains recoverable by the calle
     tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
   }), (error) => error === loadError);
 
+  assert.equal(
+    fakes.events.find(([name]) => name === 'rollback')[2].retryable,
+    true
+  );
   assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
   assert.equal(
     fakes.events.findIndex(([name]) => name === 'reset')
@@ -752,7 +866,7 @@ for (const [operation, options, expectedError] of [
   ['load', { loadResult: false }, /Audio load did not complete/],
   ['play', { playResult: false }, /Audio playback did not start/]
 ]) {
-  test(`a live false ${operation} recovers the label before aborting a track switch restore`, async () => {
+  test(`a live false ${operation} restores the previous overlay before recovering the switch label`, async () => {
     const fakes = makeTransitionFakes(options);
     const transitions = createAppTransitions(fakes);
 
@@ -769,7 +883,11 @@ for (const [operation, options, expectedError] of [
         < fakes.events.findIndex(([name, label]) => name === 'label' && label === '再次抽取'),
       true
     );
-    assert.equal(fakes.events.some(([name]) => name === 'restore'), false);
+    assert.equal(fakes.events.filter(([name]) => name === 'restore').length, 1);
+    assert.ok(
+      fakes.events.findIndex(([name]) => name === 'restore')
+        < fakes.events.findIndex(([name, label]) => name === 'label' && label === '再次抽取')
+    );
   });
 }
 
@@ -792,8 +910,9 @@ test('an interrupted pending play resets the turntable before its transition set
   pendingPlay.resolve(false);
 
   await assert.rejects(draw, (error) => error === 'superseded');
-  assert.equal(fakes.events.at(-1)[0], 'reset');
   assert.equal(fakes.events.filter(([name]) => name === 'reset').length, 1);
+  assert.equal(fakes.events.filter(([name]) => name === 'rollback').length, 1);
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
 });
 
 test('an interrupted pending playlist play resets once with an immediate unsignaled rollback', async () => {
@@ -844,10 +963,11 @@ test('hiding the document during a playlist switch restores the paused mechanics
   motion.setDocumentVisible(false);
 
   assert.deepEqual(await switching, { status: 'cancelled', name: 'switch-track' });
-  assert.equal(fakes.events.some(([name]) => name === 'select'), false);
+  assert.equal(fakes.events.some(([name]) => name === 'prepare'), true);
+  assert.equal(fakes.events.some(([name]) => name === 'rollback'), true);
   assert.equal(fakes.events.some(([name]) => name === 'play'), false);
-  assert.equal(fakes.events.at(-1)[0], 'reset');
-  assert.equal(fakes.events.at(-1)[1].duration, 0);
+  assert.deepEqual(fakes.events.filter(([name]) => name === 'reset')[0][1], { duration: 0 });
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '再次抽取']);
   assert.deepEqual(fakes.mechanics, {
     arm: 'rest',
     rate: 0,
@@ -878,7 +998,7 @@ test('changing motion profile waits for an interrupted playlist switch rollback'
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(profileChangeSettled, false);
-  assert.equal(fakes.events.some(([name]) => name === 'select'), false);
+  assert.equal(fakes.events.some(([name]) => name === 'rollback'), true);
   assert.equal(fakes.events.some(([name]) => name === 'play'), false);
   assert.deepEqual(fakes.events.filter(([name]) => name === 'reset')[0][1], { duration: 0 });
 
@@ -950,6 +1070,41 @@ test('a superseding command waits for an interrupted track switch rollback', asy
   );
 });
 
+test('a failed first draw restores the initial 抽取 label', async () => {
+  const fakes = makeTransitionFakes({ loadResult: false, previousIndex: -1 });
+  const transitions = createAppTransitions(fakes);
+
+  await assert.rejects(transitions.draw({
+    signal: new AbortController().signal,
+    targetIndex: 3,
+    profile: 'compact',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
+  }), /Audio load did not complete/);
+
+  assert.equal(fakes.events.filter(([name]) => name === 'rollback').length, 1);
+  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['label', '抽取']);
+});
+
+test('rollback restores the previous playing mechanics when old playback resumes', async () => {
+  const fakes = makeTransitionFakes({ loadResult: false, playbackRestored: true });
+  const transitions = createAppTransitions(fakes);
+
+  await assert.rejects(transitions.switchTrack({
+    signal: new AbortController().signal,
+    targetIndex: 3,
+    profile: 'compact',
+    tokens: { enter: 20, move: 40, settle: 60, itemStagger: 0 }
+  }), /Audio load did not complete/);
+
+  assert.equal(fakes.events.some(([name]) => name === 'reset'), false);
+  assert.equal(fakes.events.filter(([name]) => name === 'restoreMechanics').length, 1);
+  assert.deepEqual(fakes.mechanics, {
+    arm: -72,
+    rate: 0.42,
+    spinning: true
+  });
+});
+
 test('an interruption after playback starts does not roll the turntable back to rest', async () => {
   const pendingRestore = createDeferred();
   const fakes = makeTransitionFakes({ pendingRestore });
@@ -1009,8 +1164,8 @@ test('a track switch snapshots its overlay before pausing and restores it after 
   assert.deepEqual(
     fakes.events.map(([name]) => name),
     [
-      'closeAll', 'pause', 'spin', 'arm', 'rate', 'select', 'load', 'refresh',
-      'arm', 'rate', 'play', 'restore'
+      'prepare', 'closeAll', 'label', 'pause', 'spin', 'arm', 'rate', 'load',
+      'commit', 'coverReveal', 'refresh', 'arm', 'rate', 'play', 'restore', 'label'
     ]
   );
   assert.deepEqual(
@@ -1039,11 +1194,14 @@ test('a playlist-directed track switch replaces the playlist with lyrics after p
   assert.deepEqual(
     fakes.events.map(([name]) => name),
     [
-      'closeAll', 'pause', 'spin', 'arm', 'rate', 'select', 'load',
-      'arm', 'rate', 'play', 'open'
+      'prepare', 'closeAll', 'label', 'pause', 'spin', 'arm', 'rate', 'load',
+      'commit', 'coverReveal', 'arm', 'rate', 'play', 'open', 'label'
     ]
   );
-  assert.deepEqual(fakes.events.at(-1).slice(0, 2), ['open', 'lyrics']);
+  assert.deepEqual(
+    fakes.events.find(([name]) => name === 'open').slice(0, 2),
+    ['open', 'lyrics']
+  );
   assert.equal(fakes.events.some(([name]) => name === 'refresh'), false);
   assert.equal(fakes.events.some(([name]) => name === 'restore'), false);
 });
@@ -1062,7 +1220,7 @@ test('a headless track switch synchronizes the playing mechanics without transit
 
   assert.deepEqual(
     fakes.events.map(([name]) => name),
-    ['pause', 'select', 'load', 'spin', 'arm', 'rate', 'play']
+    ['prepare', 'pause', 'load', 'commit', 'spin', 'arm', 'rate', 'play']
   );
   const arm = fakes.events.find(([name]) => name === 'arm');
   const rate = fakes.events.find(([name]) => name === 'rate');

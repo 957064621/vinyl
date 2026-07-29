@@ -5,16 +5,16 @@ export const POSTER_TIMING = Object.freeze({
     normal: Object.freeze({ gather: 220, handoff: 520, exit: 520, hold: 700 }),
     compressed: Object.freeze({ gather: 220, handoff: 520, exit: 520, hold: 480 }),
     finalHold: 840,
-    finalResolve: 1100,
-    exitLead: 1100,
+    finalResolve: 1280,
+    exitLead: 1280,
     rootFade: 680
   }),
   compact: Object.freeze({
-    normal: Object.freeze({ gather: 140, handoff: 520, exit: 440, hold: 560 }),
-    compressed: Object.freeze({ gather: 140, handoff: 520, exit: 440, hold: 380 }),
+    normal: Object.freeze({ gather: 220, handoff: 520, exit: 440, hold: 560 }),
+    compressed: Object.freeze({ gather: 220, handoff: 520, exit: 440, hold: 380 }),
     finalHold: 720,
-    finalResolve: 1100,
-    exitLead: 1100,
+    finalResolve: 920,
+    exitLead: 920,
     rootFade: 680
   }),
   reduce: Object.freeze({ fade: 120 })
@@ -420,6 +420,7 @@ export function createPosterTransition({
 
   const runAnimatedItem = async (item, token, timing, sceneProfile) => {
     item.slot.dataset.motionProfile = sceneProfile;
+    if (sealed && queue.length === 0) item.slot.dataset.finalPoster = 'true';
     const outgoing = activeItem;
     if (outgoing) {
       const exitMetrics = applyGateMetrics(outgoing, 'bottom');
@@ -621,6 +622,7 @@ export function createPosterTransition({
       delete slot.dataset.transitionOrder;
       delete slot.dataset.slitDirection;
       delete slot.dataset.motionProfile;
+      delete slot.dataset.finalPoster;
       slot.style.removeProperty('--poster-handoff-ms');
       slot.style.removeProperty('--poster-art-bottom');
       slot.style.removeProperty('--poster-art-top');
@@ -729,6 +731,41 @@ export function createPosterTransition({
       return true;
     },
 
+    skipTo(slot) {
+      if (destroyed) return false;
+
+      const retainedItem = queue.find((item) => item.slot === slot) ?? null;
+      const liveSlots = [activeItem?.slot, currentItem?.slot].filter(Boolean);
+      queue = [];
+      compressedDrain = false;
+      accepted = new Set(liveSlots);
+
+      const image = imageFor(slot);
+      if (!slot || !image) {
+        notifyIdle();
+        return false;
+      }
+
+      accepted.add(slot);
+      image.setAttribute('aria-hidden', 'true');
+      if (liveSlots.includes(slot)) {
+        notifyIdle();
+        return true;
+      }
+
+      const item = retainedItem ?? {
+        slot,
+        image,
+        order: accepted.size,
+        direction: portalOrientation
+      };
+      slot.dataset.transitionOrder = String(item.order);
+      slot.dataset.slitDirection = item.direction;
+      queue.push(item);
+      ensurePump();
+      return true;
+    },
+
     waitForIdle,
 
     finish() {
@@ -745,16 +782,16 @@ export function createPosterTransition({
           const token = generation;
           const finalSceneProfile = currentProfile;
           if (finalSceneProfile !== 'reduce' && activeItem) {
+            activeItem.slot.dataset.finalPoster = 'true';
             const profileTiming = POSTER_TIMING[finalSceneProfile];
             const remainingHold = Math.max(
               0,
               profileTiming.finalHold - completedReadableHold
             );
             if (remainingHold > 0) {
-              const [, held] = await Promise.all([
-                holdParticles(activeItem, remainingHold),
-                sleep(remainingHold, token)
-              ]);
+              // The arrival wake already owns the particle tail. Extending the
+              // readable pause must not seed a second ambient cohort.
+              const held = await sleep(remainingHold, token);
               if (!held) {
                 if (generation !== token) continue;
                 return;

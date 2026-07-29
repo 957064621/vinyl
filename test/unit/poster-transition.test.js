@@ -202,16 +202,16 @@ test('timing tables are deeply frozen and preserve fast portal travel with a rea
       normal: { gather: 220, handoff: 520, exit: 520, hold: 700 },
       compressed: { gather: 220, handoff: 520, exit: 520, hold: 480 },
       finalHold: 840,
-      finalResolve: 1100,
-      exitLead: 1100,
+      finalResolve: 1280,
+      exitLead: 1280,
       rootFade: 680
     },
     compact: {
-      normal: { gather: 140, handoff: 520, exit: 440, hold: 560 },
-      compressed: { gather: 140, handoff: 520, exit: 440, hold: 380 },
+      normal: { gather: 220, handoff: 520, exit: 440, hold: 560 },
+      compressed: { gather: 220, handoff: 520, exit: 440, hold: 380 },
       finalHold: 720,
-      finalResolve: 1100,
-      exitLead: 1100,
+      finalResolve: 920,
+      exitLead: 920,
       rootFade: 680
     },
     reduce: { fade: 120 }
@@ -438,6 +438,160 @@ test('rapid enqueue is synchronous, FIFO, uses one horizontal gate axis, and pre
   assert.equal(root.classList.contains('is-scanning'), false);
 });
 
+test('skipTo lets an in-flight poster finish without aborting or rewinding before final starts', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, particleCalls, root, slots } = makeFixture({ scheduler });
+  const current = slots[0];
+  const skipped = slots[1];
+  const final = slots[4];
+
+  controller.enqueue(current);
+  controller.enqueue(skipped);
+  controller.enqueue(final);
+  await flush();
+
+  scheduler.releaseDuration(POSTER_TIMING.normal.gather);
+  await flush();
+  assert.equal(current.classList.contains('is-entering-from-portal'), true);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.handoff]);
+
+  const enteringSignal = scheduler.entries[0].signal;
+  const enteringClasses = current.className;
+  const handoffDuration = current.style.getPropertyValue('--poster-handoff-ms');
+
+  assert.equal(controller.skipTo(final), true);
+  assert.deepEqual(controller.getState(), {
+    profile: 'full',
+    queued: 1,
+    activeId: 'archive-01',
+    processing: true,
+    sealed: false,
+    destroyed: false
+  });
+  assert.equal(enteringSignal.aborted, false, 'skip must not cancel the current poster animation');
+  assert.equal(current.className, enteringClasses, 'skip must not rewind the current poster classes');
+  assert.equal(current.style.getPropertyValue('--poster-handoff-ms'), handoffDuration);
+  assert.equal(root.dataset.portalSide, 'top');
+  assert.equal(final.classList.contains('is-active'), false);
+  assert.equal(particleCalls.some(([phase]) => phase === 'finish'), false);
+
+  scheduler.releaseDuration(POSTER_TIMING.normal.handoff);
+  await flush();
+  assert.equal(final.classList.contains('is-active'), false);
+
+  const enterTail = PORTAL_DURATION - POSTER_TIMING.normal.gather - POSTER_TIMING.normal.handoff;
+  scheduler.releaseDuration(enterTail);
+  await flush();
+  assert.equal(current.classList.contains('is-active'), true);
+  assert.equal(current.classList.contains('is-stable'), true);
+  assert.equal(final.classList.contains('is-active'), false);
+  assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.hold]);
+
+  scheduler.releaseDuration(POSTER_TIMING.normal.hold);
+  await flush();
+  assert.equal(root.dataset.portalSide, 'bottom', 'final starts only after the current hold completes');
+  assert.equal(current.classList.contains('is-active'), true);
+  assert.equal(final.classList.contains('is-active'), false);
+
+  let guard = 0;
+  while (controller.getState().processing) {
+    assert.ok(guard < 24, 'skip drain exceeded its scheduler bound');
+    assert.ok(scheduler.pending > 0);
+    scheduler.releaseNext();
+    await flush();
+    guard += 1;
+  }
+  await controller.waitForIdle();
+
+  assert.equal(controller.getState().activeId, 'archive-05');
+  assert.equal(final.classList.contains('is-active'), true);
+  assert.equal(skipped.classList.contains('is-active'), false);
+  assert.equal(
+    particleCalls.filter(([phase]) => phase === 'gather').length,
+    2,
+    'only the current and final posters enter'
+  );
+});
+
+test('skipTo reuses a queued final poster and repeated skips keep exactly one final item', async () => {
+  const scheduler = makeManualScheduler();
+  const { controller, particleCalls, slots } = makeFixture({ profile: 'reduce', scheduler });
+  const current = slots[0];
+  const skipped = slots[1];
+  const final = slots[4];
+
+  controller.enqueue(current);
+  controller.enqueue(skipped);
+  controller.enqueue(final);
+  await flush();
+  assert.equal(controller.getState().queued, 2);
+
+  const finalOrder = final.dataset.transitionOrder;
+  assert.equal(controller.skipTo(final), true);
+  assert.equal(controller.skipTo(final), true);
+  assert.equal(controller.getState().queued, 1);
+  assert.equal(final.dataset.transitionOrder, finalOrder, 'the existing final queue item is retained');
+
+  scheduler.releaseDuration(POSTER_TIMING.reduceFade);
+  await flush();
+  assert.equal(controller.getState().activeId, 'archive-05');
+  assert.equal(controller.getState().queued, 0);
+  assert.deepEqual(scheduler.sleepCalls, [POSTER_TIMING.reduceFade, POSTER_TIMING.reduceFade]);
+
+  scheduler.releaseDuration(POSTER_TIMING.reduceFade);
+  await controller.waitForIdle();
+
+  assert.equal(skipped.classList.contains('is-active'), false);
+  assert.equal(final.classList.contains('is-active'), true);
+  assert.equal(
+    particleCalls.filter(([phase]) => phase === 'finish').length,
+    2,
+    'only the current and one final item are processed'
+  );
+});
+
+test('skipTo stays idempotent after finish seals the queue and after final is active', async () => {
+  const finalScenes = [];
+  const { controller, particleCalls, sleeps, slots } = makeFixture({
+    onFinalScene: (scene) => finalScenes.push(scene)
+  });
+  const final = slots[4];
+
+  controller.enqueue(slots[0]);
+  controller.enqueue(slots[1]);
+  controller.enqueue(final);
+  const finishing = controller.finish();
+  assert.equal(controller.getState().sealed, true);
+
+  assert.equal(controller.skipTo(final), true);
+  assert.equal(controller.skipTo(final), true);
+  assert.equal(controller.getState().queued, 1);
+  await finishing;
+
+  assert.equal(controller.getState().activeId, 'archive-05');
+  assert.equal(controller.getState().processing, false);
+  assert.equal(finalScenes.length, 1);
+  assert.strictEqual(finalScenes[0].slot, final);
+  assert.equal(particleCalls.filter(([phase]) => phase === 'gather').length, 1);
+
+  const sleepCount = sleeps.length;
+  const particleCallCount = particleCalls.length;
+  assert.equal(controller.skipTo(final), true);
+  assert.equal(controller.skipTo(final), true);
+  await flush();
+
+  assert.deepEqual(controller.getState(), {
+    profile: 'full',
+    queued: 0,
+    activeId: 'archive-05',
+    processing: false,
+    sealed: true,
+    destroyed: false
+  });
+  assert.equal(sleeps.length, sleepCount, 'active final is not scheduled again');
+  assert.equal(particleCalls.length, particleCallCount, 'active final does not restart particles');
+});
+
 test('final resolve reports the true final active poster before the tunnel starts', async () => {
   const finalScenes = [];
   const { controller, images, root, slots } = makeFixture({
@@ -630,6 +784,49 @@ test('finish after an idle normal scene adds only the unread final hold remainde
   scheduler.releaseNext();
   await flush();
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.exitLead, POSTER_TIMING.finalExposure]);
+  scheduler.releaseNext();
+  await finishing;
+});
+
+test('the unread final pause extends time without reseeding the settled particle field', async () => {
+  const scheduler = makeManualScheduler();
+  const particleCalls = [];
+  const particleField = {
+    gather() {},
+    scatter() {},
+    hold(bounds, duration) {
+      particleCalls.push(['hold', bounds, duration]);
+    },
+    finish() {
+      particleCalls.push(['finish']);
+    },
+    setProfile() {}
+  };
+  const { controller, slots } = makeFixture({ scheduler, particleField });
+  controller.enqueue(slots[0]);
+  await flush();
+
+  let iterations = 0;
+  while (controller.getState().processing) {
+    assert.ok(iterations < 32, 'scheduler processing drain exceeded its bound');
+    scheduler.releaseNext();
+    await flush();
+    iterations += 1;
+  }
+  await controller.waitForIdle();
+  assert.deepEqual(
+    particleCalls.filter(([phase]) => phase === 'hold').map(([, , duration]) => duration),
+    [POSTER_TIMING.normal.hold]
+  );
+
+  const finishing = controller.finish();
+  await flush();
+  scheduler.releaseNext();
+  await flush();
+  assert.deepEqual(
+    particleCalls.filter(([phase]) => phase === 'hold').map(([, , duration]) => duration),
+    [POSTER_TIMING.normal.hold]
+  );
   scheduler.releaseNext();
   await finishing;
 });

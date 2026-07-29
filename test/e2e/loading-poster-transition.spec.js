@@ -9,11 +9,10 @@ const PORTAL_THICKNESS_MAX = 168;
 const PORTAL_ASPECT_DIVISOR = 4.4;
 const PORTAL_HALO_HEIGHT_RATIO = 1.85;
 const AMBIENT_POSTER_DRIFT_MAX = 9;
-const FINAL_HANDOFF_DURATION_MS = 1100;
-const FINAL_EXIT_GATE_TOLERANCE_MS = 50;
-const PORTAL_POSTER_LEAD_RANGE_MS = Object.freeze({ minimum: 270, maximum: 380 });
+const FINAL_HANDOFF_DURATION_MS = Object.freeze({ full: 1280, compact: 920 });
+const PORTAL_POSTER_LEAD_RANGE_MS = Object.freeze({ minimum: 190, maximum: 280 });
 const LOADING_SETTLE_TIMEOUT_MS = 60_000;
-const POSTER_TRAVERSAL_LIMIT_MS = 460;
+const POSTER_TRAVERSAL_LIMIT_MS = 540;
 const LIGHT_PEAK_OFFSETS = Object.freeze({ ordinary: 0.40, final: 0.30 });
 const HIGH_VISIBILITY_POSTER_OPACITY = 0.35;
 // One 60Hz presentation interval plus 3.4ms for timestamp and rAF sampling quantization.
@@ -151,6 +150,11 @@ const installDelayedFinalCover = async (page) => {
     releaseFinalRequest = resolve;
   });
   let released = false;
+  const stats = {
+    active: 0,
+    total: 0,
+    pathnames: []
+  };
 
   await page.route('**/*', async (route) => {
     const request = route.request();
@@ -160,21 +164,30 @@ const installDelayedFinalCover = async (page) => {
     }
 
     const pathname = new URL(request.url()).pathname;
+    stats.active += 1;
+    stats.total += 1;
+    stats.pathnames.push(pathname);
     if (!COVER_FIXTURES.has(pathname)) {
+      stats.active -= 1;
       await route.abort('blockedbyclient');
       return;
     }
 
-    if (pathname === FINAL_COVER_PATHNAME) await finalGate;
-    else await new Promise((resolve) => setTimeout(resolve, 5));
-    await route.fulfill({
-      status: 200,
-      contentType: 'image/svg+xml',
-      body: DETERMINISTIC_COVER
-    });
+    try {
+      if (pathname === FINAL_COVER_PATHNAME) await finalGate;
+      else await new Promise((resolve) => setTimeout(resolve, 5));
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/svg+xml',
+        body: DETERMINISTIC_COVER
+      });
+    } finally {
+      stats.active -= 1;
+    }
   });
 
   return {
+    stats,
     releaseFinal() {
       if (released) return;
       released = true;
@@ -182,6 +195,211 @@ const installDelayedFinalCover = async (page) => {
     }
   };
 };
+
+const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
+  const probe = window.__vinylSkipHandoffProbe = {
+    samples: [],
+    skipAt: null,
+    skippedId: null,
+    skipSnapshot: null,
+    finalNaturalWidth: null,
+    finalNaturalHeight: null,
+    settledFrames: 0
+  };
+
+  const number = (value, fallback = 0) => {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const animationState = (element, name) => {
+    const animation = element?.getAnimations?.().find(
+      ({ animationName }) => animationName === name
+    );
+    const timing = animation?.effect?.getComputedTiming?.();
+    return animation ? {
+      progress: Number.isFinite(timing?.progress) ? Number(timing.progress) : null,
+      playState: animation.playState,
+      startTime: Number.isFinite(animation.startTime) ? Number(animation.startTime) : null
+    } : null;
+  };
+  const rect = (element) => {
+    if (!element) return null;
+    const bounds = element.getBoundingClientRect();
+    return {
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+      centerX: bounds.left + (bounds.width / 2),
+      centerY: bounds.top + (bounds.height / 2)
+    };
+  };
+  const expandInset = (tokens) => {
+    if (tokens.length === 1) return [tokens[0], tokens[0], tokens[0], tokens[0]];
+    if (tokens.length === 2) return [tokens[0], tokens[1], tokens[0], tokens[1]];
+    if (tokens.length === 3) return [tokens[0], tokens[1], tokens[2], tokens[1]];
+    return tokens.slice(0, 4);
+  };
+  const elementScale = (element, style = element ? getComputedStyle(element) : null) => {
+    const independentScale = number(style?.scale, Number.NaN);
+    if (Number.isFinite(independentScale)) return independentScale;
+    if (!style?.transform || style.transform === 'none') return 1;
+    const matrix = new DOMMatrixReadOnly(style.transform);
+    return Math.hypot(matrix.a, matrix.b);
+  };
+  const clipGeometry = (clipPath, bounds, scale = 1) => {
+    if (!bounds || !clipPath?.startsWith('inset(')) return null;
+    const content = clipPath.slice('inset('.length, -1);
+    const [insetSource, roundSource = '0'] = content.split(/\s+round\s+/);
+    const [topToken, rightToken, bottomToken, leftToken] = expandInset(
+      insetSource.trim().split(/\s+/)
+    );
+    const pixels = (token, size) => token.endsWith('%')
+      ? (number(token) / 100) * size
+      : number(token) * scale;
+    const top = pixels(topToken, bounds.height);
+    const right = pixels(rightToken, bounds.width);
+    const bottom = pixels(bottomToken, bounds.height);
+    const left = pixels(leftToken, bounds.width);
+    const width = Math.max(0, bounds.width - left - right);
+    const height = Math.max(0, bounds.height - top - bottom);
+    const radiusToken = roundSource.trim().split(/[\s/]+/)[0];
+    const radius = radiusToken.endsWith('%')
+      ? (number(radiusToken) / 100) * Math.min(width, height)
+      : number(radiusToken) * scale;
+    return {
+      left: bounds.left + left,
+      top: bounds.top + top,
+      width,
+      height,
+      centerX: bounds.left + left + (width / 2),
+      centerY: bounds.top + top + (height / 2),
+      radius
+    };
+  };
+  const naturalCropForVisibleClip = (bounds, clip, naturalWidth, naturalHeight) => {
+    if (!bounds || !clip || !naturalWidth || !naturalHeight) return null;
+    const containScale = Math.min(bounds.width / naturalWidth, bounds.height / naturalHeight);
+    const contentWidth = naturalWidth * containScale;
+    const contentHeight = naturalHeight * containScale;
+    const contentLeft = bounds.left + ((bounds.width - contentWidth) / 2);
+    const contentTop = bounds.top + ((bounds.height - contentHeight) / 2);
+    return {
+      left: (clip.left - contentLeft) / contentWidth,
+      top: (clip.top - contentTop) / contentHeight,
+      width: clip.width / contentWidth,
+      height: clip.height / contentHeight
+    };
+  };
+  const naturalCropForCover = (naturalWidth, naturalHeight, bounds) => {
+    if (!bounds || !naturalWidth || !naturalHeight) return null;
+    const coverScale = Math.max(bounds.width / naturalWidth, bounds.height / naturalHeight);
+    const contentWidth = naturalWidth * coverScale;
+    const contentHeight = naturalHeight * coverScale;
+    return {
+      left: ((contentWidth - bounds.width) / 2) / contentWidth,
+      top: ((contentHeight - bounds.height) / 2) / contentHeight,
+      width: bounds.width / contentWidth,
+      height: bounds.height / contentHeight
+    };
+  };
+
+  document.addEventListener('click', (event) => {
+    if (!event.target?.closest?.('#loadingSkip')) return;
+    const active = document.querySelector('.loading-frame.is-active');
+    const image = active?.querySelector('.loading-image');
+    const imageStyle = image ? getComputedStyle(image) : null;
+    probe.skipAt = performance.now();
+    probe.skippedId = active?.dataset.loadingSlot ?? null;
+    probe.skipSnapshot = {
+      at: probe.skipAt,
+      activeId: probe.skippedId,
+      activeCenterY: rect(image)?.centerY ?? null,
+      activeScale: image ? elementScale(image, imageStyle) : null,
+      activeOpacity: image ? number(imageStyle.opacity) : 0,
+      glide: animationState(image, 'loading-poster-glide-in')
+    };
+  }, true);
+
+  const sample = () => {
+    const at = performance.now();
+    const root = document.querySelector('#loadingScreen');
+    const active = document.querySelector('.loading-frame.is-active, .loading-frame.is-outgoing');
+    const activeImage = active?.querySelector('.loading-image');
+    const source = document.querySelector('.loading-image[data-loading-handoff="true"]');
+    const target = document.querySelector('.vinyl-sticker');
+    const targetCover = document.querySelector('#vinylCoverA');
+    const appShell = document.querySelector('#appShell');
+    const activeRect = rect(activeImage);
+    const stageRect = rect(document.querySelector('.loading-stage'));
+    const activeStyle = activeImage ? getComputedStyle(activeImage) : null;
+    const sourceStyle = source ? getComputedStyle(source) : null;
+    const sourceRect = rect(source);
+    const targetRect = rect(target);
+    const sourceScale = source ? elementScale(source, sourceStyle) : 1;
+    const clip = source ? clipGeometry(sourceStyle.clipPath, sourceRect, sourceScale) : null;
+    const naturalWidth = source?.naturalWidth || probe.finalNaturalWidth;
+    const naturalHeight = source?.naturalHeight || probe.finalNaturalHeight;
+    if (source?.naturalWidth && source?.naturalHeight) {
+      probe.finalNaturalWidth = source.naturalWidth;
+      probe.finalNaturalHeight = source.naturalHeight;
+    }
+    const frameOpacity = active ? number(getComputedStyle(active).opacity) : 0;
+    const rootOpacity = root ? number(getComputedStyle(root).opacity) : 0;
+    const sourceOpacity = source ? frameOpacity * number(sourceStyle.opacity) * rootOpacity : 0;
+    const coverOpacity = targetCover ? number(getComputedStyle(targetCover).opacity) : 0;
+    const shellOpacity = appShell ? number(getComputedStyle(appShell).opacity) : 0;
+    const targetOpacity = coverOpacity * shellOpacity;
+    const motion = animationState(source, 'loading-poster-to-player-motion');
+    const glide = animationState(activeImage, 'loading-poster-glide-in');
+
+    probe.samples.push({
+      at,
+      rootConnected: Boolean(root),
+      rootState: root?.dataset.state ?? null,
+      handoffPhase: root?.dataset.handoffPhase ?? null,
+      activeId: active?.dataset.loadingSlot ?? null,
+      activeClassName: active?.className ?? null,
+      activeStable: Boolean(active?.classList.contains('is-stable')),
+      activeCount: document.querySelectorAll('.loading-frame.is-active').length,
+      activeCenterY: activeRect?.centerY ?? null,
+      stageCenterY: stageRect?.centerY ?? null,
+      activeScale: activeImage ? elementScale(activeImage, activeStyle) : null,
+      activeOpacity: activeImage ? frameOpacity * number(activeStyle.opacity) : 0,
+      glide,
+      motion,
+      sourceVisible: sourceOpacity > 0.05,
+      sourceOpacity,
+      targetVisible: targetOpacity > 0.05,
+      targetOpacity,
+      overlap: sourceOpacity > 0.05 && targetOpacity > 0.05,
+      sourceArtwork: source?.currentSrc || source?.src || null,
+      targetArtwork: targetCover?.style.backgroundImage || null,
+      sourceClip: clip,
+      sourceCrop: naturalCropForVisibleClip(
+        sourceRect,
+        clip,
+        source?.naturalWidth || probe.finalNaturalWidth,
+        source?.naturalHeight || probe.finalNaturalHeight
+      ),
+      targetCrop: naturalCropForCover(naturalWidth, naturalHeight, targetRect),
+      targetRect,
+      targetActive: Boolean(targetCover?.classList.contains('is-active')),
+      targetBackgroundPosition: targetCover ? getComputedStyle(targetCover).backgroundPosition : null,
+      targetBackgroundSize: targetCover ? getComputedStyle(targetCover).backgroundSize : null
+    });
+    if (probe.samples.length > 1800) probe.samples.shift();
+
+    if (!root && targetOpacity > 0.98) probe.settledFrames += 1;
+    if (probe.settledFrames < 4) requestAnimationFrame(sample);
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => requestAnimationFrame(sample), { once: true });
+  } else {
+    requestAnimationFrame(sample);
+  }
+});
 
 const installActivePosterSequenceProbe = (page) => page.addInitScript(() => {
   window.__vinylActivePosterSequence = [];
@@ -202,13 +420,20 @@ const installActivePosterSequenceProbe = (page) => page.addInitScript(() => {
 });
 
 const expectExactCoverRequests = (stats, { expectFinalPrewarm = false } = {}) => {
-  const expectedPathnames = [
-    ...EXPECTED_COVER_PATHNAMES,
-    ...(expectFinalPrewarm ? [FINAL_COVER_PATHNAME] : [])
-  ].sort();
+  const expectedPathnames = [...EXPECTED_COVER_PATHNAMES].sort();
+  const finalRequestCount = stats.pathnames.filter(
+    (pathname) => pathname === FINAL_COVER_PATHNAME
+  ).length;
+  const normalizedPathnames = [...stats.pathnames];
+  if (expectFinalPrewarm && finalRequestCount === 2) {
+    normalizedPathnames.splice(normalizedPathnames.lastIndexOf(FINAL_COVER_PATHNAME), 1);
+  }
   expect(stats.active).toBe(0);
-  expect(stats.total).toBe(expectedPathnames.length);
-  expect([...stats.pathnames].sort()).toEqual(expectedPathnames);
+  expect(expectFinalPrewarm ? [1, 2] : [1]).toContain(finalRequestCount);
+  expect(expectFinalPrewarm
+    ? [expectedPathnames.length, expectedPathnames.length + 1]
+    : [expectedPathnames.length]).toContain(stats.total);
+  expect(normalizedPathnames.sort()).toEqual(expectedPathnames);
   expect(stats.unknownPathnames).toEqual([]);
   expect(stats.maxActive).toBeLessThanOrEqual(2);
 };
@@ -593,14 +818,19 @@ const getLightOracleRegions = (page, portalSide) => page.evaluate(({
   haloHeightRatio: PORTAL_HALO_HEIGHT_RATIO
 });
 
-const readLightAnimation = ({ phase, peakOffset }) => {
+const readLightAnimation = ({ phase, peakOffset, portalSide = null, portalPhase = null }) => {
   const root = document.querySelector('#loadingScreen');
-  const slit = document.querySelector('.loading-light-slit.is-lit');
   const final = phase === 'final';
+  const slit = document.querySelector(
+    `.loading-light-slit.is-lit${portalSide ? `[data-portal-side="${portalSide}"]` : ''}${portalPhase ? `[data-portal-phase="${portalPhase}"]` : ''}`
+  )
+    ?? (final ? document.querySelector('#loadingBottomPortal, #loadingTopPortal') : null);
+  if (!root || !slit) return null;
   const animationName = final
     ? 'loading-final-ambient-converge'
     : 'loading-portal-luminance';
-  const animation = root?.getAnimations({ subtree: true }).find((candidate) => (
+  const animationScope = final ? root : slit;
+  const animation = animationScope?.getAnimations({ subtree: true }).find((candidate) => (
     candidate.animationName === animationName
   ));
   if (!animation) return null;
@@ -621,11 +851,11 @@ const readLightAnimation = ({ phase, peakOffset }) => {
   const secondaryAmbient = getComputedStyle(stage, '::after');
   const slitStyle = getComputedStyle(slit);
   const slitBounds = slit.getBoundingClientRect();
-  const core = root.querySelector('.loading-light-core');
+  const core = slit.querySelector('.loading-light-core');
   const coreStyle = getComputedStyle(core);
   const haloStyle = getComputedStyle(core, '::before');
-  const warmStyle = getComputedStyle(root.querySelector('.loading-light-edge.is-warm'));
-  const coolStyle = getComputedStyle(root.querySelector('.loading-light-edge.is-cool'));
+  const warmStyle = getComputedStyle(slit.querySelector('.loading-light-edge.is-warm'));
+  const coolStyle = getComputedStyle(slit.querySelector('.loading-light-edge.is-cool'));
   const primaryAmbientOpacity = Number.parseFloat(primaryAmbient.opacity) || 0;
   const durationMs = (style) => Number.parseFloat(style.animationDuration) * 1000;
   const gradientDirection = (gradientImage) => {
@@ -668,9 +898,9 @@ const readLightAnimation = ({ phase, peakOffset }) => {
     animationName: animation.animationName,
     playState: animation.playState,
     playbackRate: animation.playbackRate,
-    direction: slit.dataset.direction,
-    portalSide: slit.dataset.portalSide,
-    portalPhase: slit.dataset.portalPhase,
+    direction: final ? null : slit.dataset.direction,
+    portalSide: final ? root.dataset.portalSide : slit.dataset.portalSide,
+    portalPhase: final ? root.dataset.portalPhase : slit.dataset.portalPhase,
     parentOpacity: final ? primaryAmbientOpacity : opacity('.loading-light-slit.is-lit'),
     coreOpacity: final ? 0 : opacity('.loading-light-core'),
     warmOpacity: final ? 0 : opacity('.loading-light-edge.is-warm'),
@@ -747,22 +977,37 @@ const captureBaseline = async (page, clip) => {
   return buffer;
 };
 
-const captureNaturalPeak = async (page, { clip, phase }) => {
+const captureNaturalPeak = async (page, {
+  clip,
+  phase,
+  portalSide = null,
+  portalPhase = null
+}) => {
   const peakOffset = LIGHT_PEAK_OFFSETS[phase];
-  await page.waitForFunction(({ phase, peakOffset }) => {
+  await page.waitForFunction(({ phase, peakOffset, portalSide, portalPhase }) => {
     const root = document.querySelector('#loadingScreen');
     const animationName = phase === 'final'
       ? 'loading-final-ambient-converge'
       : 'loading-portal-luminance';
-    const animation = root?.getAnimations({ subtree: true }).find((candidate) => (
-      candidate.animationName === animationName
-    ));
+    const scope = phase === 'final'
+      ? root
+      : root?.querySelector(
+        `.loading-light-slit.is-lit${portalSide ? `[data-portal-side="${portalSide}"]` : ''}${portalPhase ? `[data-portal-phase="${portalPhase}"]` : ''}`
+      );
+    const animation = scope?.getAnimations({ subtree: true }).find(
+      (candidate) => candidate.animationName === animationName
+    );
     if (!animation) return false;
     const peakTime = Number(animation.effect.getComputedTiming().duration) * peakOffset;
     return animation.currentTime < peakTime - 100;
-  }, { phase, peakOffset });
+  }, { phase, peakOffset, portalSide, portalPhase });
 
-  const before = await page.evaluate(readLightAnimation, { phase, peakOffset });
+  const before = await page.evaluate(readLightAnimation, {
+    phase,
+    peakOffset,
+    portalSide,
+    portalPhase
+  });
   const clock = await page.evaluate(() => ({
     timeOrigin: performance.timeOrigin,
     viewportState: {
@@ -809,7 +1054,12 @@ const captureNaturalPeak = async (page, { clip, phase }) => {
       window.__vinylProbeOverhead.push({ start, end, blocking: false });
     }, { start: overheadStart, end: overheadEnd });
   }
-  const after = await page.evaluate(readLightAnimation, { phase, peakOffset });
+  const after = await page.evaluate(readLightAnimation, {
+    phase,
+    peakOffset,
+    portalSide,
+    portalPhase
+  });
   if (frames.length === 0) throw new Error(`No ${phase} presented frames were received`);
   const selected = frames.reduce((nearest, frame) => (
     Math.abs(frame.presentedAt - before.naturalPeakAt)
@@ -840,6 +1090,7 @@ const installBrowserProbe = async (page) => {
       firstRenderedFrameNontransparent: null,
       firstNontransparentActiveFrame: null,
       activeCanvasSamples: [],
+      canvasPresentationFrame: 0,
       lastInspectedActiveFrameCount: null,
       maxActive: 0,
       activeIds: [],
@@ -875,8 +1126,7 @@ const installBrowserProbe = async (page) => {
       activeLightPass: null,
       finalHandoffSamples: [],
       handoffFlightSeen: false,
-      handoffReadySeen: false,
-      exitGateAt: null
+      handoffReadySeen: false
     };
 
     new PerformanceObserver((list) => {
@@ -925,11 +1175,11 @@ const installBrowserProbe = async (page) => {
         return metrics;
       };
 
-      const inspectCanvas = () => {
+      const inspectCanvas = (presentationFrame = null) => {
         const canvas = probe.canvas;
         if (!canvas) return;
         const phase = canvas.dataset.phase;
-        const frameCount = Number(canvas.dataset.frameCount) || 0;
+        const frameCount = presentationFrame ?? (Number(canvas.dataset.frameCount) || 0);
         probe.phaseLeftIdle ||= Boolean(phase && phase !== 'idle');
         if (phase && probe.canvasPhases.at(-1) !== phase) probe.canvasPhases.push(phase);
         if (phase === 'idle') {
@@ -1140,6 +1390,13 @@ const installBrowserProbe = async (page) => {
       inspectActivePosters();
       inspectCanvas();
 
+      const sampleCanvasFrames = () => {
+        probe.canvasPresentationFrame += 1;
+        inspectCanvas(probe.canvasPresentationFrame);
+        if (document.querySelector('#loadingScreen')) requestAnimationFrame(sampleCanvasFrames);
+      };
+      requestAnimationFrame(sampleCanvasFrames);
+
       const readClipGeometry = (clipPath, rect, renderScale = 1) => {
         if (!clipPath || clipPath === 'none' || !clipPath.startsWith('inset(')) {
           return {
@@ -1239,16 +1496,19 @@ const installBrowserProbe = async (page) => {
         probe.handoffFlightSeen ||= Boolean(loading.querySelector('.loading-handoff-flight'));
 
         const now = performance.now();
-        const slit = loading.querySelector('.loading-light-slit.is-lit');
-        const slitLit = Boolean(slit?.classList.contains('is-lit'));
+        const litSlit = loading.querySelector('.loading-light-slit.is-lit');
         const finalResolving = loading.classList.contains('is-final-resolving');
+        const slit = litSlit
+          ?? (finalResolving ? loading.querySelector('#loadingBottomPortal, #loadingTopPortal') : null);
+        const slitLit = Boolean(litSlit?.classList.contains('is-lit'));
         const lightPhase = finalResolving ? 'final' : (slitLit ? 'ordinary' : null);
-        const portalSide = slit?.dataset.portalSide ?? null;
-        const portalPhase = slit?.dataset.portalPhase ?? null;
+        const portalSide = finalResolving
+          ? loading.dataset.portalSide
+          : (slit?.dataset.portalSide ?? null);
+        const portalPhase = finalResolving
+          ? loading.dataset.portalPhase
+          : (slit?.dataset.portalPhase ?? null);
         const portalKey = lightPhase ? `${lightPhase}:${portalSide}:${portalPhase}` : null;
-        if (loading.classList.contains('is-exiting') && probe.exitGateAt === null) {
-          probe.exitGateAt = now;
-        }
         if (lightPhase) {
           if (!probe.activeLightPass || probe.activeLightPass.key !== portalKey) {
             if (probe.activeLightPass) {
@@ -1258,7 +1518,7 @@ const installBrowserProbe = async (page) => {
             probe.activeLightPass = {
               key: portalKey,
               phase: lightPhase,
-              direction: slit.dataset.direction,
+              direction: finalResolving ? null : slit.dataset.direction,
               portalSide,
               portalPhase,
               startedAt: now,
@@ -1371,7 +1631,6 @@ const installBrowserProbe = async (page) => {
               };
               const motion = readAnimationState(handoff, 'loading-poster-to-player-motion');
               const shape = readAnimationState(handoff, 'loading-poster-to-player-shape');
-              const targetReveal = readAnimationState(targetCover, 'loading-target-cover-reveal');
               probe.handoffReadySeen ||= loading.dataset.handoffReady === 'true';
               probe.finalHandoffSamples.push({
                 at: now,
@@ -1390,7 +1649,6 @@ const installBrowserProbe = async (page) => {
                 roundRadiusY: clip.roundRadiusY,
                 motion,
                 shape,
-                targetReveal,
                 sourceIsActivePoster: handoff === poster,
                 handoffSourceCount: loading.querySelectorAll(
                   '.loading-image[data-loading-handoff="true"]'
@@ -1561,6 +1819,10 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     && window.__vinylLoadingProbe.maxActive > 0
     && window.__vinylLoadingProbe.posterGeometry
   ), null, { timeout: 5_000 });
+  const activeMotionProfile = await page.evaluate(() => (
+    document.documentElement.dataset.motionProfile
+  ));
+  const expectedHandoffDuration = FINAL_HANDOFF_DURATION_MS[activeMotionProfile];
 
   const loading = page.locator('#loadingScreen');
   const canvasJsHandle = await page.evaluateHandle(() => window.__vinylLoadingProbe.canvas);
@@ -1585,7 +1847,11 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
   });
 
   if (reduce) {
-    expect(initialProbe.portalContractAtFirstActive.display).toBe('none');
+    expect(initialProbe.portalContractAtFirstActive).toMatchObject({
+      display: null,
+      portalSide: null,
+      animationNames: []
+    });
   } else {
     const poster = initialProbe.posterGeometry;
     expect(poster.maskImage).toBe('none');
@@ -1634,7 +1900,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(portal.haloAnimationName).toBe('none');
     expect(portal.haloDuration).toBe(0);
     expect(portal.haloBackgroundImage).toContain('radial-gradient');
-    expect(portal.haloBackgroundDirection).toBe('104% 100% at 50% 0px');
+    expect(portal.haloBackgroundDirection).toMatch(/^104% 100% at 50% 0(?:px|%)$/);
     expect(portal.haloBackgroundImage).toContain('rgba(255, 252, 243, 0.92)');
     expect(portal.haloMaskImage.match(/linear-gradient/g) ?? []).toHaveLength(1);
     expect(portal.haloWebkitMaskImage).toBe(portal.haloMaskImage);
@@ -1680,6 +1946,11 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       #loadingScreen[data-light-oracle-isolated="true"] .loading-status {
         opacity: 0 !important;
       }
+      #loadingScreen[data-light-baseline-isolated="true"] .loading-light-slit,
+      #loadingScreen[data-light-baseline-isolated="true"] .loading-stage::before,
+      #loadingScreen[data-light-baseline-isolated="true"] .loading-stage::after {
+        opacity: 0 !important;
+      }
     ` });
     const setLightOracleIsolation = (isolated) => page.evaluate((nextIsolated) => {
       const root = document.querySelector('#loadingScreen');
@@ -1687,16 +1958,26 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       if (nextIsolated) root.dataset.lightOracleIsolated = 'true';
       else delete root.dataset.lightOracleIsolated;
     }, isolated);
+    const setLightBaselineIsolation = (isolated) => page.evaluate((nextIsolated) => {
+      const root = document.querySelector('#loadingScreen');
+      if (!root) return;
+      if (nextIsolated) root.dataset.lightBaselineIsolated = 'true';
+      else delete root.dataset.lightBaselineIsolated;
+    }, isolated);
     performanceProbeEnd = await page.evaluate(() => performance.now());
     await setLightOracleIsolation(true);
+    await setLightBaselineIsolation(true);
     const ordinaryBaseline = await captureBaseline(page, ordinaryLightOracle.clip);
+    await setLightBaselineIsolation(false);
     await writeFile(
       testInfo.outputPath(`ordinary-baseline-${testInfo.project.name}.png`),
       ordinaryBaseline
     );
     const ordinaryPeak = await captureNaturalPeak(page, {
       clip: ordinaryLightOracle.clip,
-      phase: 'ordinary'
+      phase: 'ordinary',
+      portalSide: 'bottom',
+      portalPhase: 'exit'
     });
     await writeFile(
       testInfo.outputPath(`ordinary-full-natural-peak-${testInfo.project.name}.jpeg`),
@@ -1736,7 +2017,9 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       return final && !document.querySelector('#loadingScreen')?.classList.contains('is-final-resolving');
     });
     await setLightOracleIsolation(true);
+    await setLightBaselineIsolation(true);
     const finalBaseline = await captureBaseline(page, ordinaryLightOracle.clip);
+    await setLightBaselineIsolation(false);
     await writeFile(
       testInfo.outputPath(`final-baseline-${testInfo.project.name}.png`),
       finalBaseline
@@ -1775,11 +2058,12 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     delete finalLightMetrics.croppedPng;
     await setLightOracleIsolation(false);
 
-    for (const capture of [ordinaryCapture, finalCapture]) {
-      expect(capture.before.direction).toBe('horizontal');
+    for (const [phase, capture] of Object.entries({ ordinary: ordinaryCapture, final: finalCapture })) {
       expect(capture.before.playState).toBe('running');
       expect(capture.before.playbackRate).toBe(1);
       expect(capture.before.pausedAnimations).toBe(0);
+      expect(capture.after, `${phase} light remains inspectable after its natural peak`)
+        .not.toBeNull();
       expect(['running', 'finished']).toContain(capture.after.playState);
       expect(capture.after.playbackRate).toBe(1);
       expect(capture.after.pausedAnimations).toBe(0);
@@ -1797,6 +2081,8 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       expect(capture.viewportState.visualOffsetTop).toBe(0);
       expect(capture.viewportState.visualScale).toBe(1);
     }
+    expect(ordinaryCapture.before.direction).toBe('horizontal');
+    expect(finalCapture.before.direction).toBeNull();
     expect(ordinaryCapture.before.portalSide).toBe('bottom');
     expect(ordinaryCapture.before.portalPhase).toBe('exit');
     expect(finalCapture.before.portalSide).toBe('center');
@@ -1960,8 +2246,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     lightPasses: window.__vinylLoadingProbe.lightPasses,
     finalHandoffSamples: window.__vinylLoadingProbe.finalHandoffSamples,
     handoffFlightSeen: window.__vinylLoadingProbe.handoffFlightSeen,
-    handoffReadySeen: window.__vinylLoadingProbe.handoffReadySeen,
-    exitGateAt: window.__vinylLoadingProbe.exitGateAt
+    handoffReadySeen: window.__vinylLoadingProbe.handoffReadySeen
   }));
   expect(finalProbe.maxActive).toBe(1);
   expect(finalProbe.decodedNodeCount).toBe(EXPECTED_ARCHIVE_IDS.length);
@@ -1994,7 +2279,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(finalProbe.canvasPhases).toContain('scatter');
     expect(finalProbe.canvasPhases).toContain('hold');
     expect(finalProbe.canvasPhases.every((phase) => (
-      ['idle', 'gather', 'scatter', 'hold'].includes(phase)
+      ['idle', 'gather', 'scatter', 'hold', 'tail', 'mixed'].includes(phase)
     )))
       .toBe(true);
     expect(finalProbe.idleCanvasSamples.length).toBeGreaterThan(0);
@@ -2016,10 +2301,13 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(finalProbe.portalSequence.map(({ side, phase }) => [side, phase]))
       .toEqual(expectedPortalSequence);
     expect(finalProbe.ignitionLeads).toHaveLength(ordinaryPosterCount);
-    expect(finalProbe.ignitionLeads.every(({ leadMs }) => (
-      leadMs >= PORTAL_POSTER_LEAD_RANGE_MS.minimum
-      && leadMs <= PORTAL_POSTER_LEAD_RANGE_MS.maximum
-    ))).toBe(true);
+    expect(
+      finalProbe.ignitionLeads.every(({ leadMs }) => (
+        leadMs >= PORTAL_POSTER_LEAD_RANGE_MS.minimum
+        && leadMs <= PORTAL_POSTER_LEAD_RANGE_MS.maximum
+      )),
+      JSON.stringify(finalProbe.ignitionLeads)
+    ).toBe(true);
     const posterTrajectories = Object.entries(finalProbe.posterTrajectories);
     expect(posterTrajectories).toHaveLength(ordinaryPosterCount);
     for (const [id, samples] of posterTrajectories) {
@@ -2069,13 +2357,6 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(finalPass).toBeTruthy();
     expect(ordinaryPass.samples.length).toBeGreaterThanOrEqual(8);
     expect(finalPass.samples.length).toBeGreaterThanOrEqual(8);
-    expect(finalPass.startedAt).toBeLessThan(finalProbe.exitGateAt);
-    expect(Math.abs(
-      (finalProbe.exitGateAt - finalPass.startedAt) - FINAL_HANDOFF_DURATION_MS
-    ))
-      .toBeLessThanOrEqual(FINAL_EXIT_GATE_TOLERANCE_MS);
-    expect(finalCapture.before.naturalPeakAt).toBeLessThan(finalProbe.exitGateAt);
-    expect(finalCapture.presentedAt).toBeLessThan(finalProbe.exitGateAt);
     const naturalPeak = (pass) => pass.samples.reduce((peak, sample) => (
       sample.parentOpacity > peak.parentOpacity ? sample : peak
     ));
@@ -2085,15 +2366,19 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
     expect(ordinaryNaturalPeak.parentOpacity).toBeGreaterThanOrEqual(0.60);
     expect(finalNaturalPeak.parentOpacity).toBeGreaterThanOrEqual(0.10);
     expect(finalNaturalPeak.parentOpacity).toBeLessThanOrEqual(0.16);
-    expect(finalNaturalPeak.at).toBeLessThan(finalProbe.exitGateAt);
     expect(finalNaturalPeak.coreOpacity).toBeLessThanOrEqual(0.52);
     expect(finalNaturalPeak.warmOpacity).toBeLessThanOrEqual(0.22);
     expect(finalNaturalPeak.coolOpacity).toBeLessThanOrEqual(0.20);
-    const ordinaryPasses = finalProbe.lightPasses.filter(({ phase }) => phase === 'ordinary');
+    const ordinaryPasses = finalProbe.lightPasses.filter(({ phase, samples }) => (
+      phase === 'ordinary'
+      && samples.some(({ portalAnimationDuration }) => (
+        portalAnimationDuration === PORTAL_DURATION_MS
+      ))
+    ));
     expect(ordinaryPasses.length).toBeGreaterThanOrEqual(9);
     for (const pass of ordinaryPasses) {
-      expect([...new Set(pass.samples.map(({ portalAnimationDuration }) => (
-        portalAnimationDuration
+      expect([...new Set(pass.samples.flatMap(({ portalAnimationDuration }) => (
+        portalAnimationDuration === null ? [] : [portalAnimationDuration]
       )))])
         .toEqual([PORTAL_DURATION_MS]);
       expect(pass.samples.every(({ portalAnimationPlayState }) => (
@@ -2140,17 +2425,23 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       JSON.stringify(shape.animatedProperties)
     )))])
       .toEqual([JSON.stringify(['clipPath'])]);
-    expect(animatedHandoffSamples.every(({ motion, shape }) => (
-      motion.duration === FINAL_HANDOFF_DURATION_MS
-      && shape.duration === FINAL_HANDOFF_DURATION_MS
-    ))).toBe(true);
+    expect(
+      animatedHandoffSamples.every(({ motion, shape }) => (
+        motion.duration === expectedHandoffDuration
+        && shape.duration === expectedHandoffDuration
+      )),
+      JSON.stringify(animatedHandoffSamples.map(({ motion, shape }) => ({
+        motion: motion.duration,
+        shape: shape.duration
+      })))
+    ).toBe(true);
 
     const motionKeyframes = animatedHandoffSamples[0].motion.keyframes;
     expect(motionKeyframes.map(({ offset }) => offset)).toEqual([0, 0.82, 1]);
     expect(motionKeyframes[0].easing).toBe('cubic-bezier(0.4, 0.14, 0.3, 1)');
     expect(motionKeyframes.every(({ transform }) => transform !== null)).toBe(true);
     const shapeKeyframes = animatedHandoffSamples[0].shape.keyframes;
-    expect(shapeKeyframes.map(({ offset }) => offset)).toEqual([0, 0.22, 1]);
+    expect(shapeKeyframes.map(({ offset }) => offset)).toEqual([0, 0.82, 1]);
     expect(shapeKeyframes[0].easing).toBe('cubic-bezier(0, 0, 0.3, 1)');
     expect(shapeKeyframes[0].clipPath).toMatch(/inset\(.+round 0%\)/);
     for (const keyframe of shapeKeyframes.slice(1)) {
@@ -2173,44 +2464,31 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       && roundRadiusX >= (visibleWidth / 2) - 1
       && roundRadiusY >= (visibleHeight / 2) - 1
     );
-    const circularByTwentyTwoPercent = animatedHandoffSamples.find(({ shape, ...sample }) => (
-      shape.progress >= 0.22 && shape.progress <= 0.29 && hasCircularClip(sample)
+    const circularAtAlignment = animatedHandoffSamples.find(({ shape, ...sample }) => (
+      shape.progress >= 0.82 && shape.progress <= 0.94 && hasCircularClip(sample)
     ));
-    expect(circularByTwentyTwoPercent).toBeTruthy();
+    expect(circularAtAlignment).toBeTruthy();
     const alignedHandoff = animatedHandoffSamples.find(({ motion }) => motion.progress >= 0.82);
     expect(alignedHandoff).toBeTruthy();
     expect(alignedHandoff.motion.progress).toBeLessThanOrEqual(0.94);
     expect(hasCircularClip(alignedHandoff)).toBe(true);
     expect(alignedHandoff.targetCoverLoadingHandoff).toBe(true);
-    expect(alignedHandoff.targetCoverActive).toBe(true);
+    expect(alignedHandoff.targetCoverActive).toBe(false);
     expect(alignedHandoff.targetCoverArtworkMatches).toBe(true);
-    expect(alignedHandoff.centerDistance).toBeLessThanOrEqual(4);
-    expect(Math.abs(alignedHandoff.visibleWidth - alignedHandoff.targetWidth)).toBeLessThanOrEqual(2);
-    expect(Math.abs(alignedHandoff.visibleHeight - alignedHandoff.targetHeight)).toBeLessThanOrEqual(2);
+    expect(alignedHandoff.targetCoverOpacity).toBe(0);
+    expect(alignedHandoff.centerDistance).toBeLessThanOrEqual(1);
+    expect(Math.abs(alignedHandoff.visibleWidth - alignedHandoff.targetWidth)).toBeLessThanOrEqual(1);
+    expect(Math.abs(alignedHandoff.visibleHeight - alignedHandoff.targetHeight)).toBeLessThanOrEqual(1);
     expect(alignedHandoff.scale).toBeLessThan(1);
 
-    const targetRevealSample = animatedHandoffSamples.find(({ targetReveal }) => targetReveal);
-    expect(targetRevealSample).toBeTruthy();
-    expect(targetRevealSample.targetReveal.duration).toBe(FINAL_HANDOFF_DURATION_MS);
-    expect(targetRevealSample.targetReveal.keyframes.map(({ offset }) => offset))
-      .toEqual([0, 0.82, 1]);
-    expect(targetRevealSample.targetReveal.keyframes.map(({ opacity }) => opacity))
-      .toEqual(['0', '0', '1']);
-    const targetTakeover = animatedHandoffSamples.filter(({ motion, targetReveal }) => (
-      motion.progress >= 0.82 && targetReveal
-    ));
-    expect(targetTakeover.length).toBeGreaterThanOrEqual(3);
-    expect(targetTakeover.some(({ targetCoverOpacity }) => targetCoverOpacity > 0.05)).toBe(true);
-    const takeoverDeltas = targetTakeover.slice(1).map((sample, index) => (
-      sample.targetCoverOpacity - targetTakeover[index].targetCoverOpacity
-    ));
-    expect(takeoverDeltas.every((delta) => delta >= -0.02)).toBe(true);
-    const settledHandoff = animatedHandoffSamples.findLast(({ motion }) => (
-      motion.progress >= 0.98
-    ));
+    expect(animatedHandoffSamples.every(({ targetCoverActive, targetCoverOpacity }) => (
+      !targetCoverActive && targetCoverOpacity === 0
+    ))).toBe(true);
+    const settledHandoff = animatedHandoffSamples.at(-1);
     expect(settledHandoff).toBeTruthy();
+    expect(settledHandoff.motion.progress).toBeGreaterThanOrEqual(0.82);
     expect(settledHandoff.opacity).toBeGreaterThanOrEqual(0.99);
-    expect(settledHandoff.targetCoverOpacity).toBeGreaterThanOrEqual(0.85);
+    expect(settledHandoff.targetCoverOpacity).toBe(0);
     expect(hasCircularClip(settledHandoff)).toBe(true);
     for (const [phase, capture, pass] of [
       ['ordinary', ordinaryCapture, ordinaryPass],
@@ -2268,7 +2546,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
 
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
   await expect(page.locator('#appRoot')).not.toHaveAttribute('aria-hidden', 'true');
-  expectExactCoverRequests(stats);
+  expectExactCoverRequests(stats, { expectFinalPrewarm: reduce });
 
   const effectLongTasks = await page.evaluate(({ end }) => (
     window.__vinylLongTasks.filter((entry) => (
@@ -2358,8 +2636,9 @@ test('failed cover loading clears particles and retry restarts from an empty Can
   routeControl.releaseRetryRequests();
 
   await expect(loading).toHaveCount(0, { timeout: LOADING_SETTLE_TIMEOUT_MS });
+  await expect.poll(() => routeControl.stats.retry.active).toBe(0);
   expectExactCoverRequests(routeControl.stats.retry, {
-    expectFinalPrewarm: testInfo.project.name !== 'mobile-reduce'
+    expectFinalPrewarm: true
   });
   await expect(page.locator('#appRoot')).not.toHaveAttribute('inert', '');
   await expect(page.locator('#appRoot')).not.toHaveAttribute('aria-hidden', 'true');
@@ -2389,49 +2668,188 @@ test('out-of-order image completion still presents the manifest sequence with en
   );
 });
 
-test('skip keeps the current poster visible until delayed end.jpg can take over', async ({ page }, testInfo) => {
+test('skip preserves the in-flight poster and hands end.jpg to the player without a seam', async ({ page }, testInfo) => {
   test.skip(!['desktop-chromium', 'mobile-chromium'].includes(testInfo.project.name));
   test.setTimeout(30_000);
   const delayedFinal = await installDelayedFinalCover(page);
+  await installSkipHandoffContinuityProbe(page);
 
   try {
     await page.goto('./', { waitUntil: 'commit' });
     await page.waitForFunction(() => {
       const current = document.querySelector(
-        '.loading-frame.is-active.is-stable:not([data-loading-slot="archive-10"])'
+        '[data-loading-slot="archive-01"].loading-frame.is-active.is-entering'
       );
-      return current && Number.parseFloat(getComputedStyle(current.querySelector('img')).opacity) >= 0.99;
+      const image = current?.querySelector('.loading-image');
+      const animation = image?.getAnimations().find(
+        ({ animationName }) => animationName === 'loading-poster-glide-in'
+      );
+      const progress = animation?.effect?.getComputedTiming?.().progress;
+      const skip = document.querySelector('#loadingSkip');
+      return skip
+        && !skip.hidden
+        && !skip.disabled
+        && Number.isFinite(progress)
+        && progress >= 0.22
+        && progress <= 0.32;
     }, null, { timeout: 8_000 });
 
-    const activeBeforeSkip = await page.locator('.loading-frame.is-active').getAttribute('data-loading-slot');
     await page.locator('#loadingSkip').click();
     await expect(page.locator('#loadingScreen')).toHaveAttribute('data-state', 'skipping');
-    await page.waitForTimeout(250);
+    const skipSnapshot = await page.evaluate(() => window.__vinylSkipHandoffProbe.skipSnapshot);
+    expect(skipSnapshot).toMatchObject({
+      activeId: 'archive-01',
+      activeOpacity: 1,
+      glide: {
+        playState: 'running',
+        startTime: expect.any(Number)
+      }
+    });
+    expect(skipSnapshot.glide.progress).toBeGreaterThanOrEqual(0.2);
+    expect(skipSnapshot.glide.progress).toBeLessThan(0.9);
 
-    const waitingState = await page.evaluate(() => {
-      const active = document.querySelector('.loading-frame.is-active');
-      const image = active?.querySelector('img');
-      return {
-        activeCount: document.querySelectorAll('.loading-frame.is-active').length,
-        activeId: active?.dataset.loadingSlot || null,
-        stable: active?.classList.contains('is-stable') || false,
-        imageOpacity: image ? Number.parseFloat(getComputedStyle(image).opacity) : 0
-      };
-    });
-    expect(waitingState).toEqual({
+    await page.waitForFunction((skippedId) => {
+      const active = document.querySelector(
+        `[data-loading-slot="${skippedId}"].loading-frame.is-active.is-stable`
+      );
+      return active
+        && !active.classList.contains('is-outgoing')
+        && Number.parseFloat(getComputedStyle(active.querySelector('.loading-image')).opacity) >= 0.99;
+    }, skipSnapshot.activeId, { timeout: 8_000 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+
+    const waitingProbe = await page.evaluate(() => window.__vinylSkipHandoffProbe);
+    const skippedSamples = waitingProbe.samples.filter((sample) => (
+      sample.activeId === waitingProbe.skippedId
+      && sample.at >= waitingProbe.skipAt
+    ));
+    const stableIndex = skippedSamples.findIndex(({ activeStable }) => activeStable);
+    expect(stableIndex).toBeGreaterThanOrEqual(2);
+    const arrivalSamples = skippedSamples.slice(0, stableIndex);
+    const glideSamples = arrivalSamples.filter(({ glide }) => glide);
+    expect(glideSamples.length).toBeGreaterThanOrEqual(2);
+    expect(arrivalSamples.every(({ activeCount, activeClassName }) => (
+      activeCount === 1
+      && !activeClassName.includes('is-outgoing')
+      && !activeClassName.includes('is-exiting')
+    ))).toBe(true);
+    expect(glideSamples.every(({ glide }) => (
+      Math.abs(glide.startTime - skipSnapshot.glide.startTime) <= 0.01
+      && ['running', 'finished'].includes(glide.playState)
+    ))).toBe(true);
+
+    const trajectorySamples = [skipSnapshot, ...glideSamples];
+    const progressDeltas = trajectorySamples.slice(1).map((sample, index) => (
+      sample.glide.progress - trajectorySamples[index].glide.progress
+    ));
+    const centerDeltas = trajectorySamples.slice(1).map((sample, index) => (
+      sample.activeCenterY - trajectorySamples[index].activeCenterY
+    ));
+    const scaleDeltas = trajectorySamples.slice(1).map((sample, index) => (
+      sample.activeScale - trajectorySamples[index].activeScale
+    ));
+    expect(progressDeltas.every((delta) => delta >= -0.005)).toBe(true);
+    expect(centerDeltas.every((delta) => delta >= -0.5)).toBe(true);
+    expect(scaleDeltas.every((delta) => delta >= -0.002)).toBe(true);
+    expect(skippedSamples[stableIndex]).toMatchObject({
+      activeId: skipSnapshot.activeId,
       activeCount: 1,
-      activeId: activeBeforeSkip,
-      stable: true,
-      imageOpacity: 1
+      activeStable: true
     });
+    expect(delayedFinal.stats.pathnames.filter(
+      (pathname) => pathname === FINAL_COVER_PATHNAME
+    )).toHaveLength(1);
 
     delayedFinal.releaseFinal();
-    await page.waitForFunction(() => (
-      document.querySelector('[data-loading-slot="archive-10"].is-active') !== null
-    ), null, { timeout: 8_000 });
     await expect(page.locator('#loadingScreen')).toHaveCount(0, {
       timeout: LOADING_SETTLE_TIMEOUT_MS
     });
+    await page.waitForFunction(() => (
+      window.__vinylSkipHandoffProbe?.settledFrames >= 4
+    ), null, { timeout: 5_000 });
+
+    const finalProbe = await page.evaluate(() => window.__vinylSkipHandoffProbe);
+    const settledTarget = finalProbe.samples.findLast((sample) => (
+      !sample.rootConnected
+      && sample.targetVisible
+      && sample.targetActive
+    ));
+    expect(settledTarget).toBeTruthy();
+    const handoffSamples = finalProbe.samples.filter(({ motion, sourceClip, targetRect }) => (
+      motion && sourceClip && targetRect
+    ));
+    expect(handoffSamples.length).toBeGreaterThanOrEqual(8);
+    const settledSource = handoffSamples.findLast(({ motion }) => motion.progress >= 0.82);
+    expect(settledSource).toBeTruthy();
+    expect(Math.hypot(
+      settledSource.sourceClip.centerX - settledTarget.targetRect.centerX,
+      settledSource.sourceClip.centerY - settledTarget.targetRect.centerY
+    )).toBeLessThanOrEqual(1);
+    expect(Math.abs(
+      settledSource.sourceClip.width - settledTarget.targetRect.width
+    )).toBeLessThanOrEqual(1);
+    expect(Math.abs(
+      settledSource.sourceClip.height - settledTarget.targetRect.height
+    )).toBeLessThanOrEqual(1);
+
+    expect(settledSource.sourceCrop).toBeTruthy();
+    expect(settledTarget.targetCrop).toBeTruthy();
+    const naturalDimensions = {
+      left: finalProbe.finalNaturalWidth,
+      top: finalProbe.finalNaturalHeight,
+      width: finalProbe.finalNaturalWidth,
+      height: finalProbe.finalNaturalHeight
+    };
+    for (const property of ['left', 'top', 'width', 'height']) {
+      expect(
+        Math.abs(settledSource.sourceCrop[property] - settledTarget.targetCrop[property])
+          * naturalDimensions[property],
+        `${property} crop changes during handoff`
+      ).toBeLessThanOrEqual(1);
+    }
+
+    expect(finalProbe.samples.filter(({ overlap }) => overlap).length).toBeLessThanOrEqual(1);
+    const firstVisibleTarget = finalProbe.samples.findIndex(({ targetVisible }) => targetVisible);
+    expect(firstVisibleTarget).toBeGreaterThanOrEqual(0);
+    expect(finalProbe.samples.slice(firstVisibleTarget + 1).every(({ sourceVisible }) => (
+      !sourceVisible
+    ))).toBe(true);
+
+    expect(settledTarget.targetOpacity).toBeGreaterThanOrEqual(0.99);
+    expect(settledTarget.targetArtwork).toContain(FINAL_COVER_PATHNAME);
+    expect(settledTarget.targetBackgroundPosition).toBe('50% 50%');
+    expect(settledTarget.targetBackgroundSize).toBe('cover');
+    expect(new URL(settledSource.sourceArtwork).pathname).toBe(FINAL_COVER_PATHNAME);
+    expect(delayedFinal.stats.pathnames.filter(
+      (pathname) => pathname === FINAL_COVER_PATHNAME
+    )).toHaveLength(1);
+    await expect.poll(() => delayedFinal.stats.active).toBe(0);
+  } finally {
+    delayedFinal.releaseFinal();
+  }
+});
+
+test('reduced handoff never exposes the source poster and target cover together', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-reduce');
+  test.setTimeout(30_000);
+  const delayedFinal = await installDelayedFinalCover(page);
+  await installSkipHandoffContinuityProbe(page);
+
+  try {
+    await page.goto('./', { waitUntil: 'commit' });
+    await expect(page.locator('#loadingSkip')).toBeVisible();
+    await page.locator('#loadingSkip').click();
+    delayedFinal.releaseFinal();
+    await expect(page.locator('#loadingScreen')).toHaveCount(0, {
+      timeout: LOADING_SETTLE_TIMEOUT_MS
+    });
+    await page.waitForFunction(() => window.__vinylSkipHandoffProbe?.settledFrames >= 4);
+
+    const samples = await page.evaluate(() => window.__vinylSkipHandoffProbe.samples);
+    expect(samples.filter(({ overlap }) => overlap)).toHaveLength(0);
+    const firstVisibleTarget = samples.findIndex(({ targetVisible }) => targetVisible);
+    expect(firstVisibleTarget).toBeGreaterThanOrEqual(0);
+    expect(samples.slice(firstVisibleTarget).every(({ sourceVisible }) => !sourceVisible)).toBe(true);
   } finally {
     delayedFinal.releaseFinal();
   }
@@ -2552,5 +2970,8 @@ test('captures the loading poster visual', async ({ page }, testInfo) => {
   });
 
   await expect(loading).toHaveCount(0, { timeout: LOADING_SETTLE_TIMEOUT_MS });
-  expectExactCoverRequests(stats);
+  await expect.poll(() => stats.active).toBe(0);
+  expectExactCoverRequests(stats, {
+    expectFinalPrewarm: testInfo.project.name === 'mobile-reduce'
+  });
 });

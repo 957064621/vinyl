@@ -264,9 +264,36 @@ const runToIdle = async (fixture, promises, { start = 0, step = 25 } = {}) => {
 
 test('exports exact frozen pool profiles, caches radial sprites, and caps DPR at one', () => {
   assert.deepEqual(PARTICLE_PROFILES, {
-    full: { count: 320, holdCount: 112, dpr: 1, gatherMs: 160, scatterMs: 140, holdMs: 500 },
-    compact: { count: 180, holdCount: 64, dpr: 1, gatherMs: 100, scatterMs: 90, holdMs: 440 },
-    reduce: { count: 0, holdCount: 0, dpr: 1, gatherMs: 0, scatterMs: 0, holdMs: 0 }
+    full: {
+      count: 320,
+      holdCount: 112,
+      holdRampMs: 240,
+      holdBirthCap: 8,
+      dpr: 1,
+      gatherMs: 160,
+      scatterMs: 140,
+      holdMs: 500
+    },
+    compact: {
+      count: 180,
+      holdCount: 64,
+      holdRampMs: 220,
+      holdBirthCap: 5,
+      dpr: 1,
+      gatherMs: 100,
+      scatterMs: 90,
+      holdMs: 440
+    },
+    reduce: {
+      count: 0,
+      holdCount: 0,
+      holdRampMs: 0,
+      holdBirthCap: 0,
+      dpr: 1,
+      gatherMs: 0,
+      scatterMs: 0,
+      holdMs: 0
+    }
   });
   assert.equal(Object.isFrozen(PARTICLE_PROFILES), true);
   assert.equal(Object.isFrozen(PARTICLE_PROFILES.full), true);
@@ -428,7 +455,11 @@ test('gather, scatter, and hold coexist without clearing and share exactly one R
   const overlappingPoints = pointCenters(renderedFrames(fixture.context.calls).at(-1));
   assert.ok(overlappingPoints.some(([x]) => x >= 10 && x <= 100), 'gather keeps a live owner quota');
   assert.ok(overlappingPoints.some(([x]) => x >= 110 && x <= 200), 'scatter receives a live owner quota');
-  assert.ok(overlappingPoints.some(([x]) => x >= 210 && x <= 310), 'hold receives visible particles');
+  assert.equal(
+    overlappingPoints.some(([x]) => x >= 210 && x <= 310),
+    false,
+    'hold does not evict a full pool of live motion particles to create a one-frame pulse'
+  );
 
   await runToIdle(fixture, [gathering, scattering, holding], { start: 65, step: 25 });
   assert.equal(fixture.canvas.dataset.emitterCount, '0');
@@ -436,18 +467,29 @@ test('gather, scatter, and hold coexist without clearing and share exactly one R
   field.destroy();
 });
 
-test('hold uses its dedicated 112/64 limits and keeps particles below the artwork', async () => {
-  for (const [profile, expected] of [['full', 112], ['compact', 64]]) {
+test('hold eases toward its dedicated limit without a one-frame particle jump', async () => {
+  for (const [profile, expected, birthCap, rampEnd] of [
+    ['full', 112, 8, 320],
+    ['compact', 64, 5, 304]
+  ]) {
     const fixture = createFixture();
     const field = createField(fixture, profile, () => 0.375);
-    const holding = field.hold({ left: 60, top: 50, width: 100, height: 70 }, 120);
-    assert.equal(field.getState().particleCount, expected);
+    const holding = field.hold({ left: 60, top: 50, width: 100, height: 70 }, 500);
+    assert.equal(field.getState().particleCount, 0);
     fixture.scheduler.step(0);
-    fixture.scheduler.step(30);
+    const counts = [field.getState().particleCount];
+    for (let timestamp = 16; timestamp <= rampEnd; timestamp += 16) {
+      fixture.scheduler.step(timestamp);
+      counts.push(field.getState().particleCount);
+    }
+    const increases = counts.slice(1).map((count, index) => count - counts[index]);
+    assert.ok(increases.every((increase) => increase <= birthCap));
+    assert.ok(increases.some((increase) => increase > 0));
+    assert.equal(Math.max(...counts), expected);
     const points = pointCenters(renderedFrames(fixture.context.calls).at(-1));
     assert.equal(points.length, expected);
     assert.ok(points.every(([, y]) => y > 100), 'hold source remains below the poster bottom');
-    await runToIdle(fixture, holding, { start: 60, step: 30 });
+    await runToIdle(fixture, holding, { start: rampEnd + 32, step: 32 });
     field.destroy();
   }
 });

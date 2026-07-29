@@ -109,12 +109,12 @@ test('full idle state has one synchronized transform and opacity light pass', ()
   assert.doesNotMatch(halo, /will-change\s*:/);
 });
 
-test('compact is static, reduced is absent, and unavailable states restart from zero', () => {
+test('compact keeps a slower compositor light loop while reduced motion remains absent', () => {
   const capabilityGate = capabilityGateBody();
-  assert.match(capabilityGate, /html\[data-motion-profile="compact"\]\s+\.btn-sheen::before\s*\{[\s\S]*?animation:\s*none[\s\S]*?opacity:\s*0\.19/);
-  assert.match(capabilityGate, /html\[data-motion-profile="compact"\]\s+\.play-btn::after\s*\{[\s\S]*?animation:\s*none[\s\S]*?opacity:\s*0\.06/);
-  const afterCapabilityGate = css.slice(css.indexOf(capabilityGate) + capabilityGate.length);
-  assert.doesNotMatch(afterCapabilityGate, /html\[data-motion-profile="compact"\]\s+\.play-btn::after/);
+  assert.match(css, /--btn-light-cycle-compact:\s*9200ms/);
+  assert.match(capabilityGate, /html\[data-motion-profile="compact"\]\s+\.play-btn:not\(\[data-busy\]\):not\(:disabled\)\s+\.btn-sheen::before\s*\{[\s\S]*?btn-perimeter-pass\s+var\(--btn-light-cycle-compact\)[\s\S]*?infinite/);
+  assert.doesNotMatch(capabilityGate, /html\[data-motion-profile="compact"\][\s\S]*?\.play-btn:not\(\[data-busy\]\):not\(:disabled\)::after/);
+  assert.match(css, /html\[data-motion-profile="compact"\]\s+\.play-btn:not\(\[data-busy\]\):not\(:disabled\)::after\s*\{[\s\S]*?btn-halo-pulse\s+var\(--btn-light-cycle-compact\)[\s\S]*?infinite/);
   assert.match(css, /html\[data-motion-profile="reduce"\]\s+\.btn-sheen::before[\s\S]*?animation:\s*none\s*!important[\s\S]*?opacity:\s*0\s*!important/);
   assert.match(css, /html\[data-motion-profile="reduce"\]\s+\.play-btn::after[\s\S]*?animation:\s*none\s*!important[\s\S]*?opacity:\s*0\s*!important/);
 

@@ -69,6 +69,7 @@ const criticalAssetGate = startCriticalAssetGate({
         let hasShownPlaylistHint = false;
         let canSetMediaVolume = true;
         let currentLyricIndex = -1;
+        let failedTrackTargetIndex = null;
         let drawQueue = [];
         const PLAYBACK_MODES = {
             RANDOM: 'random',
@@ -104,6 +105,7 @@ const criticalAssetGate = startCriticalAssetGate({
         let isSeeking = false;
         let timeUpdateRAF = null;
         let suppressPlaybackMotion = false;
+        let directPlaybackCommandEpoch = 0;
         let isTrackSwitching = false;
         let isHandlingTrackEnd = false;
 
@@ -198,9 +200,10 @@ const criticalAssetGate = startCriticalAssetGate({
             });
         };
 
-        const motionFiltersEnabled = () => (
+        const pointerMotionEnabled = () => (
             matchMedia('(hover: hover) and (pointer: fine)').matches && !prefersReducedMotion
         );
+        const motionFiltersEnabled = () => !prefersReducedMotion;
 
         const pointerLight = document.createElement('div');
         pointerLight.className = 'pointer-light';
@@ -219,7 +222,7 @@ const criticalAssetGate = startCriticalAssetGate({
         };
         const renderPointerLight = () => {
             pointerLightFrame = null;
-            if (!pointerLightTarget || !motionFiltersEnabled() || document.visibilityState !== 'visible') {
+            if (!pointerLightTarget || !pointerMotionEnabled() || document.visibilityState !== 'visible') {
                 hidePointerLight();
                 return;
             }
@@ -241,7 +244,7 @@ const criticalAssetGate = startCriticalAssetGate({
         };
         const queuePointerLight = (event) => {
             if (event.pointerType && event.pointerType !== 'mouse') return;
-            if (!motionFiltersEnabled()) {
+            if (!pointerMotionEnabled()) {
                 hidePointerLight();
                 return;
             }
@@ -480,8 +483,9 @@ const criticalAssetGate = startCriticalAssetGate({
         };
 
         const stopAndFadeOutAudio = async (duration = 420, options = {}) => {
-            const { disableControl = true } = options;
+            const { disableControl = true, isCurrent = () => true } = options;
             if (audioEl.paused) {
+                if (!isCurrent()) return;
                 cancelVolumeFade();
                 audioController.pause();
                 setPlayerToggleState(false);
@@ -504,6 +508,10 @@ const criticalAssetGate = startCriticalAssetGate({
                 };
                 const finishStop = () => {
                     if (settled) return;
+                    if (!isCurrent()) {
+                        cancel();
+                        return;
+                    }
                     settled = true;
                     cleanup();
                     audioController.pause();
@@ -532,6 +540,10 @@ const criticalAssetGate = startCriticalAssetGate({
                 const targetRate = canSetMediaVolume ? startRate : Math.max(0.72, startRate * 0.82);
 
                 const frame = (now) => {
+                    if (!isCurrent()) {
+                        cancel();
+                        return;
+                    }
                     const progress = Math.min(1, (now - startTime) / duration);
                     const eased = 1 - Math.pow(1 - progress, 3);
                     const ratio = Math.max(0, 1 - eased);
@@ -678,6 +690,7 @@ const criticalAssetGate = startCriticalAssetGate({
 
         const audioController = createAudioController({
             audio: audioEl,
+            MediaMetadataCtor: null,
             onStateChange: renderAudioState,
             onEnded: () => { void handleTrackEnded(); },
             onTimeUpdate: ({ currentTime, duration }) => {
@@ -693,10 +706,16 @@ const criticalAssetGate = startCriticalAssetGate({
         });
 
         const toggleAudioState = async (play, options = {}) => {
-            const { skipMotion = false, stopDuration = 420 } = options;
+            const {
+                skipMotion = false,
+                stopDuration = 420,
+                retry = false,
+                isCurrent = () => true
+            } = options;
             const controllerStatus = audioController.getState().status;
 
             if (play && controllerStatus === 'playing') {
+                if (!isCurrent()) return false;
                 cancelVolumeFade();
                 audioEl.playbackRate = 1;
                 if (canSetMediaVolume) audioEl.volume = 1;
@@ -705,10 +724,12 @@ const criticalAssetGate = startCriticalAssetGate({
                 return true;
             }
             if (!play && !['loading', 'playing'].includes(controllerStatus)) {
+                if (!isCurrent()) return false;
                 resetRejectedPlaybackVisual();
                 return true;
             }
 
+            if (!isCurrent()) return false;
             cancelVolumeFade();
             suppressPlaybackMotion = skipMotion;
 
@@ -717,10 +738,12 @@ const criticalAssetGate = startCriticalAssetGate({
                     if (canSetMediaVolume) audioEl.volume = 1;
                     playerToggleBtn.classList.remove('is-disabled');
                     try {
-                        const played = await audioController.play();
+                        const played = await (retry ? audioController.retry() : audioController.play());
+                        if (!isCurrent()) return false;
                         if (!played) resetRejectedPlaybackVisual();
                         return played;
                     } catch (error) {
+                        if (!isCurrent()) return false;
                         audioController.pause();
                         resetRejectedPlaybackVisual();
                         console.warn('[vinyl] Audio playback failed.', {
@@ -732,16 +755,18 @@ const criticalAssetGate = startCriticalAssetGate({
                 }
 
                 if (controllerStatus === 'loading') {
+                    if (!isCurrent()) return false;
                     audioController.pause();
                     resetRejectedPlaybackVisual();
                     return true;
                 }
 
-                await stopAndFadeOutAudio(stopDuration, { disableControl: false });
+                await stopAndFadeOutAudio(stopDuration, { disableControl: false, isCurrent });
+                if (!isCurrent()) return false;
                 if (skipMotion) resetRejectedPlaybackVisual();
                 return true;
             } finally {
-                suppressPlaybackMotion = false;
+                if (isCurrent()) suppressPlaybackMotion = false;
             }
         };
 
@@ -752,7 +777,7 @@ const criticalAssetGate = startCriticalAssetGate({
                 : status !== 'loading';
             void runDirectPlaybackCommand(
                 'player toggle',
-                () => toggleAudioState(shouldPlay)
+                (isCurrent) => toggleAudioState(shouldPlay, { isCurrent })
             );
         });
 
@@ -789,7 +814,16 @@ const criticalAssetGate = startCriticalAssetGate({
         audioRetry.addEventListener('click', async () => {
             audioRetry.disabled = true;
             try {
-                await runDirectPlaybackCommand('audio retry', () => audioController.retry());
+                if (Number.isInteger(failedTrackTargetIndex)) {
+                    const retryIndex = failedTrackTargetIndex;
+                    cancelTurntableMotion();
+                    await runMotionCommand(() => motion.draw(retryIndex));
+                } else {
+                    await runDirectPlaybackCommand(
+                        'audio retry',
+                        (isCurrent) => toggleAudioState(true, { retry: true, isCurrent })
+                    );
+                }
             } catch {
                 // The controller republishes the recoverable error for the status command.
             } finally {
@@ -797,25 +831,76 @@ const criticalAssetGate = startCriticalAssetGate({
             }
         });
 
-        contactLink.addEventListener('click', () => {
-            const wechatId = 'Michael_Yuuu';
-            if (navigator.clipboard) {
-                navigator.clipboard.writeText(wechatId).then(() => {
-                    showToast();
-                }).catch(() => {
-                    prompt('请手动长按复制我的微信号:', wechatId);
-                });
-            } else {
-                prompt('请手动长按复制我的微信号:', wechatId);
-            }
-        });
-
-        const showToast = () => {
+        let copyToastTimer = null;
+        const showToast = (message, { manual = false, duration = manual ? 5200 : 2500 } = {}) => {
+            if (copyToastTimer !== null) clearTimeout(copyToastTimer);
+            copyToast.textContent = message;
+            copyToast.classList.toggle('is-manual', manual);
+            copyToast.removeAttribute('aria-hidden');
             copyToast.classList.add('is-visible');
-            setTimeout(() => {
+            copyToastTimer = setTimeout(() => {
                 copyToast.classList.remove('is-visible');
-            }, 2500);
+                copyToast.classList.remove('is-manual');
+                copyToast.setAttribute('aria-hidden', 'true');
+                copyToastTimer = null;
+            }, duration);
         };
+
+        const copyTextWithSelection = (text) => {
+            if (typeof document.execCommand !== 'function') return false;
+
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.readOnly = true;
+            textarea.setAttribute('aria-hidden', 'true');
+            Object.assign(textarea.style, {
+                position: 'fixed',
+                inset: '0 auto auto -9999px',
+                width: '1px',
+                height: '1px',
+                opacity: '0',
+                fontSize: '16px'
+            });
+            document.body.append(textarea);
+            textarea.select();
+            textarea.setSelectionRange(0, text.length);
+
+            let copied = false;
+            try {
+                copied = document.execCommand('copy') === true;
+            } catch {
+                copied = false;
+            } finally {
+                textarea.remove();
+            }
+            return copied;
+        };
+
+        const copyWechatId = async () => {
+            const wechatId = 'Michael_Yuuu';
+            let copied = false;
+
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(wechatId);
+                    copied = true;
+                }
+            } catch {
+                copied = false;
+            }
+
+            if (!copied) copied = copyTextWithSelection(wechatId);
+            if (copied) {
+                showToast(`微信号 ${wechatId} 已复制`);
+                return;
+            }
+
+            showToast(`请长按复制：${wechatId}`, { manual: true });
+        };
+
+        contactLink.addEventListener('click', () => {
+            void copyWechatId();
+        });
 
         const createShuffledDrawQueue = (avoidIndex = -1) => {
             const indices = lyricsPool.map((_, index) => index);
@@ -1088,7 +1173,7 @@ const criticalAssetGate = startCriticalAssetGate({
             });
         };
 
-        // ── 封面驱动的动态主色 + 封面交叉淡入 ──────────────────────────
+        // ── 封面驱动的动态主色 + 径向揭示 ───────────────────────────
         const rootStyle = document.documentElement.style;
         const coverLayerA = document.getElementById('vinylCoverA');
         const coverLayerB = document.getElementById('vinylCoverB');
@@ -1104,19 +1189,12 @@ const criticalAssetGate = startCriticalAssetGate({
         let coverSwapRequestId = 0;
         let activeCoverReveal = Promise.resolve();
         const COVER_PRELOAD_TIMEOUT_MS = 4000;
-
-        const trackCoverReveal = (cover) => new Promise((resolve) => {
-            requestAnimationFrame(() => {
-                const animations = cover?.getAnimations?.()
-                    .filter((animation) => animation.effect?.target === cover)
-                    || [];
-                if (animations.length === 0) {
-                    resolve();
-                    return;
-                }
-                Promise.allSettled(animations.map((animation) => animation.finished)).then(resolve);
-            });
+        const COVER_REVEAL_DURATION = Object.freeze({
+            full: 620,
+            compact: 420,
+            reduce: 0
         });
+        const COVER_REVEAL_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
         const waitForActiveCoverReveal = ({ signal } = {}) => {
             if (signal?.aborted) return Promise.resolve();
@@ -1134,7 +1212,12 @@ const criticalAssetGate = startCriticalAssetGate({
         };
 
         // 预载后再交叉淡入，避免空白闪烁；两层互相淡入淡出
-        const loadCoverImage = (image, src, timeoutMs = COVER_PRELOAD_TIMEOUT_MS) => new Promise((resolve) => {
+        const loadCoverImage = (
+            image,
+            src,
+            timeoutMs = COVER_PRELOAD_TIMEOUT_MS,
+            signal
+        ) => new Promise((resolve) => {
             if (!src) {
                 resolve(false);
                 return;
@@ -1146,18 +1229,30 @@ const criticalAssetGate = startCriticalAssetGate({
                 if (settled) return;
                 settled = true;
                 if (timer !== null) clearTimeout(timer);
+                signal?.removeEventListener('abort', onAbort);
                 image.onload = null;
                 image.onerror = null;
                 resolve(loaded);
             };
+            const onAbort = () => finish(false);
 
             image.onload = () => finish(true);
             image.onerror = () => finish(false);
             timer = setTimeout(() => finish(false), timeoutMs);
+            signal?.addEventListener('abort', onAbort, { once: true });
+            if (signal?.aborted) {
+                finish(false);
+                return;
+            }
             image.src = src;
         });
 
-        const preloadCoverImage = (src) => loadCoverImage(new Image(), src);
+        const preloadCoverImage = (src, signal) => loadCoverImage(
+            new Image(),
+            src,
+            COVER_PRELOAD_TIMEOUT_MS,
+            signal
+        );
 
         const setCoverArtworkUrl = (artworkSrc) => {
             const artworkValue = artworkSrc ? `url("${artworkSrc}")` : 'none';
@@ -1201,14 +1296,18 @@ const criticalAssetGate = startCriticalAssetGate({
             return max === 0 ? 0 : (max - min) / max;
         };
 
-        const deriveCoverPaletteFromImage = async (src, fallbackPalette = DEFAULT_COVER_PALETTE) => {
+        const deriveCoverPaletteFromImage = async (
+            src,
+            fallbackPalette = DEFAULT_COVER_PALETTE,
+            signal
+        ) => {
             const safeFallbackPalette = normalizePalette(fallbackPalette);
             const img = new Image();
             img.crossOrigin = 'anonymous';
             img.decoding = 'async';
             img.referrerPolicy = 'no-referrer';
 
-            const loaded = await loadCoverImage(img, src);
+            const loaded = await loadCoverImage(img, src, COVER_PRELOAD_TIMEOUT_MS, signal);
             if (!loaded) return safeFallbackPalette;
 
             const canvas = document.createElement('canvas');
@@ -1263,13 +1362,17 @@ const criticalAssetGate = startCriticalAssetGate({
 
         const canSampleCoverPalette = (src = '') => /mzstatic\.com/i.test(src);
 
-        const resolveCoverPalette = async (artworkSrc, fallbackPalette = DEFAULT_COVER_PALETTE) => {
+        const resolveCoverPalette = async (
+            artworkSrc,
+            fallbackPalette = DEFAULT_COVER_PALETTE,
+            signal
+        ) => {
             if (!canSampleCoverPalette(artworkSrc)) {
                 return normalizePalette(fallbackPalette);
             }
 
             try {
-                return await deriveCoverPaletteFromImage(artworkSrc, fallbackPalette);
+                return await deriveCoverPaletteFromImage(artworkSrc, fallbackPalette, signal);
             } catch (error) {
                 return normalizePalette(fallbackPalette);
             }
@@ -1283,45 +1386,93 @@ const criticalAssetGate = startCriticalAssetGate({
             rootStyle.setProperty('--cover-deep', rgbToCss(normalized.deep));
         };
 
-        const primeCoverVisual = async (index) => {
+        const primeCoverVisual = async (index, { signal } = {}) => {
             const artworkSrc = toInlineCoverProxySrc(getCoverSrcByLyricIndex(index));
             const fallbackPalette = getTrackPaletteByIndex(index);
             const [palette] = await Promise.all([
-                resolveCoverPalette(artworkSrc, fallbackPalette),
-                preloadCoverImage(artworkSrc)
+                resolveCoverPalette(artworkSrc, fallbackPalette, signal),
+                preloadCoverImage(artworkSrc, signal)
             ]);
+            if (signal?.aborted) {
+                throw signal.reason || new DOMException('Aborted', 'AbortError');
+            }
             return { artworkSrc, palette };
         };
 
-        const applyCoverVisual = async (index) => {
+        const clearCoverRevealStyles = (layer) => {
+            if (!layer) return;
+            layer.style.removeProperty('clip-path');
+            layer.style.removeProperty('opacity');
+            layer.style.removeProperty('transform');
+            layer.style.removeProperty('z-index');
+            layer.style.removeProperty('will-change');
+        };
+
+        const applyPreparedCoverVisual = async (preparedVisual, { profile = motionProfile, signal } = {}) => {
             if (!coverLayerA || !coverLayerB) return '';
 
+            const { artworkSrc, palette } = preparedVisual;
             const requestId = ++coverSwapRequestId;
-            setCoverPalette(getTrackPaletteByIndex(index));
-            const { artworkSrc, palette } = await primeCoverVisual(index);
-            if (requestId !== coverSwapRequestId) return artworkSrc;
-
             setCoverPalette(palette);
             setCoverArtworkUrl(artworkSrc);
             if (!artworkSrc) {
                 [coverLayerA, coverLayerB].forEach((layer) => {
+                    layer.getAnimations?.().forEach((animation) => animation.cancel());
                     layer.classList.remove('is-active');
                     layer.style.backgroundImage = '';
+                    clearCoverRevealStyles(layer);
                 });
                 activeCoverLayer = coverLayerA;
                 document.body.dataset.coverState = 'neutral';
                 return '';
             }
 
+            const outgoing = activeCoverLayer;
             const incoming = activeCoverLayer === coverLayerA ? coverLayerB : coverLayerA;
+            incoming.getAnimations?.().forEach((animation) => animation.cancel());
             delete incoming.dataset.loadingHandoff;
             delete incoming.dataset.loadingPrewarm;
             incoming.style.backgroundImage = `url("${artworkSrc}")`;
+            incoming.style.opacity = '1';
+            incoming.style.zIndex = '1';
+            incoming.style.clipPath = 'circle(0% at 50% 50%)';
+            incoming.style.transform = 'scale(1.035) rotate(-1.4deg)';
+            incoming.style.willChange = 'clip-path, transform';
+            outgoing.style.zIndex = '0';
             delete document.body.dataset.coverState;
+            incoming.classList.remove('is-active');
+            outgoing.classList.add('is-active');
+
+            const duration = COVER_REVEAL_DURATION[profile] ?? COVER_REVEAL_DURATION.full;
+            const revealSignal = signal || new AbortController().signal;
+            const result = await animateWithCleanup(
+                incoming,
+                [
+                    {
+                        clipPath: 'circle(0% at 50% 50%)',
+                        transform: 'scale(1.035) rotate(-1.4deg)'
+                    },
+                    {
+                        clipPath: 'circle(72% at 50% 50%)',
+                        transform: 'scale(1) rotate(0deg)'
+                    }
+                ],
+                {
+                    duration,
+                    fill: 'forwards',
+                    easing: COVER_REVEAL_EASING
+                },
+                revealSignal,
+                safeAnimate
+            );
+
+            if (requestId !== coverSwapRequestId || result.status !== 'completed') return artworkSrc;
+
+            outgoing.classList.remove('is-active');
             incoming.classList.add('is-active');
-            activeCoverLayer.classList.remove('is-active');
             activeCoverLayer = incoming;
-            await trackCoverReveal(incoming);
+            clearCoverRevealStyles(outgoing);
+            clearCoverRevealStyles(incoming);
             return artworkSrc;
         };
 
@@ -1333,35 +1484,57 @@ const criticalAssetGate = startCriticalAssetGate({
         // 抽取前只使用初始发行的配色，封面网络请求由首次实际选曲触发。
         setCoverPalette(getInitialCoverPalette());
 
-        const updateCurrentLyric = (index) => {
-            const result = lyricsPool[index];
-            lyricEl.innerHTML = renderLyricLinesHTML(result.text);
-            songEl.textContent = `- ${result.song}`;
-            currentLyricIndex = index;
-            updateArchiveMetadata(index, audioController.getState().status);
-            const coverReady = Promise.resolve(applyCoverVisual(index)).catch((error) => {
-                console.warn('[vinyl] Cover preparation failed.', {
-                    song: result.song,
-                    message: error?.message || String(error)
-                });
-                return '';
+        const lyricLines = () => Array.from(lyricEl.querySelectorAll('.lyric-line'));
+
+        const clearLyricMotionResidue = ({ clearOrigin = false, clearLines = false } = {}) => {
+            resultArea.style.removeProperty('clip-path');
+            lyricEl.style.removeProperty('clip-path');
+            if (clearOrigin) {
+                resultArea.style.removeProperty('--overlay-origin-x');
+                resultArea.style.removeProperty('--overlay-origin-y');
+            }
+            if (!clearLines) return;
+            lyricLines().forEach((line) => {
+                line.style.removeProperty('opacity');
+                line.style.removeProperty('transform');
+                line.style.removeProperty('filter');
+                line.style.removeProperty('clip-path');
             });
-            activeCoverReveal = coverReady;
-            consumeLyricIndexFromQueue(index);
-            updatePlaylistActiveTrack(index);
-            return coverReady;
+        };
+
+        const measureLyricOverlayOrigin = () => {
+            const overlayRect = resultArea.getBoundingClientRect();
+            const vinylRect = vinyl.getBoundingClientRect();
+            if (
+                overlayRect.width <= 0
+                || overlayRect.height <= 0
+                || vinylRect.width <= 0
+                || vinylRect.height <= 0
+            ) return;
+
+            const clampPercent = (value) => Math.max(0, Math.min(100, value));
+            const centerX = vinylRect.left + (vinylRect.width / 2);
+            const centerY = vinylRect.top + (vinylRect.height / 2);
+            const originX = clampPercent(((centerX - overlayRect.left) / overlayRect.width) * 100);
+            const originY = clampPercent(((centerY - overlayRect.top) / overlayRect.height) * 100);
+            resultArea.style.setProperty('--overlay-origin-x', `${originX.toFixed(3)}%`);
+            resultArea.style.setProperty('--overlay-origin-y', `${originY.toFixed(3)}%`);
         };
 
         const revealLyricContentImmediately = () => {
+            clearLyricMotionResidue();
             lyricEl.style.opacity = '1';
             lyricEl.style.transform = 'translateY(0)';
+            lyricEl.style.filter = 'blur(0px)';
             songEl.style.opacity = '1';
             songEl.style.transform = 'translateY(0)';
+            songEl.style.filter = 'blur(0px)';
 
-            Array.from(lyricEl.querySelectorAll('.lyric-line')).forEach((line) => {
+            lyricLines().forEach((line) => {
                 line.style.opacity = '1';
                 line.style.transform = 'translateY(0)';
                 line.style.filter = 'blur(0px)';
+                line.style.clipPath = '';
             });
         };
 
@@ -1402,24 +1575,242 @@ const criticalAssetGate = startCriticalAssetGate({
             };
         };
 
-        const setAudioSourceByIndex = async (index) => {
+        const setMediaSessionMetadata = (metadata) => {
+            if (!navigator.mediaSession) return;
+            try {
+                navigator.mediaSession.metadata = metadata;
+            } catch {
+                // Media Session support is partial across browsers and embedded webviews.
+            }
+        };
+
+        const createMediaSessionMetadata = (track) => {
+            if (typeof globalThis.MediaMetadata !== 'function') return null;
+            try {
+                return new globalThis.MediaMetadata({
+                    title: track.title,
+                    artist: track.artist || '薛之谦',
+                    album: track.album,
+                    artwork: track.artwork
+                });
+            } catch {
+                return null;
+            }
+        };
+
+        const COVER_STYLE_PROPERTIES = [
+            '--cover-a',
+            '--cover-b',
+            '--cover-accent',
+            '--cover-deep',
+            '--cover-art-url'
+        ];
+        let trackTransactionSequence = 0;
+        let activeTrackTransaction = null;
+
+        const readInlineProperties = (element, properties) => Object.fromEntries(
+            properties.map((property) => [property, element.style.getPropertyValue(property)])
+        );
+
+        const restoreInlineProperties = (element, properties) => {
+            Object.entries(properties).forEach(([property, value]) => {
+                if (value) element.style.setProperty(property, value);
+                else element.style.removeProperty(property);
+            });
+        };
+
+        const captureCoverLayer = (layer) => ({
+            active: layer?.classList.contains('is-active') || false,
+            backgroundImage: layer?.style.backgroundImage || '',
+            loadingHandoff: layer?.dataset.loadingHandoff,
+            loadingPrewarm: layer?.dataset.loadingPrewarm,
+            revealStyles: {
+                clipPath: layer?.style.clipPath || '',
+                opacity: layer?.style.opacity || '',
+                transform: layer?.style.transform || '',
+                zIndex: layer?.style.zIndex || '',
+                willChange: layer?.style.willChange || ''
+            }
+        });
+
+        const restoreCoverLayer = (layer, snapshot) => {
+            if (!layer || !snapshot) return;
+            layer.getAnimations?.().forEach((animation) => animation.cancel());
+            layer.classList.toggle('is-active', snapshot.active);
+            layer.style.backgroundImage = snapshot.backgroundImage;
+            Object.assign(layer.style, snapshot.revealStyles);
+            if (snapshot.loadingHandoff === undefined) delete layer.dataset.loadingHandoff;
+            else layer.dataset.loadingHandoff = snapshot.loadingHandoff;
+            if (snapshot.loadingPrewarm === undefined) delete layer.dataset.loadingPrewarm;
+            else layer.dataset.loadingPrewarm = snapshot.loadingPrewarm;
+        };
+
+        const captureTrackSnapshot = () => {
+            const audioState = audioController.getState();
+            const stableAudioTrack = currentLyricIndex >= 0 ? audioState.track : null;
+            return {
+                index: currentLyricIndex,
+                lyricHTML: lyricEl.innerHTML,
+                songText: songEl.textContent,
+                drawQueue: [...drawQueue],
+                playerTime: playerTime.innerText,
+                trackFillTransform: trackFill.style.transform,
+                activeCoverLayer,
+                coverLayers: new Map([
+                    [coverLayerA, captureCoverLayer(coverLayerA)],
+                    [coverLayerB, captureCoverLayer(coverLayerB)]
+                ]),
+                rootCoverProperties: readInlineProperties(document.documentElement, COVER_STYLE_PROPERTIES),
+                bodyCoverProperties: readInlineProperties(document.body, ['--cover-art-url']),
+                coverState: document.body.dataset.coverState,
+                audio: {
+                    ...audioState,
+                    track: stableAudioTrack,
+                    currentTime: Number.isFinite(audioEl.currentTime) ? audioEl.currentTime : 0,
+                    volume: Number.isFinite(audioEl.volume) ? audioEl.volume : 1,
+                    mediaMetadata: navigator.mediaSession?.metadata || null
+                }
+            };
+        };
+
+        const restoreTrackSnapshot = (snapshot) => {
+            coverSwapRequestId += 1;
+            for (const [layer, layerSnapshot] of snapshot.coverLayers) {
+                restoreCoverLayer(layer, layerSnapshot);
+            }
+            activeCoverLayer = snapshot.activeCoverLayer || coverLayerA;
+            restoreInlineProperties(document.documentElement, snapshot.rootCoverProperties);
+            restoreInlineProperties(document.body, snapshot.bodyCoverProperties);
+            if (snapshot.coverState === undefined) delete document.body.dataset.coverState;
+            else document.body.dataset.coverState = snapshot.coverState;
+            activeCoverReveal = Promise.resolve();
+
+            lyricEl.innerHTML = snapshot.lyricHTML;
+            songEl.textContent = snapshot.songText;
+            currentLyricIndex = snapshot.index;
+            drawQueue = [...snapshot.drawQueue];
+            playerTime.innerText = snapshot.playerTime;
+            trackFill.style.transform = snapshot.trackFillTransform;
+            updatePlaylistActiveTrack(snapshot.index);
+            updateArchiveMetadata(snapshot.index, audioController.getState().status);
+            if (resultArea.classList.contains('is-visible') && snapshot.index >= 0) {
+                revealLyricContentImmediately();
+            }
+        };
+
+        const prepareTrack = (index, { signal } = {}) => {
+            if (signal?.aborted) {
+                throw signal.reason || new DOMException('Aborted', 'AbortError');
+            }
+
+            const transaction = {
+                id: ++trackTransactionSequence,
+                status: 'preparing',
+                targetIndex: index,
+                previousIndex: currentLyricIndex,
+                track: createAudioTrackByIndex(index),
+                snapshot: captureTrackSnapshot(),
+                ready: primeCoverVisual(index, { signal })
+            };
+            activeTrackTransaction = transaction;
+            return transaction;
+        };
+
+        const commitTrack = async (transaction, { signal, profile = motionProfile } = {}) => {
+            const preparedVisual = await transaction.ready;
+            if (signal?.aborted) {
+                throw signal.reason || new DOMException('Aborted', 'AbortError');
+            }
+            if (activeTrackTransaction !== transaction || transaction.status !== 'preparing') {
+                throw new Error('Track transaction is no longer active');
+            }
+
+            const result = lyricsPool[transaction.targetIndex];
+            const coverReady = Promise.resolve(applyPreparedCoverVisual(preparedVisual, {
+                profile,
+                signal
+            })).catch((error) => {
+                console.warn('[vinyl] Cover reveal failed.', {
+                    song: result.song,
+                    message: error?.message || String(error)
+                });
+                return '';
+            });
+            activeCoverReveal = coverReady;
+            await coverReady;
+            if (signal?.aborted) {
+                throw signal.reason || new DOMException('Aborted', 'AbortError');
+            }
+            if (activeTrackTransaction !== transaction || transaction.status !== 'preparing') {
+                throw new Error('Track transaction is no longer active');
+            }
+
+            lyricEl.innerHTML = renderLyricLinesHTML(result.text);
+            songEl.textContent = `- ${result.song}`;
+            currentLyricIndex = transaction.targetIndex;
             playerTime.innerText = '0:00';
             trackFill.style.transform = 'translate3d(-100%, 0, 0)';
+            consumeLyricIndexFromQueue(transaction.targetIndex);
+            updatePlaylistActiveTrack(transaction.targetIndex);
+            updateArchiveMetadata(transaction.targetIndex, audioController.getState().status);
+            setMediaSessionMetadata(createMediaSessionMetadata(transaction.track));
+            if (resultArea.classList.contains('is-visible')) revealLyricContentImmediately();
+            transaction.status = 'committed';
+            failedTrackTargetIndex = null;
+            return transaction.track;
+        };
 
-            try {
-                return await audioController.load(createAudioTrackByIndex(index));
-            } catch (error) {
-                console.warn('[vinyl] Missing playable audio URL.', {
-                    song: lyricsPool[index]?.song,
-                    musicOssUrl: lyricsPool[index]?.musicOssUrl,
-                    message: error.message
-                });
-                return false;
+        const rollbackTrack = async (
+            transaction,
+            { resumePlayback = true, retryable = false } = {}
+        ) => {
+            if (!transaction || transaction.status === 'rolled-back' || transaction.status === 'rolling-back') {
+                return { playbackRestored: false };
             }
+
+            transaction.status = 'rolling-back';
+            if (activeTrackTransaction === transaction) activeTrackTransaction = null;
+            failedTrackTargetIndex = retryable && transaction.previousIndex < 0
+                ? transaction.targetIndex
+                : null;
+            const { snapshot } = transaction;
+            const failedAudioState = audioController.getState();
+            restoreTrackSnapshot(snapshot);
+            cancelVolumeFade();
+            audioController.pause();
+
+            let playbackRestored = false;
+            try {
+                const restored = await audioController.restore(snapshot.audio, {
+                    resumePlayback,
+                    restoreVolume: canSetMediaVolume,
+                    emptyStatus: retryable ? 'error' : 'idle',
+                    emptyError: retryable
+                        ? failedAudioState.error || new Error(`Audio failed: ${transaction.track?.title || 'unknown'}`)
+                        : null
+                });
+                playbackRestored = restored.playbackRestored;
+            } catch (error) {
+                console.warn('[vinyl] Previous track recovery failed.', {
+                    song: snapshot.audio.track?.title,
+                    message: error?.message || String(error)
+                });
+                playbackRestored = false;
+            } finally {
+                transaction.status = 'rolled-back';
+                updateArchiveMetadata(currentLyricIndex, audioController.getState().status);
+            }
+
+            return { playbackRestored };
         };
 
         const PLAYLIST_CONTENT_REST_TRANSFORM = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset)))';
         const PLAYLIST_CONTENT_ENTER_START_TRANSFORM = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) + 24px))';
+        const PLAYLIST_OPEN_START_OPACITY = Object.freeze({
+            full: Object.freeze({ area: 0.2, content: 0.5 }),
+            compact: Object.freeze({ area: 0, content: 0 }),
+            reduce: Object.freeze({ area: 0, content: 0 })
+        });
 
         const switchToTrackWithTransition = async (targetIndex, options = {}) => {
             if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= lyricsPool.length) return;
@@ -1460,6 +1851,25 @@ const criticalAssetGate = startCriticalAssetGate({
                 })
             })
         });
+
+        let playlistWarmupHandle = null;
+        const schedulePlaylistWarmup = () => {
+            if (playlist.rendered || playlistWarmupHandle !== null || currentLyricIndex < 0) return;
+
+            const warmPlaylist = () => {
+                playlistWarmupHandle = null;
+                if (playlist.rendered || currentLyricIndex < 0) return;
+                playlist.ensureRendered();
+                playlist.setActive(currentLyricIndex);
+            };
+
+            if (typeof window.requestIdleCallback === 'function') {
+                playlistWarmupHandle = window.requestIdleCallback(warmPlaylist, { timeout: 1600 });
+                return;
+            }
+
+            playlistWarmupHandle = window.setTimeout(warmPlaylist, 240);
+        };
 
         const updatePlaylistActiveTrack = (index) => playlist.setActive(index);
 
@@ -1504,11 +1914,15 @@ const criticalAssetGate = startCriticalAssetGate({
         audioController.bindMediaActions({
             playTrack: () => runDirectPlaybackCommand(
                 'media session play',
-                () => toggleAudioState(true, { skipMotion: shouldUseHeadlessTrackSwitch() })
+                (isCurrent) => toggleAudioState(true, {
+                    skipMotion: shouldUseHeadlessTrackSwitch(),
+                    isCurrent
+                })
             ),
-            pauseTrack: () => runDirectPlaybackCommand('media session pause', () => toggleAudioState(false, {
+            pauseTrack: () => runDirectPlaybackCommand('media session pause', (isCurrent) => toggleAudioState(false, {
                 skipMotion: true,
-                stopDuration: shouldUseHeadlessTrackSwitch() ? 0 : 220
+                stopDuration: shouldUseHeadlessTrackSwitch() ? 0 : 220,
+                isCurrent
             })),
             nextTrack: () => {
                 if (currentLyricIndex !== -1) jumpToMediaTrack(pickNextAutoLyricIndex());
@@ -1518,7 +1932,11 @@ const criticalAssetGate = startCriticalAssetGate({
             },
             stopTrack: () => runDirectPlaybackCommand(
                 'media session stop',
-                () => toggleAudioState(false, { skipMotion: true, stopDuration: 0 })
+                (isCurrent) => toggleAudioState(false, {
+                    skipMotion: true,
+                    stopDuration: 0,
+                    isCurrent
+                })
             )
         });
 
@@ -1547,6 +1965,7 @@ const criticalAssetGate = startCriticalAssetGate({
         const resetResultVisual = () => {
             lyricAnimations.forEach((anim) => anim.cancel());
             lyricAnimations = [];
+            clearLyricMotionResidue({ clearOrigin: true, clearLines: true });
             resultArea.classList.remove('is-visible');
             resultArea.classList.remove('show-dismiss-hint');
             setInteractiveState(resultArea, false);
@@ -1815,24 +2234,33 @@ const criticalAssetGate = startCriticalAssetGate({
             }
         };
 
-        const primeOverlayOpen = (kind) => {
+        const primeOverlayOpen = (kind, profile) => {
             const isLyrics = kind === 'lyrics';
             const element = isLyrics ? resultArea : playlistArea;
             const content = isLyrics ? lyricEl : playlistContent;
+            const playlistStart = PLAYLIST_OPEN_START_OPACITY[profile]
+                || PLAYLIST_OPEN_START_OPACITY.compact;
 
-            element.style.opacity = '0';
-            element.style.transform = 'translateY(8px)';
-            content.style.opacity = '0';
+            element.style.opacity = `${isLyrics ? 0 : playlistStart.area}`;
+            element.style.transform = isLyrics
+                ? 'translate3d(0, 0, 0) scale(0.985)'
+                : 'translateY(8px)';
+            content.style.opacity = `${isLyrics ? 0 : playlistStart.content}`;
             content.style.transform = isLyrics
-                ? 'translateY(16px) scale(0.995)'
+                ? 'translateY(18px) scaleY(0.78) scaleX(0.985)'
                 : PLAYLIST_CONTENT_ENTER_START_TRANSFORM;
+            content.style.clipPath = '';
+            content.style.filter = isLyrics ? 'blur(14px)' : '';
 
             if (!isLyrics) return;
             songEl.style.opacity = '0';
             songEl.style.transform = 'translateY(12px)';
-            Array.from(lyricEl.querySelectorAll('.lyric-line')).forEach((line) => {
+            songEl.style.filter = 'blur(10px)';
+            lyricLines().forEach((line) => {
                 line.style.opacity = '0';
-                line.style.transform = 'translateY(14px) scale(0.99)';
+                line.style.transform = 'translateY(20px) scale(0.985)';
+                line.style.filter = 'blur(14px)';
+                line.style.clipPath = '';
             });
         };
 
@@ -1865,9 +2293,10 @@ const criticalAssetGate = startCriticalAssetGate({
 
             setInteractiveState(element, true);
             element.style.opacity = '1';
-            element.style.transform = 'translateY(0)';
+            element.style.transform = isLyrics ? 'none' : 'translateY(0)';
             content.style.opacity = '1';
             content.style.transform = isLyrics ? 'translateY(0)' : PLAYLIST_CONTENT_REST_TRANSFORM;
+            content.style.clipPath = '';
             content.style.filter = '';
             closeButton.style.opacity = '';
             closeButton.style.transform = '';
@@ -1910,6 +2339,7 @@ const criticalAssetGate = startCriticalAssetGate({
         setInteractiveState(playlistArea, false);
 
         const overlays = {
+            readState: snapshotOverlays,
             async open(kind, { signal, duration, profile }) {
                 const isLyrics = kind === 'lyrics';
                 resetInactiveOverlay(isLyrics);
@@ -1923,7 +2353,8 @@ const criticalAssetGate = startCriticalAssetGate({
                 const element = isLyrics ? resultArea : playlistArea;
                 const content = isLyrics ? lyricEl : playlistContent;
                 rememberOverlayFocusOrigin(kind, element);
-                primeOverlayOpen(kind);
+                if (isLyrics) measureLyricOverlayOrigin();
+                primeOverlayOpen(kind, profile);
                 element.classList.add('is-visible');
                 setInteractiveState(element, true);
                 document.body.classList.toggle('has-lyric-overlay', isLyrics);
@@ -1939,57 +2370,125 @@ const criticalAssetGate = startCriticalAssetGate({
                 setControlSplit(true);
                 setOverlayControlsVisible(false);
 
-                const primaryEasing = 'cubic-bezier(0.22, 1, 0.36, 1)';
+                const primaryEasing = 'cubic-bezier(0.16, 1, 0.3, 1)';
                 try {
                     if (isLyrics) {
-                        const lineDelay = profile === 'full' ? 16 : 0;
+                        const lyricDuration = profile === 'full' ? 760 : (profile === 'compact' ? 520 : 0);
+                        const titleDelay = profile === 'full' ? 100 : (profile === 'compact' ? 72 : 0);
+                        const contentDuration = profile === 'full' ? 720 : (profile === 'compact' ? 500 : 0);
+                        const lineStart = profile === 'full' ? 260 : (profile === 'compact' ? 170 : 0);
+                        const lineDuration = profile === 'full' ? 580 : (profile === 'compact' ? 460 : 0);
+                        const lineDelay = profile === 'full' ? 110 : (profile === 'compact' ? 84 : 0);
+                        const lines = lyricLines();
+                        const lastLineDelay = lineStart + (Math.max(0, lines.length - 1) * lineDelay);
+                        const songDelay = profile === 'reduce'
+                            ? 0
+                            : lastLineDelay + Math.round(lineDuration * 0.62);
+                        const songDuration = profile === 'full' ? 420 : (profile === 'compact' ? 340 : 0);
                         await Promise.all([
                             runOverlayAnimation(element, [
-                                { opacity: 0, transform: 'translateY(8px)' },
-                                { opacity: 1, transform: 'translateY(0)' }
-                            ], { duration, easing: primaryEasing }, signal),
+                                {
+                                    opacity: 0,
+                                    transform: 'translate3d(0, 0, 0) scale(0.985)',
+                                    clipPath: 'circle(0% at var(--overlay-origin-x, 50%) var(--overlay-origin-y, 50%))'
+                                },
+                                {
+                                    opacity: 1,
+                                    transform: 'translate3d(0, 0, 0) scale(1)',
+                                    clipPath: 'circle(150% at var(--overlay-origin-x, 50%) var(--overlay-origin-y, 50%))'
+                                }
+                            ], { duration: lyricDuration, easing: primaryEasing }, signal),
                             runOverlayAnimation(content, [
-                                { opacity: 0, transform: 'translateY(16px) scale(0.995)' },
-                                { opacity: 1, transform: 'translateY(0) scale(1)' }
-                            ], { duration, easing: primaryEasing }, signal),
-                            runOverlayAnimation(songEl, [
-                                { opacity: 0, transform: 'translateY(12px)' },
-                                { opacity: 1, transform: 'translateY(0)' }
-                            ], { duration, delay: Math.min(150, duration / 2), easing: primaryEasing }, signal),
-                            ...Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => runOverlayAnimation(line, [
-                                { opacity: 0, transform: 'translateY(14px) scale(0.99)' },
-                                { opacity: 1, transform: 'translateY(0) scale(1)' }
+                                {
+                                    opacity: 0,
+                                    transform: 'translateY(18px) scaleY(0.78) scaleX(0.985)',
+                                    filter: 'blur(14px)'
+                                },
+                                {
+                                    offset: 0.46,
+                                    opacity: 0.34,
+                                    transform: 'translateY(10px) scaleY(0.92) scaleX(0.993)',
+                                    filter: 'blur(6px)'
+                                },
+                                {
+                                    opacity: 1,
+                                    transform: 'translateY(0) scaleY(1) scaleX(1)',
+                                    filter: 'blur(0px)'
+                                }
                             ], {
-                                duration,
-                                delay: Math.min(duration, 100 + index * lineDelay),
+                                duration: contentDuration,
+                                delay: titleDelay,
+                                easing: primaryEasing
+                            }, signal),
+                            runOverlayAnimation(songEl, [
+                                { opacity: 0, transform: 'translateY(14px) scaleX(0.9)', filter: 'blur(10px)' },
+                                { offset: 0.64, opacity: 0.72, transform: 'translateY(3px) scaleX(0.985)', filter: 'blur(2px)' },
+                                { opacity: 1, transform: 'translateY(0) scaleX(1)', filter: 'blur(0px)' }
+                            ], {
+                                duration: songDuration,
+                                delay: songDelay,
+                                easing: primaryEasing
+                            }, signal),
+                            ...lines.map((line, index) => runOverlayAnimation(line, [
+                                {
+                                    opacity: 0,
+                                    transform: 'translateY(20px) scale(0.985)',
+                                    filter: 'blur(14px)'
+                                },
+                                {
+                                    offset: 0.34,
+                                    opacity: 0.12,
+                                    transform: 'translateY(14px) scale(0.989)',
+                                    filter: 'blur(9px)'
+                                },
+                                {
+                                    offset: 0.76,
+                                    opacity: 0.78,
+                                    transform: 'translateY(2px) scale(0.998)',
+                                    filter: 'blur(1.6px)'
+                                },
+                                {
+                                    opacity: 1,
+                                    transform: 'translateY(0) scale(1)',
+                                    filter: 'blur(0px)'
+                                }
+                            ], {
+                                duration: lineDuration,
+                                delay: lineStart + (index * lineDelay),
                                 easing: primaryEasing
                             }, signal))
                         ]);
                     } else {
-                        const cardDuration = profile === 'full' ? duration : 0;
+                        const cardDuration = profile === 'full'
+                            ? duration
+                            : (profile === 'compact' ? Math.min(duration, 260) : 0);
+                        const playlistStart = PLAYLIST_OPEN_START_OPACITY[profile]
+                            || PLAYLIST_OPEN_START_OPACITY.compact;
                         await Promise.all([
                             runOverlayAnimation(element, [
-                                { opacity: 0, transform: 'translateY(8px)' },
-                                { opacity: 1, transform: 'translateY(0)' }
+                                { opacity: playlistStart.area, transform: 'translateZ(0)' },
+                                { opacity: 1, transform: 'translateZ(0)' }
                             ], { duration: cardDuration, easing: primaryEasing }, signal),
                             runOverlayAnimation(content, [
-                                { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
+                                { opacity: playlistStart.content, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
                                 { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
                             ], { duration, easing: primaryEasing }, signal)
                         ]);
                     }
                 } finally {
                     settleOverlayOpen(kind);
+                    if (isLyrics) schedulePlaylistWarmup();
                 }
             },
 
-            async close(kind, { signal, duration }) {
+            async close(kind, { signal, duration, profile }) {
                 const isLyrics = kind === 'lyrics';
                 const element = isLyrics ? resultArea : playlistArea;
                 if (!element.classList.contains('is-visible')) return;
 
                 const restoreFocus = element.contains(document.activeElement);
                 setInteractiveState(element, false);
+                if (isLyrics) measureLyricOverlayOrigin();
                 const content = isLyrics ? lyricEl : playlistContent;
                 const closeButton = isLyrics ? lyricCloseBtn : playlistCloseBtn;
                 const contentStartTransform = isLyrics
@@ -2000,10 +2499,24 @@ const criticalAssetGate = startCriticalAssetGate({
                     : 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) - 10px))';
                 try {
                     await Promise.all([
-                        runOverlayAnimation(element, [
+                        runOverlayAnimation(element, isLyrics ? [
+                            {
+                                opacity: 1,
+                                transform: 'translate3d(0, 0, 0) scale(1)',
+                                clipPath: 'circle(150% at var(--overlay-origin-x, 50%) var(--overlay-origin-y, 50%))'
+                            },
+                            {
+                                opacity: 0,
+                                transform: 'translate3d(0, 0, 0) scale(0.985)',
+                                clipPath: 'circle(0% at var(--overlay-origin-x, 50%) var(--overlay-origin-y, 50%))'
+                            }
+                        ] : [
                             { opacity: 1, transform: 'translateY(0)' },
                             { opacity: 0, transform: 'translateY(-8px)' }
-                        ], { duration, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }, signal),
+                        ], {
+                            duration: profile === 'reduce' ? 0 : duration,
+                            easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
+                        }, signal),
                         runOverlayAnimation(content, [
                             { opacity: 1, transform: contentStartTransform },
                             { opacity: 0, transform: contentExitTransform }
@@ -2098,7 +2611,11 @@ const criticalAssetGate = startCriticalAssetGate({
 
         const turntableController = {
             readState() {
-                return { arm: getCurrentArmAngle(), rate: spinAnimation.playbackRate || 0 };
+                return {
+                    arm: getCurrentArmAngle(),
+                    rate: spinAnimation.playbackRate || 0,
+                    spinning: turntable.classList.contains('is-playing')
+                };
             },
             moveArmTo(target, { signal, duration, from = getCurrentArmAngle() }) {
                 // 唱臂是机械动作里最显眼的一段：放慢并用正弦缓动，起落更从容。
@@ -2158,6 +2675,30 @@ const criticalAssetGate = startCriticalAssetGate({
                     sheenAnimation.play();
                 }
             },
+            async restoreState(state, { duration = 0 } = {}) {
+                cancelTurntableMotion();
+                const cleanupSignal = new AbortController().signal;
+                const targetRate = Number.isFinite(state?.rate) ? Math.max(0, state.rate) : 0;
+                const targetArm = Number.isFinite(state?.arm) ? state.arm : ARM_REST_ANGLE;
+                if (targetRate > 0 || state?.spinning) this.setSpinning(true);
+                await Promise.all([
+                    animateTonearm({
+                        from: getCurrentArmAngle(),
+                        to: targetArm,
+                        duration,
+                        easing: easeInOutSine,
+                        signal: cleanupSignal
+                    }),
+                    animateRate({
+                        from: spinAnimation.playbackRate || 0,
+                        to: targetRate,
+                        duration,
+                        easing: easeInOutCubic,
+                        signal: cleanupSignal
+                    })
+                ]);
+                this.setSpinning(Boolean(state?.spinning) && targetRate > 0);
+            },
             async resetAfterPlaybackError() {
                 resetRejectedPlaybackVisual();
             },
@@ -2177,23 +2718,68 @@ const criticalAssetGate = startCriticalAssetGate({
             }
         };
 
-        const selectTrack = async (index, { signal } = {}) => {
-            if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
-            const track = createAudioTrackByIndex(index);
-            playerTime.innerText = '0:00';
-            trackFill.style.transform = 'translate3d(-100%, 0, 0)';
-            updateCurrentLyric(index);
-            if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
-            if (resultArea.classList.contains('is-visible')) revealLyricContentImmediately();
-            return track;
+        const AUDIO_PREPARE_TIMEOUT_MS = 8000;
+        const createAudioReadinessGate = (signal) => {
+            let finishGate = () => {};
+            const promise = new Promise((resolve) => {
+                let settled = false;
+                let timer = null;
+                const finish = (ready) => {
+                    if (settled) return;
+                    settled = true;
+                    if (timer !== null) clearTimeout(timer);
+                    audioEl.removeEventListener('loadedmetadata', onReady);
+                    audioEl.removeEventListener('canplay', onReady);
+                    audioEl.removeEventListener('error', onError);
+                    signal?.removeEventListener('abort', onAbort);
+                    resolve(ready);
+                };
+                const onReady = () => finish(true);
+                const onError = () => finish(false);
+                const onAbort = () => finish(false);
+                finishGate = finish;
+
+                audioEl.addEventListener('loadedmetadata', onReady, { once: true });
+                audioEl.addEventListener('canplay', onReady, { once: true });
+                audioEl.addEventListener('error', onError, { once: true });
+                signal?.addEventListener('abort', onAbort, { once: true });
+                timer = setTimeout(() => finish(false), AUDIO_PREPARE_TIMEOUT_MS);
+                if (signal?.aborted) finish(false);
+            });
+            return { promise, finish: finishGate };
         };
 
         const motionAudio = {
+            getState: () => audioController.getState(),
             pause() {
                 cancelVolumeFade();
                 audioController.pause();
             },
-            load: (track) => audioController.load(track),
+            async load(track, { signal } = {}) {
+                const readiness = createAudioReadinessGate(signal);
+                try {
+                    const loaded = await audioController.load(track);
+                    if (loaded === false) {
+                        readiness.finish(false);
+                        return false;
+                    }
+                    if (audioEl.readyState >= HTMLMediaElement.HAVE_METADATA) {
+                        readiness.finish(true);
+                    }
+                    const ready = await readiness.promise;
+                    if (
+                        !ready
+                        && !signal?.aborted
+                        && audioController.getState().status !== 'error'
+                    ) {
+                        audioEl.dispatchEvent(new Event('error'));
+                    }
+                    return ready;
+                } catch (error) {
+                    readiness.finish(false);
+                    throw error;
+                }
+            },
             play: ({ signal }) => {
                 if (canSetMediaVolume) audioEl.volume = 1;
                 return audioController.play({ signal });
@@ -2208,7 +2794,9 @@ const criticalAssetGate = startCriticalAssetGate({
                 overlays,
                 controls,
                 audio: motionAudio,
-                selectTrack,
+                prepareTrack,
+                commitTrack,
+                rollbackTrack,
                 waitForCoverReveal: waitForActiveCoverReveal
             }),
             onActivityChange: ({ active, name }) => {
@@ -2273,7 +2861,14 @@ const criticalAssetGate = startCriticalAssetGate({
         }
         window.addEventListener('resize', syncMotionPreference, { passive: true });
 
-        const runMotionCommand = async (command) => {
+        const runMotionCommand = async (
+            command,
+            { invalidatePlaybackCommand = true } = {}
+        ) => {
+            if (invalidatePlaybackCommand) {
+                directPlaybackCommandEpoch += 1;
+                suppressPlaybackMotion = false;
+            }
             try {
                 return await command();
             } catch (error) {
@@ -2282,12 +2877,21 @@ const criticalAssetGate = startCriticalAssetGate({
             }
         };
 
+        const runOverlayMotionCommand = (command) => runMotionCommand(command, {
+            invalidatePlaybackCommand: false
+        });
+
         const runDirectPlaybackCommand = async (reason, command) => {
+            const commandEpoch = ++directPlaybackCommandEpoch;
+            const isCurrent = () => commandEpoch === directPlaybackCommandEpoch;
+            suppressPlaybackMotion = false;
             await motion.cancel(reason);
+            if (!isCurrent()) return { status: 'cancelled' };
             cancelTurntableMotion();
             try {
-                return await command();
+                return await command(isCurrent);
             } finally {
+                if (!isCurrent()) return;
                 if (currentLyricIndex !== -1) {
                     setControlSplit(true);
                     if (resultArea.classList.contains('is-visible')) {
@@ -2303,12 +2907,12 @@ const criticalAssetGate = startCriticalAssetGate({
 
         const closeLyricOverlay = async () => {
             if (!resultArea.classList.contains('is-visible')) return;
-            return runMotionCommand(() => motion.closeOverlay('lyrics'));
+            return runOverlayMotionCommand(() => motion.closeOverlay('lyrics'));
         };
 
         const closePlaylistOverlay = async () => {
             if (!playlistArea.classList.contains('is-visible')) return;
-            return runMotionCommand(() => motion.closeOverlay('playlist'));
+            return runOverlayMotionCommand(() => motion.closeOverlay('playlist'));
         };
 
         resultArea.addEventListener('click', async (event) => {
@@ -2348,12 +2952,12 @@ const criticalAssetGate = startCriticalAssetGate({
 
         lyricToggleBtn.addEventListener('click', () => {
             if (currentLyricIndex === -1) return;
-            void runMotionCommand(() => motion.openOverlay('lyrics'));
+            void runOverlayMotionCommand(() => motion.openOverlay('lyrics'));
         });
 
         playlistToggleBtn.addEventListener('click', () => {
             if (currentLyricIndex === -1) return;
-            void runMotionCommand(() => motion.openOverlay('playlist'));
+            void runOverlayMotionCommand(() => motion.openOverlay('playlist'));
         });
 
         if (playlistModeSwitch) {

@@ -256,15 +256,17 @@ test('full desktop halo pulses outside the draw button bounds', async ({ page },
   await writeFile(testInfo.outputPath('halo-external-pixel-delta.json'), `${JSON.stringify(delta, null, 2)}\n`);
 });
 
-test('compact is static and reduced motion has no decorative light', async ({ page }, testInfo) => {
+test('compact keeps a slower light loop and reduced motion has no decorative light', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'desktop-chromium');
   await waitForApp(page);
   const state = await lightState(page);
   if (testInfo.project.name === 'mobile-chromium') {
-    expect(state).toMatchObject({ perimeter: { animationName: 'none' }, halo: { animationName: 'none' }, animations: [] });
-    expect(state.perimeter.opacity).toBeCloseTo(0.19, 2);
-    expect(state.halo.opacity).toBeGreaterThanOrEqual(0.04);
-    expect(state.halo.opacity).toBeLessThanOrEqual(0.07);
+    expect(state.perimeter.animationName).toBe('btn-perimeter-pass');
+    expect(state.halo.animationName).toBe('btn-halo-pulse');
+    expect(state.animations.map(({ animationName, duration, playState }) => ({ animationName, duration, playState }))).toEqual([
+      { animationName: 'btn-halo-pulse', duration: 9200, playState: 'running' },
+      { animationName: 'btn-perimeter-pass', duration: 9200, playState: 'running' }
+    ]);
   }
   if (testInfo.project.name === 'mobile-reduce') {
     expect(state).toMatchObject({ perimeter: { animationName: 'none', opacity: 0 }, halo: { animationName: 'none', opacity: 0 }, animations: [] });
@@ -355,8 +357,8 @@ test('button geometry, label, press, focus, and perimeter concentration remain l
   await page.waitForTimeout(750);
   const button = page.locator('#playButton');
   const expected = testInfo.project.name === 'desktop-chromium'
-    ? { width: 136, height: 48, label: '15px', pressY: '1px', pressScale: '.972' }
-    : { width: 106, height: 46, label: '13px', pressY: '.5px', pressScale: '.988' };
+    ? { width: 136, height: 48, label: '15px', pressY: '1px', pressScale: '0.972' }
+    : { width: 106, height: 46, label: '13px', pressY: '0.5px', pressScale: '0.988' };
   const idle = await button.evaluate((node) => {
     const rect = node.getBoundingClientRect();
     const label = document.querySelector('#btnText');
@@ -387,6 +389,7 @@ test('button geometry, label, press, focus, and perimeter concentration remain l
   expect(idle.label.rect.y).toBeGreaterThanOrEqual(idle.label.viewport.y);
   expect(idle.label.rect.right).toBeLessThanOrEqual(idle.label.viewport.right);
   expect(idle.label.rect.bottom).toBeLessThanOrEqual(idle.label.viewport.bottom);
+  await page.keyboard.press('Tab');
   await button.focus();
   await expect(button).toBeFocused();
   await expect(button).toHaveCSS('outline-style', 'solid');
@@ -425,7 +428,7 @@ test('loading does not start decorative light before critical resources resolve'
   release();
 });
 
-test('static compact light adds no mobile long task over 50ms', async ({ page }, testInfo) => {
+test('compact compositor light adds no mobile long task over 50ms', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-chromium');
   await page.addInitScript(() => {
     const supported = Boolean(window.PerformanceObserver?.supportedEntryTypes?.includes('longtask'));
@@ -458,7 +461,7 @@ test('static compact light adds no mobile long task over 50ms', async ({ page },
   await page.evaluate(() => document.documentElement.removeAttribute('data-document-hidden'));
   const compactVisible = await sampleFrameGaps(page, 'compact-visible');
   expect(hiddenBaseline.animations).toEqual([]);
-  expect(compactVisible.animations).toEqual([]);
+  expect(compactVisible.animations.sort()).toEqual(['btn-halo-pulse', 'btn-perimeter-pass']);
   expect(hiddenBaseline.longTasks.filter(({ duration }) => duration > 50)).toEqual([]);
   expect(compactVisible.longTasks.filter(({ duration }) => duration > 50)).toEqual([]);
   expect(compactVisible.frameCount).toBe(48);

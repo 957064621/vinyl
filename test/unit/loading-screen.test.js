@@ -6,6 +6,8 @@ import { JSDOM } from 'jsdom';
 import { startCriticalAssetGate } from '../../src/app/bootstrap.js';
 import { CriticalAssetError } from '../../src/media/asset-loader.js';
 import {
+  FINAL_HANDOFF_TIMING,
+  LOADING_PRELUDE_TIMING,
   VisualTransitionError,
   createLoadingScreen
 } from '../../src/ui/loading-screen.js';
@@ -14,6 +16,9 @@ import { POSTER_TIMING } from '../../src/ui/poster-transition.js';
 const createFixture = () => new JSDOM(`
   <div class="loading-screen" id="loadingScreen" data-state="loading">
     <div class="loading-intake">
+      <div class="loading-hole" id="loadingHole" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
       <div class="loading-controls">
         <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 05</output>
         <p class="loading-copy" id="loadingCopy">讯号接入中</p>
@@ -59,6 +64,11 @@ const createControllerHarness = ({
       calls.push(['transition.enqueue', slot, slot.querySelector('img')]);
       return true;
     },
+    skipTo(slot) {
+      const image = slot?.querySelector('img') ?? null;
+      calls.push(['transition.skipTo', slot, image]);
+      return Boolean(image);
+    },
     finish: finish || (() => {
       calls.push('transition.finish');
       return Promise.resolve();
@@ -95,7 +105,7 @@ const createInjectedView = (documentRef, options = {}) => {
     harness,
     view: createLoadingScreen(documentRef, {
       motionProfile: 'reduce',
-      openingTitle: false,
+      loadingPrelude: false,
       ...viewOptions,
       ...harness.factories
     })
@@ -192,14 +202,14 @@ test('visual factories receive the loading stage dependencies and motion profile
   assert.equal(typeof transitionCall[1].onError, 'function');
 });
 
-test('final handoff flies the final poster node and primes the sticker cover one frame ahead', async () => {
+test('reset cancels the final handoff barrier and clears every temporary marker', async () => {
   const dom = createFixture();
   const document = dom.window.document;
   const appShell = document.getElementById('appShell');
   const target = document.querySelector('.vinyl-sticker');
   const targetCover = document.getElementById('vinylCoverA');
   const timers = createTimerHarness();
-  const { harness } = createInjectedView(document, {
+  const { view, harness } = createInjectedView(document, {
     viewOptions: {
       motionProfile: 'full',
       setTimer: timers.setTimer,
@@ -263,29 +273,124 @@ test('final handoff flies the final poster node and primes the sticker cover one
   assert.equal(root.style.getPropertyValue('--poster-final-inset-left'), '3.1250%');
   assert.equal(image.dataset.loadingHandoff, 'true');
   assert.equal(targetCover.dataset.loadingHandoff, 'true');
+  assert.equal(targetCover.dataset.loadingPrewarm, 'true');
   assert.equal(targetCover.classList.contains('is-active'), false);
   assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/archive-05.jpg")');
-  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+  assert.equal(appShell.classList.contains('is-loading-reveal'), false);
 
   await timers.advance(16);
   assert.equal(root.dataset.handoffReady, 'true');
-  assert.equal(targetCover.classList.contains('is-active'), true);
+  assert.equal(root.dataset.handoffPhase, 'morphing');
+  assert.equal(root.style.getPropertyValue('--final-resolve-ms'), '1280ms');
+  assert.equal(root.style.getPropertyValue('--loading-player-reveal-delay-ms'), '486ms');
+  assert.equal(root.style.getPropertyValue('--loading-player-reveal-ms'), '794ms');
+  assert.equal(appShell.style.getPropertyValue('--loading-player-reveal-delay-ms'), '486ms');
+  assert.equal(appShell.style.getPropertyValue('--loading-player-reveal-ms'), '794ms');
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+  assert.equal(appShell.dataset.loadingHandoff, 'true');
+  assert.equal(targetCover.classList.contains('is-active'), false);
 
-  transitionCall[1].onFinalScene({ image, profile: 'reduce' });
+  const exiting = view.exit('full');
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+
+  view.reset();
+  assert.equal(await exiting, false);
+  assert.equal(root.isConnected, true);
   assert.equal(root.dataset.handoffReady, undefined);
+  assert.equal(root.dataset.handoffPhase, undefined);
   assert.equal(root.style.getPropertyValue('--poster-final-x'), '');
-  assert.equal(root.style.getPropertyValue('--poster-final-y'), '');
-  assert.equal(root.style.getPropertyValue('--poster-final-scale'), '');
-  assert.equal(root.style.getPropertyValue('--poster-final-radius'), '');
-  for (const phase of ['source', 'final']) {
-    for (const edge of ['top', 'right', 'bottom', 'left']) {
-      assert.equal(root.style.getPropertyValue(`--poster-${phase}-inset-${edge}`), '');
-    }
-  }
+  assert.equal(root.style.getPropertyValue('--loading-player-reveal-ms'), '');
+  assert.equal(appShell.style.getPropertyValue('--loading-player-reveal-delay-ms'), '');
+  assert.equal(appShell.style.getPropertyValue('--loading-player-reveal-ms'), '');
+  assert.equal(image.isConnected, false);
   assert.equal(image.hasAttribute('data-loading-handoff'), false);
+  assert.equal(appShell.classList.contains('is-loading-reveal'), false);
+  assert.equal(appShell.hasAttribute('data-loading-handoff'), false);
   assert.equal(targetCover.hasAttribute('data-loading-handoff'), false);
   assert.equal(targetCover.classList.contains('is-active'), false);
   assert.equal(targetCover.style.backgroundImage, '');
+  assert.equal(timers.pending, 0);
+
+  view.destroy();
+  assert.equal(appShell.classList.contains('is-loading-reveal'), false);
+  assert.equal(targetCover.hasAttribute('data-loading-handoff'), false);
+  assert.equal(targetCover.style.backgroundImage, '');
+  assert.equal(timers.pending, 0);
+});
+
+test('final handoff starts one shared timeline and transfers artwork atomically', async () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const appShell = document.getElementById('appShell');
+  const target = document.querySelector('.vinyl-sticker');
+  const targetCover = document.getElementById('vinylCoverA');
+  const timers = createTimerHarness();
+  const { view, harness } = createInjectedView(document, {
+    viewOptions: {
+      motionProfile: 'full',
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const root = document.getElementById('loadingScreen');
+  const slot = root.querySelector('[data-loading-slot="archive-05"]');
+  const image = document.createElement('img');
+  image.className = 'loading-image';
+  image.src = 'https://example.test/archive-05.jpg';
+  Object.defineProperties(image, {
+    naturalWidth: { configurable: true, value: 600 },
+    naturalHeight: { configurable: true, value: 800 }
+  });
+  slot.prepend(image);
+  slot.getBoundingClientRect = () => ({
+    left: 100, top: 50, right: 500, bottom: 550, width: 400, height: 500
+  });
+  appShell.getBoundingClientRect = () => ({
+    left: 400, top: 0, right: 720, bottom: 760, width: 320, height: 760
+  });
+  target.getBoundingClientRect = () => ({
+    left: 500, top: 590, right: 620, bottom: 710, width: 120, height: 120
+  });
+  const transitionCall = harness.calls.find(([name]) => name === 'transitionFactory');
+  transitionCall[1].onFinalScene({ image, profile: 'full' });
+  await timers.advance(16);
+  assert.equal(root.dataset.handoffPhase, 'morphing');
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+  assert.equal(appShell.dataset.loadingHandoff, 'true');
+  assert.equal(appShell.style.getPropertyValue('--loading-player-reveal-delay-ms'), '486ms');
+  assert.equal(appShell.style.getPropertyValue('--loading-player-reveal-ms'), '794ms');
+
+  const exiting = view.exit('full');
+  await timers.advance(FINAL_HANDOFF_TIMING.full.morph - 1);
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+  assert.equal(targetCover.classList.contains('is-active'), false);
+  assert.equal(root.isConnected, true);
+
+  await timers.advance(1);
+  assert.equal(root.dataset.handoffPhase, 'morphing');
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+  assert.equal(targetCover.classList.contains('is-active'), false);
+  assert.equal(image.dataset.loadingHandoff, 'true');
+  image.dispatchEvent(animationEnd(dom.window, 'loading-poster-to-player-motion'));
+  await Promise.resolve();
+  assert.equal(await exiting, true);
+  assert.equal(root.isConnected, false);
+  assert.equal(image.hasAttribute('data-loading-handoff'), false);
+  assert.equal(targetCover.hasAttribute('data-loading-handoff'), false);
+  assert.equal(targetCover.hasAttribute('data-loading-prewarm'), false);
+  assert.equal(targetCover.classList.contains('is-active'), true);
+  assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/archive-05.jpg")');
+  assert.equal(targetCover.style.opacity, '1');
+  assert.equal(targetCover.style.transition, 'none');
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+
+  view.completeHandoff();
+  assert.equal(appShell.classList.contains('is-loading-reveal'), false);
+  assert.equal(appShell.hasAttribute('data-loading-handoff'), false);
+  await timers.advance(16);
+  assert.equal(targetCover.style.animation, '');
+  assert.equal(targetCover.style.transition, '');
+  assert.equal(targetCover.style.opacity, '');
 });
 
 test('loading screen forwards live profiles to its transition and uses the latest profile by default', async () => {
@@ -312,32 +417,123 @@ test('loading screen forwards live profiles to its transition and uses the lates
   assert.equal(root.isConnected, false);
 });
 
-test('successful exit clears loading handoff markers without clearing the visible sticker cover', async () => {
+test('fallback exit clears prewarm and reveal markers without hiding the committed cover', async () => {
   const dom = createFixture();
   const document = dom.window.document;
+  const timers = createTimerHarness();
+  dom.window.requestAnimationFrame = (callback) => timers.setTimer(callback, 16);
+  dom.window.cancelAnimationFrame = timers.clearTimer;
   const { view } = createInjectedView(document, {
-    viewOptions: { motionProfile: 'reduce' }
+    viewOptions: {
+      motionProfile: 'compact',
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const root = document.getElementById('loadingScreen');
+  const slit = document.getElementById('loadingLightSlit');
+  const appShell = document.getElementById('appShell');
+  const targetCover = document.getElementById('vinylCoverA');
+  targetCover.dataset.loadingPrewarm = 'true';
+  targetCover.style.backgroundImage = 'url("https://example.test/fallback-cover.jpg")';
+
+  slit.style.opacity = '1';
+  const exiting = view.exit('compact');
+  root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
+  slit.style.opacity = '0';
+  slit.dispatchEvent(animationEnd(dom.window, 'loading-final-tunnel'));
+  assert.equal(await exiting, true);
+
+  assert.equal(root.isConnected, false);
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+  assert.equal(appShell.hasAttribute('data-loading-handoff'), true);
+  assert.equal(targetCover.hasAttribute('data-loading-prewarm'), true);
+  assert.equal(targetCover.classList.contains('is-active'), true);
+  assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/fallback-cover.jpg")');
+
+  view.completeHandoff();
+  assert.equal(appShell.classList.contains('is-loading-reveal'), false);
+  assert.equal(appShell.hasAttribute('data-loading-handoff'), false);
+  assert.equal(targetCover.hasAttribute('data-loading-prewarm'), false);
+  await timers.advance(16);
+  assert.equal(targetCover.style.opacity, '');
+  assert.equal(targetCover.style.transition, '');
+  assert.equal(timers.pending, 0);
+});
+
+test('reduced handoff holds the final poster for 500ms before a short crossfade', async () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const timers = createTimerHarness();
+  const { view } = createInjectedView(document, {
+    viewOptions: {
+      motionProfile: 'reduce',
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
   });
   const root = document.getElementById('loadingScreen');
   const source = document.createElement('img');
   source.className = 'loading-image';
-  source.dataset.loadingHandoff = 'true';
+  source.src = 'https://example.test/visible-cover.jpg';
   root.querySelector('[data-loading-slot="archive-05"]').prepend(source);
   const targetCover = document.getElementById('vinylCoverA');
-  targetCover.dataset.loadingHandoff = 'true';
-  targetCover.dataset.loadingPrewarm = 'true';
-  targetCover.classList.add('is-active');
-  targetCover.style.backgroundImage = 'url("https://example.test/visible-cover.jpg")';
+  const appShell = document.getElementById('appShell');
 
   const exiting = view.exit('reduce');
-  root.dispatchEvent(transitionEnd(dom.window, 'opacity'));
-  await exiting;
+  await timers.advance(FINAL_HANDOFF_TIMING.reduce.finalHold - 1);
+  assert.equal(root.classList.contains('is-exiting'), false);
+  assert.equal(appShell.classList.contains('is-loading-reveal'), false);
+  assert.equal(targetCover.classList.contains('is-active'), false);
+  assert.equal(source.dataset.loadingHandoff, 'true');
+
+  await timers.advance(1);
+  assert.equal(root.classList.contains('is-exiting'), true);
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+  assert.equal(targetCover.classList.contains('is-active'), false);
+  assert.equal(targetCover.style.opacity, '');
+
+  await timers.advance(FINAL_HANDOFF_TIMING.reduce.crossfade);
+  assert.equal(await exiting, true);
 
   assert.equal(source.hasAttribute('data-loading-handoff'), false);
   assert.equal(targetCover.hasAttribute('data-loading-handoff'), false);
   assert.equal(targetCover.hasAttribute('data-loading-prewarm'), false);
   assert.equal(targetCover.classList.contains('is-active'), true);
   assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/visible-cover.jpg")');
+  assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+
+  view.completeHandoff();
+  assert.equal(appShell.classList.contains('is-loading-reveal'), false);
+});
+
+test('reapplying the reduced profile cannot cancel an active final handoff', async () => {
+  const dom = createFixture();
+  const document = dom.window.document;
+  const timers = createTimerHarness();
+  const { view } = createInjectedView(document, {
+    viewOptions: {
+      motionProfile: 'reduce',
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const root = document.getElementById('loadingScreen');
+  const source = document.createElement('img');
+  source.className = 'loading-image';
+  source.src = 'https://example.test/visible-cover.jpg';
+  root.querySelector('[data-loading-slot="archive-05"]').prepend(source);
+
+  const exiting = view.exit('reduce');
+  view.setProfile('reduce');
+  await timers.advance(FINAL_HANDOFF_TIMING.reduce.finalHold);
+
+  assert.equal(root.classList.contains('is-exiting'), true);
+  assert.equal(source.dataset.loadingHandoff, 'true');
+
+  await timers.advance(FINAL_HANDOFF_TIMING.reduce.crossfade);
+  assert.equal(await exiting, true);
+  assert.equal(root.isConnected, false);
 });
 
 test('loading screen validates required nodes and requires at least one slot', () => {
@@ -363,12 +559,36 @@ test('loading screen validates required nodes and requires at least one slot', (
   );
 });
 
-test('opening title establishes before the first poster can enter and reduced motion settles within 120ms', async () => {
+test('first ready poster enters immediately when the visual prelude is disabled', () => {
+  const dom = createFixture();
+  const { view, harness } = createInjectedView(dom.window.document);
+  const document = dom.window.document;
+  const root = document.getElementById('loadingScreen');
+  const skip = document.getElementById('loadingSkip');
+  const image = document.createElement('img');
+  image.src = 'https://example.test/archive-01.jpg';
+
+  view.reset();
+  view.setProgress({
+    id: 'archive-01',
+    status: 'ready',
+    completed: 1,
+    total: 5,
+    result: { id: 'archive-01', image, alt: 'one' }
+  });
+  assert.equal(root.dataset.openingState, undefined);
+  assert.equal(root.classList.contains('is-opening-title'), false);
+  assert.equal(skip.hidden, false);
+  assert.equal(skip.disabled, false);
+  assert.equal(harness.calls.filter(([name]) => name === 'transition.enqueue').length, 1);
+});
+
+test('original center-hole prelude settles before the first poster enters', async () => {
   const dom = createFixture();
   const timers = createTimerHarness();
   const { view, harness } = createInjectedView(dom.window.document, {
     viewOptions: {
-      openingTitle: true,
+      loadingPrelude: true,
       setTimer: timers.setTimer,
       clearTimer: timers.clearTimer
     }
@@ -387,16 +607,54 @@ test('opening title establishes before the first poster can enter and reduced mo
     total: 5,
     result: { id: 'archive-01', image, alt: 'one' }
   });
-  assert.equal(root.dataset.openingState, 'opening');
-  assert.equal(skip.hidden, true);
+
+  assert.equal(root.dataset.preludeState, 'playing');
+  assert.equal(root.classList.contains('is-loading-prelude'), true);
+  assert.equal(skip.disabled, true);
   assert.equal(harness.calls.some(([name]) => name === 'transition.enqueue'), false);
 
-  await timers.advance(119);
+  await timers.advance(LOADING_PRELUDE_TIMING.reduce - 1);
   assert.equal(harness.calls.some(([name]) => name === 'transition.enqueue'), false);
   await timers.advance(1);
-  assert.equal(root.dataset.openingState, 'settled');
-  assert.equal(skip.hidden, false);
+
+  assert.equal(root.dataset.preludeState, 'settled');
+  assert.equal(root.classList.contains('is-loading-prelude'), false);
+  assert.equal(root.classList.contains('is-prelude-settled'), true);
   assert.equal(skip.disabled, false);
+  assert.equal(harness.calls.filter(([name]) => name === 'transition.enqueue').length, 1);
+});
+
+test('center-hole prelude remains visible until the first poster is decoded', async () => {
+  const dom = createFixture();
+  const timers = createTimerHarness();
+  const { view, harness } = createInjectedView(dom.window.document, {
+    viewOptions: {
+      loadingPrelude: true,
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const document = dom.window.document;
+  const root = document.getElementById('loadingScreen');
+  const image = document.createElement('img');
+  image.src = 'https://example.test/archive-01.jpg';
+
+  view.reset();
+  await timers.advance(LOADING_PRELUDE_TIMING.reduce);
+  assert.equal(root.dataset.preludeState, 'playing');
+  assert.equal(root.classList.contains('is-loading-prelude'), true);
+  assert.equal(harness.calls.some(([name]) => name === 'transition.enqueue'), false);
+
+  view.setProgress({
+    id: 'archive-01',
+    status: 'ready',
+    completed: 1,
+    total: 5,
+    result: { id: 'archive-01', image, alt: 'one' }
+  });
+
+  assert.equal(root.dataset.preludeState, 'settled');
+  assert.equal(root.classList.contains('is-loading-prelude'), false);
   assert.equal(harness.calls.filter(([name]) => name === 'transition.enqueue').length, 1);
 });
 
@@ -566,10 +824,14 @@ test('skip cancels the visual queue and only admits the final mounted poster', (
   assert.equal(enqueues.length, 1);
   assert.equal(enqueues[0][1].dataset.loadingSlot, 'archive-05');
   assert.strictEqual(enqueues[0][2], finalImage);
-  assert.deepEqual(
-    harness.calls.filter((call) => typeof call === 'string').slice(-2),
-    ['transition.reset', 'particles.clear']
+  const transitionSkipCalls = harness.calls.filter(
+    (call) => Array.isArray(call) && call[0] === 'transition.skipTo'
   );
+  assert.equal(transitionSkipCalls.length, 1);
+  assert.equal(transitionSkipCalls[0][1].dataset.loadingSlot, 'archive-05');
+  assert.strictEqual(transitionSkipCalls[0][2], null);
+  assert.equal(harness.calls.includes('transition.reset'), false);
+  assert.equal(harness.calls.includes('particles.clear'), false);
   assert.equal(document.getElementById('loadingCopy').textContent, '讯号接入中');
 });
 
@@ -589,10 +851,13 @@ test('skip preserves the current ordinary poster until the final image is ready'
   currentSlot.classList.add('is-active', 'is-stable');
   document.getElementById('loadingSkip').click();
 
-  assert.deepEqual(
-    harness.calls.find((call) => Array.isArray(call) && call[0] === 'transition.reset.options'),
-    ['transition.reset.options', { preserveActive: true }]
+  const skipCall = harness.calls.find(
+    (call) => Array.isArray(call) && call[0] === 'transition.skipTo'
   );
+  assert.equal(skipCall[1].dataset.loadingSlot, 'archive-05');
+  assert.strictEqual(skipCall[2], null);
+  assert.equal(harness.calls.includes('transition.reset'), false);
+  assert.equal(harness.calls.includes('particles.clear'), false);
   assert.equal(currentSlot.classList.contains('is-active'), true);
   assert.equal(
     harness.calls.filter((call) => Array.isArray(call) && call[0] === 'transition.enqueue').length,
@@ -645,16 +910,18 @@ test('late skip clears stale work while preserving the active final poster and i
   assert.equal(finalSlot.classList.contains('is-stable'), true);
   assert.equal(
     harness.calls.filter((call) => call === 'transition.reset').length,
-    resetsBeforeSkip + 1
+    resetsBeforeSkip
   );
   assert.equal(
     harness.calls.filter((call) => call === 'particles.clear').length,
-    clearsBeforeSkip + 1
+    clearsBeforeSkip
   );
-  assert.deepEqual(
-    harness.calls.find((call) => Array.isArray(call) && call[0] === 'transition.reset.options'),
-    ['transition.reset.options', { preserveActive: true }]
+  const skipCalls = harness.calls.filter(
+    (call) => Array.isArray(call) && call[0] === 'transition.skipTo'
   );
+  assert.equal(skipCalls.length, 1);
+  assert.strictEqual(skipCalls[0][1], finalSlot);
+  assert.strictEqual(skipCalls[0][2], finalImage);
   assert.equal(
     harness.calls.filter((call) => Array.isArray(call) && call[0] === 'transition.enqueue').length,
     enqueuesBeforeSkip
@@ -685,15 +952,26 @@ test('skip reuses a mounted final image when the final asset reports ready again
   assert.equal(finalSlot.contains(replacement), false);
   assert.equal(
     harness.calls.filter((call) => Array.isArray(call) && call[0] === 'transition.enqueue').length,
-    1
+    0
   );
+  const skipCalls = harness.calls.filter(
+    (call) => Array.isArray(call) && call[0] === 'transition.skipTo'
+  );
+  assert.equal(skipCalls.length, 1);
+  assert.strictEqual(skipCalls[0][1], finalSlot);
+  assert.strictEqual(skipCalls[0][2], firstFinalImage);
 });
 
-test('late reduced-motion skip preserves and activates the prewarmed final cover', async () => {
+test('late reduced-motion skip preserves the prewarm without exposing a duplicate cover', async () => {
   const dom = createFixture();
   const document = dom.window.document;
+  const timers = createTimerHarness();
   const { view } = createInjectedView(document, {
-    viewOptions: { motionProfile: 'reduce' }
+    viewOptions: {
+      motionProfile: 'reduce',
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
   });
   const finalImage = document.createElement('img');
   finalImage.src = 'https://example.test/end.jpg';
@@ -709,16 +987,19 @@ test('late reduced-motion skip preserves and activates the prewarmed final cover
   document.getElementById('loadingSkip').click();
   assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/end.jpg")');
   assert.equal(targetCover.dataset.loadingPrewarm, 'true');
-  assert.equal(targetCover.classList.contains('is-active'), true);
+  assert.equal(targetCover.classList.contains('is-active'), false);
 
   await view.playReadySequence('reduce');
   const exiting = view.exit('reduce');
-  document.getElementById('loadingScreen').dispatchEvent(transitionEnd(dom.window, 'opacity'));
-  await exiting;
+  await timers.advance(FINAL_HANDOFF_TIMING.reduce.finalHold);
+  assert.equal(targetCover.classList.contains('is-active'), false);
+  await timers.advance(FINAL_HANDOFF_TIMING.reduce.crossfade);
+  assert.equal(await exiting, true);
 
   assert.equal(targetCover.style.backgroundImage, 'url("https://example.test/end.jpg")');
   assert.equal(targetCover.hasAttribute('data-loading-prewarm'), false);
   assert.equal(targetCover.classList.contains('is-active'), true);
+  view.completeHandoff();
 });
 
 test('bootstrap skip abandons a blocked full load and requests only the final asset', async () => {
@@ -1145,6 +1426,7 @@ test('throwing visual cleanup is best-effort and cannot re-enter the gate error 
   });
   const view = createLoadingScreen(document, {
     motionProfile: 'reduce',
+    loadingPrelude: false,
     ...harness.factories
   });
   let showErrorCalls = 0;
@@ -1252,7 +1534,8 @@ test('bootstrap waits for visual finish before releasing the application and res
         exit: (profile) => {
           calls.push(['exit', profile]);
           return exited;
-        }
+        },
+        completeHandoff: () => calls.push('completeHandoff')
       };
     },
     load: async (_manifest, options) => {
@@ -1271,12 +1554,126 @@ test('bootstrap waits for visual finish before releasing the application and res
 
   finishVisual();
   await nextTurn();
-  assert.equal(appRoot.hasAttribute('inert'), false);
-  assert.equal(document.getElementById('appShell').classList.contains('is-ready'), true);
+  assert.equal(appRoot.hasAttribute('inert'), true);
+  assert.equal(appRoot.getAttribute('aria-hidden'), 'true');
+  assert.equal(document.getElementById('appShell').classList.contains('is-ready'), false);
   assert.equal(await Promise.race([ready.then(() => true), Promise.resolve(false)]), false);
 
   finishExit();
   assert.deepEqual(await ready, [result]);
+  assert.equal(appRoot.hasAttribute('inert'), false);
+  assert.equal(appRoot.hasAttribute('aria-hidden'), false);
+  assert.equal(document.getElementById('appShell').classList.contains('is-ready'), true);
+  assert.equal(calls.at(-1), 'completeHandoff');
+});
+
+test('bootstrap keeps the application inert when the handoff exit is cancelled', async () => {
+  const dom = createGateFixture();
+  const document = dom.window.document;
+  const appRoot = document.getElementById('appRoot');
+  const appShell = document.getElementById('appShell');
+  let completedHandoffs = 0;
+
+  const ready = startCriticalAssetGate({
+    documentRef: document,
+    viewportWidth: 390,
+    motionProfile: 'compact',
+    createView: () => ({
+      reset() {},
+      setProgress() {},
+      showError: () => assert.fail('cancelled exits are not visual errors'),
+      playReadySequence: () => Promise.resolve(),
+      exit: () => Promise.resolve(false),
+      completeHandoff() { completedHandoffs += 1; }
+    }),
+    load: async () => [{ id: 'archive-01' }]
+  });
+
+  await nextTurn();
+  await nextTurn();
+  assert.equal(appRoot.hasAttribute('inert'), true);
+  assert.equal(appRoot.getAttribute('aria-hidden'), 'true');
+  assert.equal(appShell.classList.contains('is-ready'), false);
+  assert.equal(completedHandoffs, 0);
+  assert.equal(await Promise.race([ready.then(() => true), Promise.resolve(false)]), false);
+});
+
+test('bootstrap retries a cancelled handoff with the latest motion profile', async () => {
+  const dom = createGateFixture();
+  const document = dom.window.document;
+  const appRoot = document.getElementById('appRoot');
+  const appShell = document.getElementById('appShell');
+  const exitProfiles = [];
+  let completeHandoffs = 0;
+  let resolveFirstExit;
+  const firstExit = new Promise((resolve) => { resolveFirstExit = resolve; });
+
+  const ready = startCriticalAssetGate({
+    documentRef: document,
+    viewportWidth: 1280,
+    motionProfile: 'full',
+    createView: () => ({
+      reset() {},
+      setProgress() {},
+      setProfile() {},
+      showError: () => assert.fail('profile handoff retry is not a visual error'),
+      playReadySequence: () => Promise.resolve(),
+      exit(profile) {
+        exitProfiles.push(profile);
+        return profile === 'full' ? firstExit : Promise.resolve(true);
+      },
+      completeHandoff() { completeHandoffs += 1; }
+    }),
+    load: async () => [{ id: 'archive-01' }]
+  });
+
+  await nextTurn();
+  assert.deepEqual(exitProfiles, ['full']);
+  ready.setProfile('reduce');
+  resolveFirstExit(false);
+
+  assert.deepEqual(await ready, [{ id: 'archive-01' }]);
+  assert.deepEqual(exitProfiles, ['full', 'reduce']);
+  assert.equal(completeHandoffs, 1);
+  assert.equal(appRoot.hasAttribute('inert'), false);
+  assert.equal(appRoot.hasAttribute('aria-hidden'), false);
+  assert.equal(appShell.classList.contains('is-ready'), true);
+});
+
+test('bootstrap retries a cancelled handoff after the same profile is reapplied', async () => {
+  const dom = createGateFixture();
+  const document = dom.window.document;
+  const exitProfiles = [];
+  let resolveFirstExit;
+  const firstExit = new Promise((resolve) => { resolveFirstExit = resolve; });
+
+  const ready = startCriticalAssetGate({
+    documentRef: document,
+    viewportWidth: 390,
+    motionProfile: 'compact',
+    createView: () => ({
+      reset() {},
+      setProgress() {},
+      setProfile() {},
+      showError: () => assert.fail('profile handoff retry is not a visual error'),
+      playReadySequence: () => Promise.resolve(),
+      exit(profile) {
+        exitProfiles.push(profile);
+        return exitProfiles.length === 1 ? firstExit : Promise.resolve(true);
+      }
+    }),
+    load: async () => [{ id: 'archive-01' }]
+  });
+
+  await nextTurn();
+  assert.deepEqual(exitProfiles, ['compact']);
+  ready.setProfile('compact');
+  resolveFirstExit(false);
+
+  assert.deepEqual(await ready, [{ id: 'archive-01' }]);
+  assert.deepEqual(exitProfiles, ['compact', 'compact']);
+  assert.equal(document.getElementById('appRoot').hasAttribute('inert'), false);
+  assert.equal(document.getElementById('appShell').classList.contains('is-ready'), true);
 });
 
 test('bootstrap exposes a backward-compatible live loading-profile setter', async () => {
@@ -1401,6 +1798,10 @@ test('application markup starts as one inert root outside the loading screen', (
   assert.ok(slots.every((slot) => slot.querySelector('figcaption').getAttribute('aria-hidden') === 'true'));
   assert.doesNotMatch(loadingScreen.textContent, /LIGHT ARCHIVE|PROJECTION/);
   assert.equal(loadingScreen.querySelectorAll('canvas#loadingParticles').length, 1);
+  assert.equal(loadingScreen.classList.contains('is-loading-prelude'), true);
+  assert.equal(loadingScreen.dataset.preludeState, 'playing');
+  assert.equal(loadingScreen.querySelectorAll('#loadingHole > i').length, 10);
+  assert.equal(loadingScreen.querySelector('#loadingHole').getAttribute('aria-hidden'), 'true');
   assert.equal(loadingScreen.querySelectorAll('div#loadingTopPortal').length, 1);
   assert.equal(loadingScreen.querySelectorAll('div#loadingBottomPortal').length, 1);
   assert.equal(loadingScreen.querySelectorAll('button').length, 2);
@@ -1416,6 +1817,7 @@ test('application markup starts as one inert root outside the loading screen', (
   assert.match(criticalStyle, /\.loading-screen\s*\{[^}]*box-sizing:\s*border-box/s);
   assert.match(criticalStyle, /padding:\s*max\(24px, env\(safe-area-inset-top\)\)\s+max\(24px, env\(safe-area-inset-right\)\)\s+max\(24px, env\(safe-area-inset-bottom\)\)\s+max\(24px, env\(safe-area-inset-left\)\)/s);
   assert.match(criticalStyle, /\.loading-intake\s*\{[^}]*width:\s*min\(100%, 680px\)[^}]*height:\s*min\(100%, 820px\)/s);
+  assert.match(criticalStyle, /\.loading-hole,[\s\S]*?\.loading-hole i\s*\{\s*position:\s*absolute/s);
 });
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1470,6 +1872,19 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*box-sizing:\s*border-box/s);
   assert.match(loadingBlock, /padding:\s*max\(24px, env\(safe-area-inset-top\)\)\s+max\(24px, env\(safe-area-inset-right\)\)\s+max\(24px, env\(safe-area-inset-bottom\)\)\s+max\(24px, env\(safe-area-inset-left\)\)/s);
   assert.match(loadingBlock, /\.loading-intake\s*\{[^}]*width:\s*min\(100%, 680px\)[^}]*height:\s*min\(100%, 820px\)/s);
+  assert.deepEqual(LOADING_PRELUDE_TIMING, { full: 1200, compact: 900, reduce: 120 });
+  assert.match(loadingBlock, /\.loading-screen\.is-loading-prelude \.loading-hole\s*\{[^}]*opacity:\s*1/s);
+  assert.match(
+    loadingBlock,
+    /\.loading-hole i\s*\{[^}]*animation:\s*loading-hole-scale 3s var\(--loading-light-ease\) infinite/s
+  );
+  assert.equal(loadingBlock.match(/\.loading-hole i:nth-child\(\d+\)/g)?.length, 10);
+  const holeKeyframes = expectKeyframeStops(loadingBlock, 'loading-hole-scale', {
+    '0%': { opacity: '0', transform: 'translate3d(0, 0, 0) scale(2)' },
+    '50%': { opacity: '1', transform: 'translate3d(0, -5px, 0) scale(1)' },
+    '100%': { opacity: '0', transform: 'translate3d(0, 5px, 0) scale(0.1)' }
+  });
+  assert.doesNotMatch(holeKeyframes, /(?:filter|box-shadow|top|left|width|height)\s*:/);
   assert.match(loadingBlock, /\.loading-poster-stack\s*\{[^}]*z-index:\s*2/s);
   assert.match(loadingBlock, /\.loading-particles\s*\{[^}]*z-index:\s*3/s);
   assert.match(loadingBlock, /\.loading-light-slit\s*\{[^}]*z-index:\s*4/s);
@@ -1531,16 +1946,56 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.doesNotMatch(extractCssBlock(loadingBlock, '.loading-frame'), /transition[^;]*opacity|opacity[^;]*transition/);
   assert.doesNotMatch(loadingBlock, /\.loading-frame\.is-active figcaption/);
   assert.match(loadingBlock, /\.loading-frame\.is-failed figcaption\s*\{[^}]*opacity:\s*1/s);
-  assert.equal(POSTER_TIMING.full.finalResolve, 1100);
-  assert.equal(POSTER_TIMING.full.exitLead, 1100);
+  assert.equal(POSTER_TIMING.full.finalResolve, 1280);
+  assert.equal(POSTER_TIMING.full.exitLead, 1280);
   assert.equal(POSTER_TIMING.full.rootFade, 680);
-  assert.equal(POSTER_TIMING.compact.finalResolve, 1100);
-  assert.equal(POSTER_TIMING.compact.exitLead, 1100);
+  assert.equal(POSTER_TIMING.compact.finalResolve, 920);
+  assert.equal(POSTER_TIMING.compact.exitLead, 920);
   assert.equal(POSTER_TIMING.compact.rootFade, 680);
+  for (const profile of ['full', 'compact']) {
+    const timing = FINAL_HANDOFF_TIMING[profile];
+    assert.equal(
+      timing.revealAt + timing.playerReveal,
+      timing.morph,
+      `${profile} player reveal must finish with the poster morph`
+    );
+    assert.equal(
+      timing.backdropExit,
+      timing.morph,
+      `${profile} backdrop exit must finish with the poster morph`
+    );
+  }
   assert.match(loadingBlock, /--slit-duration:\s*760ms/);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-handoff-ms, 600ms\) var\(--loading-handoff-ease\)/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-handoff-ms, 600ms\) var\(--loading-settle-ease\)/s);
   assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="compact"\]\s*\{[^}]*--poster-handoff-ms:\s*480ms[^}]*--slit-duration:\s*760ms/s);
+
+  for (const [selector, animationName] of [
+    [
+      'html:not([data-motion-profile="reduce"]) .app-shell.is-loading-reveal[data-loading-handoff="true"] .vinyl-grooves',
+      'loading-vinyl-grooves-reveal'
+    ],
+    [
+      'html:not([data-motion-profile="reduce"]) .app-shell.is-loading-reveal[data-loading-handoff="true"] .vinyl-highlight',
+      'loading-vinyl-highlight-reveal'
+    ],
+    [
+      'html:not([data-motion-profile="reduce"]) .app-shell.is-loading-reveal[data-loading-handoff="true"] .vinyl-record::after',
+      'loading-vinyl-surface-reveal'
+    ]
+  ]) {
+    expectDeclarations(
+      extractCssBlock(css, selector),
+      {
+        animation: `${animationName}
+                var(--loading-player-reveal-ms, 794ms)
+                linear
+                var(--loading-player-reveal-delay-ms, 486ms)
+                both`
+      },
+      `${animationName} handoff timing`
+    );
+  }
 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),
@@ -1624,19 +2079,19 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     ],
     [
       '.loading-screen.is-final-resolving .loading-light-slit[data-direction="vertical"]',
-      'loading-final-tunnel var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
+      'loading-final-tunnel var(--final-resolve-ms, 1280ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-screen.is-final-resolving .loading-stage::before',
-      'loading-final-scan-gate-line var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
+      'loading-final-scan-gate-line var(--final-resolve-ms, 1280ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-screen.is-final-resolving .loading-stage::after',
-      'loading-final-scan-gate-halo var(--final-resolve-ms, 1100ms) var(--loading-light-ease) both'
+      'loading-final-scan-gate-halo var(--final-resolve-ms, 1280ms) var(--loading-light-ease) both'
     ],
     [
       '.loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-image[data-loading-handoff="true"]',
-      'loading-poster-to-player-motion var(--final-resolve-ms, 1100ms) linear both,\n                loading-poster-to-player-shape var(--final-resolve-ms, 1100ms) linear both'
+      'loading-poster-to-player-motion var(--loading-handoff-morph-ms, 1280ms) linear both,\n                loading-poster-to-player-shape var(--loading-handoff-morph-ms, 1280ms) linear both'
     ]
   ]) {
     expectDeclarations(extractCssBlock(loadingBlock, selector), { animation }, selector);
@@ -1808,7 +2263,7 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     }),
     expectKeyframeStops(loadingBlock, 'loading-poster-to-player-shape', {
       '0%': {},
-      '22%, 100%': {}
+      '82%, 100%': {}
     })
   ];
   for (const keyframe of keyframes) {
@@ -1828,26 +2283,18 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     /clip-path:\s*inset\(\s*var\(--poster-source-inset-top, 0%\)\s*var\(--poster-source-inset-right, 0%\)\s*var\(--poster-source-inset-bottom, 0%\)\s*var\(--poster-source-inset-left, 0%\)\s*round 0%\s*\)/s
   );
   assert.match(
-    extractCssBlock(finalHandoff, '22%, 100%'),
+    extractCssBlock(finalHandoff, '82%, 100%'),
     /clip-path:\s*inset\(\s*var\(--poster-final-inset-top, 0%\)\s*var\(--poster-final-inset-right, 0%\)\s*var\(--poster-final-inset-bottom, 0%\)\s*var\(--poster-final-inset-left, 0%\)\s*round var\(--poster-final-radius, 999px\)\s*\)/s,
-    'the shape track must preserve its measured circular crop after 22%'
+    'the shape track must become circular in sync with the final translation'
   );
-  const targetCoverBinding = extractCssBlock(css, '.vinyl-cover[data-loading-handoff="true"].is-active');
+  const targetCoverBinding = extractCssBlock(css, '.vinyl-cover:is([data-loading-prewarm="true"], [data-loading-handoff="true"])');
   expectDeclarations(targetCoverBinding, {
     transition: 'none',
-    animation: 'loading-target-cover-reveal 1100ms linear both'
+    animation: 'none',
+    opacity: '0',
+    transform: 'scale(1) rotate(0deg)'
   }, 'loading handoff target cover');
-  const targetCoverReveal = expectKeyframeStops(css, 'loading-target-cover-reveal', {
-    '0%, 82%': {
-      opacity: '0',
-      transform: 'scale(1) rotate(0deg)'
-    },
-    '100%': {
-      opacity: '1',
-      transform: 'scale(1) rotate(0deg)'
-    }
-  });
-  assert.match(extractCssBlock(targetCoverReveal, '0%, 82%'), /animation-timing-function:\s*cubic-bezier\(0, 0, 0\.3, 1\)/);
+  assert.doesNotMatch(css, /@keyframes loading-target-cover-reveal/);
   assert.doesNotMatch(loadingBlock, /loading-handoff-flight|loading-poster-handoff-source/);
   assert.doesNotMatch(loadingBlock, /loading-(?:slit-(?:ltr|rtl)|curtain|final-(?:ltr|rtl))/);
   assert.match(loadingBlock, /\.loading-copy\s*\{[^}]*transition:\s*opacity 0\.24s var\(--loading-motion-ease\)/s);
@@ -1855,6 +2302,8 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     loadingBlock,
     /\.loading-copy\s*\{[^}]*animation:\s*copy-fade 1\.6s var\(--loading-motion-ease\) infinite/s
   );
+  assert.doesNotMatch(loadingBlock, /loading-opening-(?:title|sweep|reduce)|is-opening-title/);
+  assert.doesNotMatch(loadingBlock, /\.loading-copy::after/);
   expectKeyframeStops(loadingBlock, 'copy-fade', {
     '0%, 100%': { opacity: '0.55', transform: 'translateY(0)' },
     '50%': { opacity: '1', transform: 'translateY(-2px)' }
@@ -1870,7 +2319,7 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-screen.is-final-resolving .loading-status'),
     {
-      animation: 'loading-status-final-fade var(--final-resolve-ms, 1100ms) var(--loading-motion-ease) both'
+      animation: 'loading-status-final-fade var(--final-resolve-ms, 1280ms) var(--loading-motion-ease) both'
     },
     'final status crossfade'
   );
@@ -1928,8 +2377,11 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     },
     'bounded resting-poster depth'
   );
-  const posterScales = [...loadingBlock.matchAll(/(?<!X)scale\(([0-9.]+)\)/g)]
+  const allLoadingScales = [...loadingBlock.matchAll(/(?<!X)scale\(([0-9.]+)\)/g)]
     .map(([, scale]) => Number(scale));
+  const holeOnlyScales = allLoadingScales.filter((scale) => scale === 2 || scale === 0.1);
+  assert.deepEqual([...new Set(holeOnlyScales)].sort(), [0.1, 2]);
+  const posterScales = allLoadingScales.filter((scale) => scale !== 2 && scale !== 0.1);
   assert.ok(posterScales.length > 0);
   assert.ok(posterScales.every((scale) => scale >= 0.24 && scale <= 1.08));
   assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="reduce"\]\s*\{[^}]*transition:\s*opacity 120ms linear/s);
@@ -1940,7 +2392,7 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.loading-image[\s\S]*120ms/s);
 });
 
-test('application startup assigns only the ten critical images and leaves player artwork unset', async () => {
+test('application startup atomically hands the final critical image to the player cover', async () => {
   const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, {
     pretendToBeVisual: true,
@@ -2006,7 +2458,11 @@ test('application startup assigns only the ten critical images and leaves player
     assert.equal(srcAssignments.length, 10);
     assert.equal(new Set(srcAssignments).size, 10);
     assert.ok(srcAssignments.every((src) => src.includes('/covers/') && src.includes('x-oss-process=')));
-    assert.equal(document.getElementById('vinylCoverA').style.backgroundImage, '');
+    const primaryCover = document.getElementById('vinylCoverA');
+    assert.match(primaryCover.style.backgroundImage, /\/covers\/end\.jpg/);
+    assert.equal(primaryCover.classList.contains('is-active'), true);
+    assert.equal(primaryCover.hasAttribute('data-loading-handoff'), false);
+    assert.equal(document.getElementById('appShell').classList.contains('is-loading-reveal'), false);
     assert.equal(document.getElementById('vinylCoverB').style.backgroundImage, '');
     assert.equal(document.documentElement.style.getPropertyValue('--cover-art-url'), '');
     assert.equal(document.body.style.getPropertyValue('--cover-art-url'), '');
@@ -2021,7 +2477,7 @@ test('application startup assigns only the ten critical images and leaves player
   const mainSource = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
   const startupCoverBlock = mainSource.slice(
     mainSource.indexOf('// 抽取前'),
-    mainSource.indexOf('const updateCurrentLyric')
+    mainSource.indexOf('const revealLyricContentImmediately')
   );
   assert.doesNotMatch(startupCoverBlock, /backgroundImage|setCoverArtworkUrl|artworkSrc/);
 });

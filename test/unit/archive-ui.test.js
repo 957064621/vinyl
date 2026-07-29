@@ -154,39 +154,30 @@ test('updates the four metadata values without rebuilding the rail', () => {
   assert.equal(document.querySelector('#archiveTrackMeta'), rail);
 });
 
-test('applies the track fallback palette before remote cover preparation can settle', () => {
-  const applyStart = mainSource.indexOf('const applyCoverVisual = async (index) => {');
-  const applyEnd = mainSource.indexOf('\n        };', applyStart);
-  const applySource = mainSource.slice(applyStart, applyEnd);
-  const requestIndex = applySource.indexOf('const requestId = ++coverSwapRequestId;');
-  const fallbackIndex = applySource.indexOf('setCoverPalette(getTrackPaletteByIndex(index));');
-  const prepareIndex = applySource.indexOf('await primeCoverVisual(index)');
-  const staleGuardIndex = applySource.indexOf('if (requestId !== coverSwapRequestId)');
-  const refinedIndex = applySource.indexOf('setCoverPalette(palette);');
+test('prepares the next cover without mutating visible track state before commit', () => {
+  const prepareStart = mainSource.indexOf('const prepareTrack = (index, { signal } = {}) => {');
+  const prepareEnd = mainSource.indexOf('\n        };', prepareStart);
+  const prepareSource = mainSource.slice(prepareStart, prepareEnd);
+  const commitStart = mainSource.indexOf('const commitTrack = async (transaction, { signal, profile = motionProfile } = {}) => {');
+  const commitEnd = mainSource.indexOf('\n        };', commitStart);
+  const commitSource = mainSource.slice(commitStart, commitEnd);
 
-  assert.notEqual(applyStart, -1);
-  for (const stepIndex of [requestIndex, fallbackIndex, prepareIndex, staleGuardIndex, refinedIndex]) {
-    assert.notEqual(stepIndex, -1);
-  }
-  assert.ok(requestIndex < fallbackIndex);
-  assert.ok(fallbackIndex < prepareIndex);
-  assert.ok(prepareIndex < staleGuardIndex);
-  assert.ok(staleGuardIndex < refinedIndex);
+  assert.notEqual(prepareStart, -1);
+  assert.notEqual(commitStart, -1);
+  assert.match(prepareSource, /ready: primeCoverVisual\(index, \{ signal \}\)/);
+  assert.doesNotMatch(prepareSource, /lyricEl\.innerHTML|currentLyricIndex\s*=|applyPreparedCoverVisual/);
+  assert.ok(commitSource.indexOf('await transaction.ready') < commitSource.indexOf('applyPreparedCoverVisual'));
+  assert.ok(commitSource.indexOf('await transaction.ready') < commitSource.indexOf('lyricEl.innerHTML'));
+  assert.ok(commitSource.indexOf('lyricEl.innerHTML') < commitSource.indexOf('currentLyricIndex ='));
 });
 
-test('keeps cover preparation bounded and outside the track-selection critical path', () => {
-  const selectStart = mainSource.indexOf('const selectTrack = async (index, { signal } = {}) => {');
-  const selectEnd = mainSource.indexOf('\n        };', selectStart);
-  const selectSource = mainSource.slice(selectStart, selectEnd);
-
+test('bounds cover and audio readiness gates before committing a transaction', () => {
   assert.match(mainSource, /const COVER_PRELOAD_TIMEOUT_MS = 4000;/);
   assert.match(mainSource, /timer = setTimeout\(\(\) => finish\(false\), timeoutMs\);/);
-  assert.match(selectSource, /updateCurrentLyric\(index\);/);
-  assert.doesNotMatch(selectSource, /await updateCurrentLyric\(index\)/);
-  assert.ok(
-    selectSource.indexOf('updateCurrentLyric(index);')
-      < selectSource.indexOf('return track;')
-  );
+  assert.match(mainSource, /const AUDIO_PREPARE_TIMEOUT_MS = 8000;/);
+  assert.match(mainSource, /audioEl\.addEventListener\('loadedmetadata', onReady/);
+  assert.match(mainSource, /audioEl\.addEventListener\('canplay', onReady/);
+  assert.match(mainSource, /return await readiness\.promise|const ready = await readiness\.promise/);
 });
 
 test('eases the portfolio-style pointer light with a finite animation-frame loop', () => {
@@ -201,4 +192,14 @@ test('eases the portfolio-style pointer light with a finite animation-frame loop
   assert.match(pointerSource, /setProperty\('--pointer-y'/);
   assert.match(pointerSource, /> 0\.08/);
   assert.doesNotMatch(pointerSource, /pointerLight\.style\.transform/);
+});
+
+test('keeps mobile lyric blur independent from fine-pointer decoration', () => {
+  assert.match(
+    mainSource,
+    /const pointerMotionEnabled = \(\) => \([\s\S]*\(hover: hover\) and \(pointer: fine\)[\s\S]*!prefersReducedMotion[\s\S]*\);/
+  );
+  assert.match(mainSource, /const motionFiltersEnabled = \(\) => !prefersReducedMotion;/);
+  assert.match(mainSource, /if \(!pointerLightTarget \|\| !pointerMotionEnabled\(\)/);
+  assert.match(mainSource, /if \(motionFiltersEnabled\(\) \|\| !Array\.isArray\(keyframes\)\) return keyframes;/);
 });

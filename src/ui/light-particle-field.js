@@ -1,7 +1,34 @@
 export const PARTICLE_PROFILES = Object.freeze({
-  full: Object.freeze({ count: 320, holdCount: 112, dpr: 1, gatherMs: 160, scatterMs: 140, holdMs: 500 }),
-  compact: Object.freeze({ count: 180, holdCount: 64, dpr: 1, gatherMs: 100, scatterMs: 90, holdMs: 440 }),
-  reduce: Object.freeze({ count: 0, holdCount: 0, dpr: 1, gatherMs: 0, scatterMs: 0, holdMs: 0 })
+  full: Object.freeze({
+    count: 320,
+    holdCount: 112,
+    holdRampMs: 240,
+    holdBirthCap: 8,
+    dpr: 1,
+    gatherMs: 160,
+    scatterMs: 140,
+    holdMs: 500
+  }),
+  compact: Object.freeze({
+    count: 180,
+    holdCount: 64,
+    holdRampMs: 220,
+    holdBirthCap: 5,
+    dpr: 1,
+    gatherMs: 100,
+    scatterMs: 90,
+    holdMs: 440
+  }),
+  reduce: Object.freeze({
+    count: 0,
+    holdCount: 0,
+    holdRampMs: 0,
+    holdBirthCap: 0,
+    dpr: 1,
+    gatherMs: 0,
+    scatterMs: 0,
+    holdMs: 0
+  })
 });
 
 const PARTICLE_COLORS = Object.freeze([
@@ -482,29 +509,30 @@ export const createLightParticleField = ({
     return spawned;
   };
 
-  const seedHoldParticles = (emitter) => {
+  const seedHoldParticles = (emitter, requested) => {
     const available = Math.max(0, settings.holdCount - countKind(PARTICLE_HOLD));
-    const count = Math.min(available, settings.count - aliveCount);
+    const count = Math.min(Math.max(0, requested), available, settings.count - aliveCount);
     const width = Math.max(1, emitter.bounds.right - emitter.bounds.left);
     const floorY = clamp(emitter.bounds.bottom + 4, 0, Math.max(0, cssHeight - 4));
     const availableDepth = Math.max(10, cssHeight - floorY - 4);
     const fieldDepth = Math.min(58, Math.max(24, availableDepth));
+    const remaining = Math.max(120, emitter.commandDuration - emitter.elapsed);
     let spawned = 0;
 
     for (let particle = 0; particle < count; particle += 1) {
-      const life = emitter.commandDuration * (0.78 + (randomUnit() * 0.18));
-      const delay = emitter.commandDuration * randomUnit() * 0.06;
+      const life = remaining * (0.72 + (randomUnit() * 0.2));
+      const delay = Math.min(28, remaining * randomUnit() * 0.025);
       const spawnedParticle = spawnParticle(
         emitter.id,
         PARTICLE_HOLD,
         emitter.bounds.left + (width * (0.1 + (randomUnit() * 0.8))),
         floorY + (fieldDepth * randomUnit()),
-        (randomUnit() - 0.5) * 16,
-        -(5 + (randomUnit() * 15)),
+        (randomUnit() - 0.5) * 12,
+        -(2.5 + (randomUnit() * 6.5)),
         0.36 + (randomUnit() * 0.7),
         -delay,
         life,
-        0.38 + (randomUnit() * 0.42),
+        0.3 + (randomUnit() * 0.34),
         1.2 + (randomUnit() * 1.5),
         (randomUnit() - 0.5) * 10,
         1.4 + (randomUnit() * 1.8),
@@ -544,11 +572,26 @@ export const createLightParticleField = ({
   const updateEmitters = (deltaMs) => {
     for (let index = emitters.length - 1; index >= 0; index -= 1) {
       const emitter = emitters[index];
+      const previousElapsed = emitter.elapsed;
       const previousProgress = clamp(emitter.elapsed / emitter.motion.duration, 0, 1);
       emitter.elapsed = Math.min(emitter.simulationDuration, emitter.elapsed + deltaMs);
       const progress = clamp(emitter.elapsed / emitter.motion.duration, 0, 1);
 
-      if (emitter.phase !== 'hold' && emitter.motion.distance > 0) {
+      if (emitter.phase === 'hold' && previousElapsed < emitter.holdEmissionEndMs) {
+        const rampProgress = clamp(emitter.elapsed / Math.max(1, emitter.holdRampMs), 0, 1);
+        const targetAlive = Math.round(
+          emitter.holdBaselineAlive
+            + ((settings.holdCount - emitter.holdBaselineAlive) * smoothStep(rampProgress))
+        );
+        const requested = Math.min(
+          settings.holdBirthCap,
+          Math.max(0, targetAlive - aliveCount)
+        );
+        if (requested > 0) {
+          reserveCapacity(requested, emitter.id);
+          emitter.holdEmitted += seedHoldParticles(emitter, requested);
+        }
+      } else if (emitter.phase !== 'hold' && emitter.motion.distance > 0) {
         const desired = Math.floor(emitter.trailBudget * progress);
         const requested = Math.max(0, desired - emitter.trailEmitted);
         const spawned = spawnTrailParticles(emitter, requested, previousProgress, progress);
@@ -844,6 +887,12 @@ export const createLightParticleField = ({
       motion,
       trailBudget: motion.distance > 0 ? settings.holdCount : 0,
       trailEmitted: 0,
+      holdBaselineAlive: aliveCount,
+      holdRampMs: phase === 'hold' ? Math.min(commandDuration, settings.holdRampMs) : 0,
+      holdEmissionEndMs: phase === 'hold'
+        ? Math.min(commandDuration, settings.holdRampMs + 64)
+        : 0,
+      holdEmitted: 0,
       promiseResolved: false,
       resolve: resolvePromise
     };
@@ -851,8 +900,7 @@ export const createLightParticleField = ({
     emitters.push(emitter);
 
     if (phase === 'hold') {
-      reserveCapacity(settings.holdCount, emitter.id);
-      seedHoldParticles(emitter);
+      // Keep the incoming wake alive and ease the ambient field in over several frames.
     } else {
       const reservedTrail = motion.distance > 0 ? settings.holdCount : 0;
       const portalCount = Math.max(0, settings.count - reservedTrail);

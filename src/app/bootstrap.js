@@ -21,6 +21,7 @@ export function startCriticalAssetGate({
   const appRoot = documentRef.querySelector('#appRoot');
   const appShell = documentRef.querySelector('#appShell');
   let currentMotionProfile = motionProfile;
+  let motionProfileRevision = 0;
   let resolveReady;
   const ready = new Promise((resolve) => {
     resolveReady = resolve;
@@ -29,10 +30,14 @@ export function startCriticalAssetGate({
   const setProfile = (nextProfile) => {
     const result = view.setProfile?.(nextProfile);
     currentMotionProfile = nextProfile;
+    motionProfileRevision += 1;
     return result;
   };
 
   const run = async () => {
+    appRoot.setAttribute('inert', '');
+    appRoot.setAttribute('aria-hidden', 'true');
+    appShell.classList.remove('is-ready');
     view.reset();
     const loadController = new AbortController();
     const loadedResults = new Map();
@@ -85,10 +90,19 @@ export function startCriticalAssetGate({
         }
       }
       await view.playReadySequence(currentMotionProfile);
+      let exitProfile = currentMotionProfile;
+      let exitProfileRevision = motionProfileRevision;
+      while (true) {
+        const exited = await view.exit(exitProfile);
+        if (exited !== false) break;
+        if (motionProfileRevision === exitProfileRevision) return;
+        exitProfile = currentMotionProfile;
+        exitProfileRevision = motionProfileRevision;
+      }
+      appShell.classList.add('is-ready');
+      view.completeHandoff?.();
       appRoot.removeAttribute('inert');
       appRoot.removeAttribute('aria-hidden');
-      appShell.classList.add('is-ready');
-      await view.exit(currentMotionProfile);
       resolveReady(results);
     } catch (error) {
       appRoot.setAttribute('inert', '');

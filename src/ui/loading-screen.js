@@ -2,10 +2,16 @@ import { CriticalAssetError } from '../media/asset-loader.js';
 import { createLightParticleField } from './light-particle-field.js';
 import { POSTER_TIMING, createPosterTransition } from './poster-transition.js';
 
-export const OPENING_TITLE_TIMING = Object.freeze({
-  full: Object.freeze({ establish: 760, sweep: 460, skipDelay: 90 }),
-  compact: Object.freeze({ establish: 500, sweep: 320, skipDelay: 90 }),
-  reduce: Object.freeze({ establish: 120, sweep: 0, skipDelay: 0 })
+export const LOADING_PRELUDE_TIMING = Object.freeze({
+  full: 1200,
+  compact: 900,
+  reduce: 120
+});
+
+export const FINAL_HANDOFF_TIMING = Object.freeze({
+  full: Object.freeze({ morph: 1280, revealAt: 486, playerReveal: 794, backdropExit: 1280 }),
+  compact: Object.freeze({ morph: 920, revealAt: 350, playerReveal: 570, backdropExit: 920 }),
+  reduce: Object.freeze({ finalHold: 500, crossfade: 120 })
 });
 
 const twoDigits = (value) => String(value).padStart(2, '0');
@@ -90,6 +96,72 @@ const waitForTransition = (element, {
   signal?.addEventListener('abort', handleAbort, { once: true });
 });
 
+const waitForDelay = (delay, {
+  signal,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout
+} = {}) => new Promise((resolve) => {
+  let settled = false;
+  let timer;
+
+  const cleanup = () => {
+    clearTimer(timer);
+    signal?.removeEventListener('abort', handleAbort);
+  };
+  const finish = (completed) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolve(completed);
+  };
+  const handleAbort = () => finish(false);
+
+  if (signal?.aborted) {
+    finish(false);
+    return;
+  }
+  if (delay <= 0) {
+    finish(true);
+    return;
+  }
+  timer = setTimer(() => finish(true), delay);
+  signal?.addEventListener('abort', handleAbort, { once: true });
+});
+
+const waitForAnimation = (element, animationName, {
+  timeoutMs,
+  signal,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout
+} = {}) => new Promise((resolve) => {
+  let settled = false;
+  let timer;
+  const cleanup = () => {
+    clearTimer(timer);
+    element.removeEventListener('animationend', handleAnimationEnd);
+    signal?.removeEventListener('abort', handleAbort);
+  };
+  const finish = (completed) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolve(completed);
+  };
+  const handleAnimationEnd = (event) => {
+    if (event.target !== element || event.animationName !== animationName) return;
+    finish(true);
+  };
+  const handleAbort = () => finish(false);
+
+  if (signal?.aborted) {
+    finish(false);
+    return;
+  }
+  element.addEventListener('animationend', handleAnimationEnd);
+  signal?.addEventListener('abort', handleAbort, { once: true });
+  timer = setTimer(() => finish(true), timeoutMs);
+});
+
 const waitForPortalOpacityZero = (root, portal, {
   profile,
   windowRef,
@@ -155,7 +227,7 @@ export function createLoadingScreen(documentRef = document, {
   motionProfile = 'compact',
   particleFactory = createLightParticleField,
   transitionFactory = createPosterTransition,
-  openingTitle = true,
+  loadingPrelude = true,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   onSkip = () => {}
@@ -200,7 +272,10 @@ export function createLoadingScreen(documentRef = document, {
     ?? ((callback) => setTimer(callback, 16));
   const cancelFrame = windowRef?.cancelAnimationFrame?.bind(windowRef) ?? clearTimer;
   let handoffFrame = null;
+  let committedCoverFrame = null;
   let handoffGeneration = 0;
+  let handoffRun = null;
+  let pendingFallbackCompletion = null;
 
   const measureRevealedTarget = (target, appShell) => {
     if (
@@ -224,13 +299,22 @@ export function createLoadingScreen(documentRef = document, {
     return revealedRect;
   };
 
-  const clearFinalHandoff = () => {
+  const clearHandoffGeometry = () => {
+    delete root.dataset.handoffPhase;
     handoffGeneration += 1;
     if (handoffFrame !== null) {
       cancelFrame(handoffFrame);
       handoffFrame = null;
     }
+    if (committedCoverFrame !== null) {
+      cancelFrame(committedCoverFrame);
+      committedCoverFrame = null;
+    }
     delete root.dataset.handoffReady;
+    delete root.dataset.handoffSettled;
+    root.style.removeProperty('--loading-handoff-morph-ms');
+    root.style.removeProperty('--loading-player-reveal-delay-ms');
+    root.style.removeProperty('--loading-player-reveal-ms');
     root.style.removeProperty('--poster-final-x');
     root.style.removeProperty('--poster-final-y');
     root.style.removeProperty('--poster-final-scale');
@@ -243,59 +327,248 @@ export function createLoadingScreen(documentRef = document, {
     root.style.removeProperty('--poster-final-inset-right');
     root.style.removeProperty('--poster-final-inset-bottom');
     root.style.removeProperty('--poster-final-inset-left');
-
-    const source = root.querySelector('.loading-image[data-loading-handoff="true"]');
-    if (source) delete source.dataset.loadingHandoff;
-    documentRef.querySelector('#appShell')?.classList.remove('is-loading-reveal');
-
-    const targetCover = documentRef.querySelector(
-      '.vinyl-cover[data-loading-handoff="true"], .vinyl-cover[data-loading-prewarm="true"]'
-    );
-    if (targetCover) {
-      targetCover.classList.remove('is-active');
-      targetCover.style.removeProperty('background-image');
-      delete targetCover.dataset.loadingHandoff;
-      delete targetCover.dataset.loadingPrewarm;
-    }
   };
 
-  const settleFinalHandoff = () => {
-    handoffGeneration += 1;
-    if (handoffFrame !== null) {
-      cancelFrame(handoffFrame);
-      handoffFrame = null;
+  const clearPlayerReveal = ({ preserveTarget = false, targetCover = null } = {}) => {
+    const appShell = documentRef.querySelector('#appShell');
+    appShell?.classList.remove('is-loading-reveal');
+    if (appShell) {
+      delete appShell.dataset.loadingHandoff;
+      appShell.style.removeProperty('--loading-player-reveal-ms');
+      appShell.style.removeProperty('--loading-player-reveal-delay-ms');
     }
-    const source = root.querySelector('.loading-image[data-loading-handoff="true"]');
-    if (source) delete source.dataset.loadingHandoff;
-    documentRef.querySelectorAll(
+
+    const targetCovers = new Set(documentRef.querySelectorAll(
       '.vinyl-cover[data-loading-handoff="true"], .vinyl-cover[data-loading-prewarm="true"]'
-    ).forEach((targetCover) => {
-      delete targetCover.dataset.loadingHandoff;
-      delete targetCover.dataset.loadingPrewarm;
+    ));
+    if (targetCover) targetCovers.add(targetCover);
+    targetCovers.forEach((cover) => {
+      delete cover.dataset.loadingHandoff;
+      delete cover.dataset.loadingPrewarm;
+      if (preserveTarget && cover === targetCover && cover.classList.contains('is-active')) {
+        const cleanupGeneration = handoffGeneration;
+        committedCoverFrame = requestFrame(() => {
+          committedCoverFrame = null;
+          if (
+            cleanupGeneration !== handoffGeneration
+            || !cover.isConnected
+            || !cover.classList.contains('is-active')
+          ) return;
+          cover.style.removeProperty('animation');
+          cover.style.removeProperty('transition');
+          cover.style.removeProperty('opacity');
+          cover.style.removeProperty('transform');
+        });
+        return;
+      }
+      cover.style.removeProperty('animation');
+      cover.style.removeProperty('transition');
+      cover.style.removeProperty('opacity');
+      cover.style.removeProperty('transform');
+      cover.classList.remove('is-active');
+      cover.style.removeProperty('background-image');
     });
   };
 
-  const prewarmTargetCover = (source, { activate = false } = {}) => {
+  const clearFinalHandoff = () => {
+    const activeRun = handoffRun;
+    handoffRun = null;
+    activeRun?.controller.abort();
+    activeRun?.settle(false);
+    clearHandoffGeometry();
+
+    root.querySelectorAll('.loading-image[data-loading-handoff="true"]')
+      .forEach((source) => delete source.dataset.loadingHandoff);
+    clearPlayerReveal({ targetCover: activeRun?.targetCover });
+  };
+
+  const completeFinalHandoff = () => {
+    const completedRun = handoffRun;
+    if (!completedRun) return;
+    handoffRun = null;
+    clearHandoffGeometry();
+    delete completedRun.source.dataset.loadingHandoff;
+    clearPlayerReveal({ preserveTarget: true, targetCover: completedRun.targetCover });
+  };
+
+  const completeFallbackHandoff = (targetCover) => {
+    clearHandoffGeometry();
+    root.querySelectorAll('.loading-image[data-loading-handoff="true"]')
+      .forEach((source) => delete source.dataset.loadingHandoff);
+    clearPlayerReveal({
+      preserveTarget: Boolean(targetCover?.classList.contains('is-active')),
+      targetCover
+    });
+  };
+
+  const prewarmTargetCover = (source) => {
     const targetCover = documentRef.querySelector('#vinylCoverA');
     const artworkSource = source?.currentSrc || source?.src;
     if (!targetCover || !artworkSource) return;
     targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
     targetCover.dataset.loadingPrewarm = 'true';
-    if (activate) targetCover.classList.add('is-active');
+  };
+
+  const createHandoffRun = ({ profile, source, targetCover, appShell, timing }) => {
+    const controller = new AbortController();
+    let settled = false;
+    let resolveBarrier;
+    const barrier = new Promise((resolve) => { resolveBarrier = resolve; });
+    const run = {
+      profile,
+      source,
+      targetCover,
+      appShell,
+      timing,
+      controller,
+      barrier,
+      settle(completed) {
+        if (settled) return;
+        settled = true;
+        resolveBarrier(completed);
+      }
+    };
+    return run;
+  };
+
+  const beginPlayerReveal = (run) => {
+    if (
+      handoffRun !== run
+      || run.controller.signal.aborted
+      || !root.isConnected
+    ) return false;
+
+    root.dataset.handoffPhase = run.profile === 'reduce' ? 'player-reveal' : 'morphing';
+    run.appShell.dataset.loadingHandoff = 'true';
+    run.appShell.classList.add('is-loading-reveal');
+    if (run.profile !== 'reduce') return true;
+
+    root.classList.add('is-final-resolving', 'is-exiting');
+    return true;
+  };
+
+  const startAnimatedHandoff = (run) => {
+    const { signal } = run.controller;
+    const { timing } = run;
+    root.dataset.handoffReady = 'true';
+    root.dataset.handoffPhase = 'morphing';
+    root.style.setProperty('--final-resolve-ms', `${timing.morph}ms`);
+    root.style.setProperty('--loading-handoff-morph-ms', `${timing.morph}ms`);
+    root.style.setProperty('--loading-player-reveal-delay-ms', `${timing.revealAt}ms`);
+    root.style.setProperty('--loading-player-reveal-ms', `${timing.playerReveal}ms`);
+    run.appShell.style.setProperty('--loading-player-reveal-delay-ms', `${timing.revealAt}ms`);
+    run.appShell.style.setProperty('--loading-player-reveal-ms', `${timing.playerReveal}ms`);
+
+    const options = { signal, setTimer, clearTimer };
+    const morphWork = waitForAnimation(
+      run.source,
+      'loading-poster-to-player-motion',
+      { ...options, timeoutMs: timing.morph + 80 }
+    );
+    const backdropWork = waitForDelay(timing.backdropExit, options);
+    const playerWork = beginPlayerReveal(run)
+      ? waitForDelay(timing.morph, options)
+      : Promise.resolve(false);
+
+    void Promise.all([morphWork, playerWork, backdropWork])
+      .then((results) => {
+        const completed = results.every(Boolean)
+          && handoffRun === run
+          && !signal.aborted
+          && root.isConnected;
+        if (completed) {
+          root.dataset.handoffSettled = 'true';
+          root.dataset.handoffPhase = 'settled';
+        }
+        run.settle(completed);
+      });
+  };
+
+  const prepareReducedHandoff = () => {
+    clearFinalHandoff();
+    const source = finalSlot.querySelector('img');
+    const targetCover = documentRef.querySelector('#vinylCoverA');
+    const appShell = documentRef.querySelector('#appShell');
+    const artworkSource = source?.currentSrc || source?.src;
+    if (!source || !targetCover || !appShell || !artworkSource) return null;
+
+    const timing = FINAL_HANDOFF_TIMING.reduce;
+    source.dataset.loadingHandoff = 'true';
+    targetCover.classList.remove('is-active');
+    targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
+    targetCover.dataset.loadingPrewarm = 'true';
+    targetCover.dataset.loadingHandoff = 'true';
+    appShell.style.setProperty('--loading-player-reveal-ms', `${timing.crossfade}ms`);
+    root.style.setProperty('--loading-player-reveal-ms', `${timing.crossfade}ms`);
+    root.dataset.handoffReady = 'true';
+    root.dataset.handoffPhase = 'final-hold';
+
+    const run = createHandoffRun({
+      profile: 'reduce', source, targetCover, appShell, timing
+    });
+    handoffRun = run;
+    const options = { signal: run.controller.signal, setTimer, clearTimer };
+    void (async () => {
+      if (!await waitForDelay(timing.finalHold, options)) {
+        run.settle(false);
+        return;
+      }
+      if (!beginPlayerReveal(run)) {
+        run.settle(false);
+        return;
+      }
+      const results = await Promise.all([
+        waitForDelay(timing.crossfade, options),
+        waitForDelay(timing.crossfade, options),
+        waitForDelay(timing.crossfade, options)
+      ]);
+      const completed = results.every(Boolean)
+        && handoffRun === run
+        && !run.controller.signal.aborted
+        && root.isConnected;
+      if (completed) {
+        root.dataset.handoffSettled = 'true';
+        root.dataset.handoffPhase = 'settled';
+      }
+      run.settle(completed);
+    })();
+    return run;
+  };
+
+  const commitFinalHandoff = (run) => {
+    if (!run || handoffRun !== run || run.controller.signal.aborted || !root.isConnected) {
+      return false;
+    }
+    run.targetCover.style.animation = 'none';
+    run.targetCover.style.transition = 'none';
+    run.targetCover.style.opacity = '1';
+    run.targetCover.style.transform = 'scale(1) rotate(0deg)';
+    run.targetCover.style.backgroundPosition = 'center';
+    run.targetCover.style.backgroundSize = 'cover';
+    run.targetCover.classList.add('is-active');
+    delete run.targetCover.dataset.loadingHandoff;
+    delete run.targetCover.dataset.loadingPrewarm;
+    delete run.source.dataset.loadingHandoff;
+    root.dataset.handoffPhase = 'complete';
+    return true;
   };
 
   const prepareFinalHandoff = (profile, source) => {
     clearFinalHandoff();
     skip.disabled = true;
     skip.hidden = true;
-    if (profile === 'reduce' || !source) return;
+    if (!source) return;
+    prewarmTargetCover(source);
+    if (profile === 'reduce') return;
 
     const sourceFrame = source.closest?.('.loading-frame') ?? source;
     const target = documentRef.querySelector('.vinyl-sticker');
-    if (!target) return;
+    const targetCover = documentRef.querySelector('#vinylCoverA');
+    const appShell = documentRef.querySelector('#appShell');
+    const timing = FINAL_HANDOFF_TIMING[profile];
+    if (!target || !targetCover || !appShell || !timing) return;
 
     const sourceRect = sourceFrame.getBoundingClientRect();
-    const appShell = documentRef.querySelector('#appShell');
     const targetRect = measureRevealedTarget(target, appShell);
     const naturalWidth = Number(source.naturalWidth);
     const naturalHeight = Number(source.naturalHeight);
@@ -345,20 +618,30 @@ export function createLoadingScreen(documentRef = document, {
     root.style.setProperty('--poster-final-inset-bottom', asPercent(finalInsetY, sourceRect.height));
     root.style.setProperty('--poster-final-inset-left', asPercent(finalInsetX, sourceRect.width));
 
-    const targetCover = documentRef.querySelector('#vinylCoverA');
     const artworkSource = source.currentSrc || source.src;
-    if (!targetCover || !artworkSource) return;
+    if (!artworkSource) return;
 
     source.dataset.loadingHandoff = 'true';
+    targetCover.classList.remove('is-active');
     targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
+    targetCover.dataset.loadingPrewarm = 'true';
     targetCover.dataset.loadingHandoff = 'true';
-    appShell?.classList.add('is-loading-reveal');
+    appShell.style.setProperty('--loading-player-reveal-ms', `${timing.playerReveal}ms`);
+    const run = createHandoffRun({ profile, source, targetCover, appShell, timing });
+    handoffRun = run;
     const generation = ++handoffGeneration;
     handoffFrame = requestFrame(() => {
       handoffFrame = null;
-      if (generation !== handoffGeneration || !root.isConnected) return;
-      root.dataset.handoffReady = 'true';
-      targetCover.classList.add('is-active');
+      if (
+        generation !== handoffGeneration
+        || handoffRun !== run
+        || run.controller.signal.aborted
+        || !root.isConnected
+      ) {
+        run.settle(false);
+        return;
+      }
+      startAnimatedHandoff(run);
     });
   };
 
@@ -397,69 +680,84 @@ export function createLoadingScreen(documentRef = document, {
   let skipRequested = false;
   let nextVisualSlotIndex = 0;
   const admittedSlots = new Set();
-  let openingGeneration = 0;
-  let openingTimer = null;
-  let openingSettled = true;
-  let resolveOpening = () => {};
-  let openingReady = Promise.resolve();
+  let preludeGeneration = 0;
+  let preludeTimer = null;
+  let preludeSettled = true;
+  let preludeMinimumElapsed = true;
+  let resolvePrelude = () => {};
+  let preludeReady = Promise.resolve();
 
-  const cancelOpeningTitle = () => {
-    openingGeneration += 1;
-    if (openingTimer !== null) clearTimer(openingTimer);
-    openingTimer = null;
+  const cancelLoadingPrelude = ({ settle = false } = {}) => {
+    preludeGeneration += 1;
+    if (preludeTimer !== null) clearTimer(preludeTimer);
+    preludeTimer = null;
+    resolvePrelude();
+    resolvePrelude = () => {};
+    if (settle) {
+      preludeSettled = true;
+      preludeMinimumElapsed = true;
+    }
   };
 
-  const beginOpeningTitle = (profile = currentMotionProfile) => {
-    cancelOpeningTitle();
-    openingSettled = false;
-    openingReady = new Promise((resolve) => { resolveOpening = resolve; });
-    if (!openingTitle) {
-      openingSettled = true;
-      root.dataset.openingState = 'settled';
-      resolveOpening();
-      skip.hidden = false;
-      skip.disabled = false;
+  const settleLoadingPrelude = () => {
+    if (
+      preludeSettled
+      || !preludeMinimumElapsed
+      || !slotNodes[0]?.querySelector('img')
+      || root.dataset.state === 'error'
+    ) return false;
+    preludeSettled = true;
+    root.dataset.preludeState = 'settled';
+    root.classList.remove('is-loading-prelude');
+    root.classList.add('is-prelude-settled');
+    if (!skipRequested) skip.disabled = false;
+    resolvePrelude();
+    resolvePrelude = () => {};
+    enqueueReadyVisuals();
+    return true;
+  };
+
+  const beginLoadingPrelude = (profile = currentMotionProfile) => {
+    cancelLoadingPrelude();
+    preludeSettled = false;
+    preludeMinimumElapsed = false;
+    preludeReady = new Promise((resolve) => { resolvePrelude = resolve; });
+    root.classList.remove('is-prelude-settled');
+
+    if (!loadingPrelude) {
+      preludeSettled = true;
+      preludeMinimumElapsed = true;
+      root.dataset.preludeState = 'settled';
+      root.classList.remove('is-loading-prelude');
+      root.classList.add('is-prelude-settled');
+      if (!skipRequested) skip.disabled = false;
+      resolvePrelude();
+      resolvePrelude = () => {};
       return;
     }
-    const timing = OPENING_TITLE_TIMING[profile] ?? OPENING_TITLE_TIMING.compact;
-    const generation = openingGeneration;
-    skip.hidden = true;
+
+    const duration = LOADING_PRELUDE_TIMING[profile] ?? LOADING_PRELUDE_TIMING.compact;
+    const generation = preludeGeneration;
+    root.dataset.preludeState = 'playing';
+    root.classList.add('is-loading-prelude');
     skip.disabled = true;
-    root.dataset.openingState = 'opening';
-    root.classList.remove('is-opening-title', 'is-opening-settled');
-    // Restarting the class is intentional when motion preference changes mid-intro.
-    void root.offsetWidth;
-    root.classList.add('is-opening-title');
-    openingTimer = setTimer(() => {
-      if (destroyed || generation !== openingGeneration || root.dataset.state === 'error') return;
-      openingTimer = null;
-      openingSettled = true;
-      root.dataset.openingState = 'settled';
-      root.classList.remove('is-opening-title');
-      root.classList.add('is-opening-settled');
-      resolveOpening();
-      enqueueReadyVisuals();
-      if (!skipRequested) {
-        const revealSkip = () => {
-          if (destroyed || generation !== openingGeneration || skipRequested) return;
-          skip.hidden = false;
-          skip.disabled = false;
-        };
-        if (timing.skipDelay > 0) setTimer(revealSkip, timing.skipDelay);
-        else revealSkip();
-      }
-    }, timing.establish);
+    preludeTimer = setTimer(() => {
+      if (destroyed || generation !== preludeGeneration || root.dataset.state === 'error') return;
+      preludeTimer = null;
+      preludeMinimumElapsed = true;
+      settleLoadingPrelude();
+    }, duration);
   };
 
   const applyMotionProfile = (nextProfile) => {
     const profileChanged = nextProfile !== currentMotionProfile;
     transition.setProfile(nextProfile);
     currentMotionProfile = nextProfile;
-    if (profileChanged && !openingSettled) beginOpeningTitle(nextProfile);
-    if (nextProfile === 'reduce') {
+    if (profileChanged && !preludeSettled) beginLoadingPrelude(nextProfile);
+    if (profileChanged && nextProfile === 'reduce') {
       clearFinalHandoff();
       if (skipRequested) {
-        prewarmTargetCover(finalSlot.querySelector('img'), { activate: true });
+        prewarmTargetCover(finalSlot.querySelector('img'));
       }
     }
   };
@@ -470,6 +768,7 @@ export function createLoadingScreen(documentRef = document, {
     exitController = null;
     root.classList.remove('is-exiting');
     if (!clearFallback) return;
+    pendingFallbackCompletion = null;
     for (const portal of [topPortal, bottomPortal]) {
       portal.style.removeProperty('animation');
       portal.style.removeProperty('opacity');
@@ -517,9 +816,7 @@ export function createLoadingScreen(documentRef = document, {
     if (skipRequested && slot !== finalSlot) return slot;
     if (existingImage && (admittedSlots.has(slot) || skipRequested)) {
       if (slot === finalSlot) {
-        prewarmTargetCover(existingImage, {
-          activate: skipRequested && currentMotionProfile === 'reduce'
-        });
+        prewarmTargetCover(existingImage);
       }
       return slot;
     }
@@ -537,9 +834,7 @@ export function createLoadingScreen(documentRef = document, {
     result.image.setAttribute('aria-hidden', 'true');
     artworkViewport.replaceChildren(result.image);
     if (slot === finalSlot) {
-      prewarmTargetCover(result.image, {
-        activate: skipRequested && currentMotionProfile === 'reduce'
-      });
+      prewarmTargetCover(result.image);
     }
     return slot;
   };
@@ -555,7 +850,7 @@ export function createLoadingScreen(documentRef = document, {
   };
 
   const enqueueReadyVisuals = () => {
-    if (!openingSettled) return;
+    if (!preludeSettled) return;
     if (skipRequested) {
       if (finalSlot.querySelector('img')) enqueueVisual(finalSlot);
       return;
@@ -575,7 +870,6 @@ export function createLoadingScreen(documentRef = document, {
     const activeId = transition.getState?.().activeId;
     const activeSlot = slots.get(activeId)
       ?? root.querySelector('.loading-frame.is-active, .loading-frame.is-outgoing');
-    const preserveCurrent = Boolean(activeSlot);
     const finalIsCurrent = activeSlot === finalSlot;
     skipRequested = true;
     transitionRevision += 1;
@@ -588,12 +882,12 @@ export function createLoadingScreen(documentRef = document, {
     if (!finalIsCurrent) clearFinalHandoff();
     nextVisualSlotIndex = slotNodes.length;
     admittedSlots.clear();
-    transition.reset({ preserveActive: preserveCurrent });
-    particleField.clear();
     if (activeSlot) admittedSlots.add(activeSlot);
+    const finalQueued = transition.skipTo(finalSlot);
+    if (finalQueued) admittedSlots.add(finalSlot);
     onSkip();
     if (finalImage) {
-      prewarmTargetCover(finalImage, { activate: currentMotionProfile === 'reduce' });
+      prewarmTargetCover(finalImage);
       if (!finalIsCurrent) enqueueReadyVisuals();
     }
   };
@@ -613,6 +907,7 @@ export function createLoadingScreen(documentRef = document, {
       particleField.clear();
       visualQueueError = null;
       root.dataset.state = 'loading';
+      root.dataset.preludeState = 'playing';
       delete root.dataset.skipRequested;
       delete root.dataset.errorKind;
       delete root.dataset.transitionSettled;
@@ -624,7 +919,7 @@ export function createLoadingScreen(documentRef = document, {
       retry.hidden = true;
       retry.onclick = null;
       skip.hidden = false;
-      skip.disabled = true;
+      skip.disabled = false;
       skip.onclick = requestSkip;
       copy.textContent = LOADING_COPY;
       progress.textContent = `00 / ${twoDigits(totalSlots)}`;
@@ -643,7 +938,7 @@ export function createLoadingScreen(documentRef = document, {
         slot.querySelector('img')?.remove();
       }
       connectResizeObserver();
-      beginOpeningTitle(currentMotionProfile);
+      beginLoadingPrelude(currentMotionProfile);
     },
     setProgress({ id, status, completed, total, result }) {
       if (destroyed) return;
@@ -664,13 +959,15 @@ export function createLoadingScreen(documentRef = document, {
       }
       if (status === 'ready' && result) {
         mountImage(result);
+        settleLoadingPrelude();
         enqueueReadyVisuals();
       }
       if (status === 'ready') copy.textContent = LOADING_COPY;
     },
     showError(error, onRetry) {
       if (destroyed) return;
-      cancelOpeningTitle();
+      cancelLoadingPrelude({ settle: true });
+      root.classList.remove('is-loading-prelude', 'is-prelude-settled');
       cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       transition.freeze();
@@ -716,7 +1013,10 @@ export function createLoadingScreen(documentRef = document, {
       copy.textContent = LOADING_COPY;
       try {
         applyMotionProfile(profile ?? currentMotionProfile);
-        await openingReady;
+        do {
+          const ready = preludeReady;
+          await ready;
+        } while (!destroyed && !preludeSettled);
         if (destroyed) return;
         enqueueReadyVisuals();
         let completedRevision;
@@ -739,7 +1039,7 @@ export function createLoadingScreen(documentRef = document, {
       }
     },
     async exit(profile = currentMotionProfile) {
-      if (destroyed) return;
+      if (destroyed) return false;
       skip.disabled = true;
       skip.hidden = true;
       cancelExit();
@@ -747,6 +1047,43 @@ export function createLoadingScreen(documentRef = document, {
       const controller = new AbortController();
       exitController = controller;
       disconnectResizeObserver();
+
+      let activeHandoff = handoffRun;
+      if (profile === 'reduce' && activeHandoff?.profile !== 'reduce') {
+        activeHandoff = prepareReducedHandoff();
+      }
+      if (activeHandoff) {
+        const completed = await activeHandoff.barrier;
+        if (
+          !completed
+          || controller.signal.aborted
+          || exitToken !== exitGeneration
+          || exitController !== controller
+          || handoffRun !== activeHandoff
+          || destroyed
+          || !commitFinalHandoff(activeHandoff)
+        ) return false;
+        exitController = null;
+        root.remove();
+        destroyControllers();
+        return true;
+      }
+
+      const appShell = documentRef.querySelector('#appShell');
+      if (appShell) {
+        appShell.dataset.loadingHandoff = 'true';
+        appShell.classList.add('is-loading-reveal');
+      }
+      const fallbackCover = documentRef.querySelector(
+        '#vinylCoverA[data-loading-prewarm="true"]'
+      );
+      if (fallbackCover) {
+        fallbackCover.style.animation = 'none';
+        fallbackCover.style.transition = 'none';
+        fallbackCover.style.opacity = '1';
+        fallbackCover.style.transform = 'scale(1) rotate(0deg)';
+        fallbackCover.classList.add('is-active');
+      }
       root.classList.add('is-exiting');
       const timing = POSTER_TIMING[profile];
       let completed;
@@ -781,12 +1118,19 @@ export function createLoadingScreen(documentRef = document, {
         || exitToken !== exitGeneration
         || exitController !== controller
         || destroyed
-      ) return;
+      ) return false;
       exitController = null;
-      settleFinalHandoff();
-      documentRef.querySelector('#appShell')?.classList.remove('is-loading-reveal');
       root.remove();
+      pendingFallbackCompletion = { targetCover: fallbackCover };
       destroyControllers();
+      return true;
+    },
+    completeHandoff() {
+      if (handoffRun) completeFinalHandoff();
+      if (pendingFallbackCompletion) {
+        completeFallbackHandoff(pendingFallbackCompletion.targetCover);
+        pendingFallbackCompletion = null;
+      }
     },
     destroy() {
       if (destroyed) return;
@@ -794,7 +1138,7 @@ export function createLoadingScreen(documentRef = document, {
       retry.onclick = null;
       skip.onclick = null;
       cancelExit({ clearFallback: true });
-      cancelOpeningTitle();
+      cancelLoadingPrelude({ settle: true });
       disconnectResizeObserver();
       clearFinalHandoff();
       root.remove();

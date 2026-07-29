@@ -11,6 +11,7 @@
     <meta name="apple-mobile-web-app-title" content="歌词抽取机">
     <title>歌词抽取机</title>
     <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="preload" href="./src/assets/fonts/vinyl-serif-sc.woff2" as="font" type="font/woff2" crossorigin>
     <style>
         html,
         body {
@@ -56,7 +57,9 @@
         .loading-poster-stack,
         .loading-frame,
         .loading-particles,
-        .loading-light-slit {
+        .loading-light-slit,
+        .loading-hole,
+        .loading-hole i {
             position: absolute;
         }
 
@@ -73,8 +76,12 @@
     <link rel="stylesheet" href="./src/style.css">
 </head>
 <body>
-    <div class="loading-screen" id="loadingScreen" data-state="loading">
+    <div class="loading-screen is-loading-prelude" id="loadingScreen" data-state="loading" data-prelude-state="playing">
         <div class="loading-intake">
+            <div class="loading-hole" id="loadingHole" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i>
+                <i></i><i></i><i></i><i></i><i></i>
+            </div>
             <div class="loading-controls">
                 <output class="sr-only" id="loadingProgress" aria-label="加载进度" aria-live="polite" aria-atomic="true">00 / 10</output>
                 <div class="loading-status">
@@ -221,8 +228,8 @@
         <div class="result-dismiss-hint" id="playlistDismissHint">轻点空白处关闭</div>
     </div>
 
-    <a class="footer-link" id="contactLink">联系我</a>
-    <div class="toast" id="copyToast">微信号 Michael_Yuuu 已复制</div>
+    <button class="footer-link" id="contactLink" type="button">联系我</button>
+    <div class="toast" id="copyToast" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true">微信号 Michael_Yuuu 已复制</div>
     </div>
 
     <script type="module" src="./src/main.js"></script>
