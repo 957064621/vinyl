@@ -34,10 +34,8 @@ const createSpriteContext = () => {
 const createContext = () => {
   const calls = [];
   let fillStyle = '';
-  let strokeStyle = '';
   let globalAlpha = 1;
   let globalCompositeOperation = 'source-over';
-  let lineWidth = 1;
   let hasPixels = false;
   const context = {
     calls,
@@ -56,12 +54,6 @@ const createContext = () => {
       if (globalAlpha > 0) hasPixels = true;
       calls.push(['drawImage', ...args]);
     },
-    moveTo: (...args) => calls.push(['moveTo', ...args]),
-    lineTo: (...args) => calls.push(['lineTo', ...args]),
-    stroke: () => {
-      if (globalAlpha > 0) hasPixels = true;
-      calls.push(['stroke']);
-    },
     resetBackingStore(property, value) {
       hasPixels = false;
       calls.push(['backingStoreReset', property, value]);
@@ -73,13 +65,6 @@ const createContext = () => {
       set(value) {
         fillStyle = value;
         calls.push(['fillStyle', value]);
-      }
-    },
-    strokeStyle: {
-      get: () => strokeStyle,
-      set(value) {
-        strokeStyle = value;
-        calls.push(['strokeStyle', value]);
       }
     },
     globalAlpha: {
@@ -94,13 +79,6 @@ const createContext = () => {
       set(value) {
         globalCompositeOperation = value;
         calls.push(['globalCompositeOperation', value]);
-      }
-    },
-    lineWidth: {
-      get: () => lineWidth,
-      set(value) {
-        lineWidth = value;
-        calls.push(['lineWidth', value]);
       }
     },
     hasPixels: {
@@ -133,30 +111,16 @@ const pointCenters = (frame) => frame.filter(isPointDraw).map((call) => {
   return [x + (width / 2), y + (height / 2)];
 });
 
-const frameCoordinates = (frame) => frame.flatMap((call) => {
-  if (call[0] === 'drawImage') {
-    const [, , x, y, width, height] = call;
-    return [x + (width / 2), y + (height / 2)];
-  }
-  if (call[0] === 'arc' || call[0] === 'moveTo' || call[0] === 'lineTo') {
-    return [call[1], call[2]];
-  }
-  return [];
-});
-
-const maxFrameAlpha = (frame) => {
-  const alphas = frame
-    .filter(([name, value]) => name === 'globalAlpha' && value < 1)
-    .map(([, value]) => value);
-  return alphas.length > 0 ? Math.max(...alphas) : null;
-};
+const frameAlphas = (frame) => frame
+  .filter(([name]) => name === 'globalAlpha')
+  .map(([, alpha]) => alpha);
 
 const assertTerminalClear = (calls, label) => {
   const lastClearIndex = calls.findLastIndex(([name]) => name === 'clearRect');
   assert.notEqual(lastClearIndex, -1, `${label} must clear the Canvas`);
-  const drawCalls = new Set(['arc', 'fill', 'drawImage', 'moveTo', 'lineTo', 'stroke']);
+  const drawing = new Set(['arc', 'fill', 'drawImage']);
   assert.equal(
-    calls.slice(lastClearIndex + 1).some(([name]) => drawCalls.has(name)),
+    calls.slice(lastClearIndex + 1).some(([name]) => drawing.has(name)),
     false,
     `${label} must not draw after its final clear`
   );
@@ -165,7 +129,6 @@ const assertTerminalClear = (calls, label) => {
 const createScheduler = () => {
   let nextId = 1;
   const pending = new Map();
-
   return {
     requestFrame(callback) {
       const id = nextId;
@@ -217,7 +180,6 @@ const createFixture = ({ width = 320, height = 180, dpr = 3 } = {}) => {
     spriteCanvases.push(element);
     return element;
   };
-
   Object.defineProperty(document, 'hidden', {
     configurable: true,
     get: () => hidden
@@ -278,646 +240,462 @@ const createFixture = ({ width = 320, height = 180, dpr = 3 } = {}) => {
   };
 };
 
-const createField = (fixture, profile = 'compact') => createLightParticleField({
+const createField = (fixture, profile = 'compact', random = () => 0.375) => createLightParticleField({
   canvas: fixture.canvas,
   documentRef: fixture.document,
   windowRef: fixture.dom.window,
   profile,
-  random: () => 0.375,
+  random,
   requestFrame: fixture.scheduler.requestFrame,
   cancelFrame: fixture.scheduler.cancelFrame
 });
 
-const runToIdle = async (fixture, promise, { start = 0, step = 50 } = {}) => {
+const runToIdle = async (fixture, promises, { start = 0, step = 25 } = {}) => {
   let timestamp = start;
   let guard = 0;
   while (fixture.scheduler.pendingCount > 0) {
     fixture.scheduler.step(timestamp);
     timestamp += step;
     guard += 1;
-    assert.ok(guard < 20, 'animation should settle in a finite number of frames');
+    assert.ok(guard < 80, 'animation should settle in a finite number of frames');
   }
-  await promise;
+  await Promise.all(Array.isArray(promises) ? promises : [promises]);
 };
 
-test('exports exact frozen profiles, caches two sprites, and caps backing-store DPR', () => {
+test('exports exact frozen pool profiles, caches radial sprites, and caps DPR at one', () => {
   assert.deepEqual(PARTICLE_PROFILES, {
-    full: { count: 260, holdCount: 104, dpr: 1, gatherMs: 160, scatterMs: 140, holdMs: 500 },
-    compact: { count: 160, holdCount: 68, dpr: 1, gatherMs: 100, scatterMs: 90, holdMs: 440 },
+    full: { count: 320, holdCount: 112, dpr: 1, gatherMs: 160, scatterMs: 140, holdMs: 500 },
+    compact: { count: 180, holdCount: 64, dpr: 1, gatherMs: 100, scatterMs: 90, holdMs: 440 },
     reduce: { count: 0, holdCount: 0, dpr: 1, gatherMs: 0, scatterMs: 0, holdMs: 0 }
   });
   assert.equal(Object.isFrozen(PARTICLE_PROFILES), true);
   assert.equal(Object.isFrozen(PARTICLE_PROFILES.full), true);
-  assert.equal(Object.isFrozen(PARTICLE_PROFILES.compact), true);
-  assert.equal(Object.isFrozen(PARTICLE_PROFILES.reduce), true);
 
-  const fullFixture = createFixture({ width: 200, height: 100, dpr: 3 });
-  const full = createField(fullFixture, 'full');
-  assert.equal(fullFixture.canvas.width, 200);
-  assert.equal(fullFixture.canvas.height, 100);
-  assert.equal(fullFixture.spriteContexts.length, 2);
-  for (const spriteContext of fullFixture.spriteContexts) {
+  const fixture = createFixture({ width: 200, height: 100, dpr: 4 });
+  const field = createField(fixture, 'full');
+  assert.equal(fixture.canvas.width, 200);
+  assert.equal(fixture.canvas.height, 100);
+  assert.equal(field.getState().dpr, 1);
+  assert.equal(fixture.spriteContexts.length, 2);
+  for (const spriteContext of fixture.spriteContexts) {
     assert.equal(spriteContext.calls.filter(([name]) => name === 'createRadialGradient').length, 1);
     assert.deepEqual(
       spriteContext.calls
         .filter(([name]) => name === 'addColorStop')
         .map(([, stop]) => stop),
-      [0.025, 0.1, 0.25, 1],
-      'ScannerCardStream-style sprites keep a pin-white center and broad transparent halo'
+      [0.025, 0.1, 0.25, 1]
     );
-    assert.equal(spriteContext.calls.filter(([name]) => name === 'fillRect').length, 1);
   }
-  assert.deepEqual(full.getState(), {
+  assert.deepEqual(field.getState(), {
     profile: 'full', particleCount: 0, dpr: 1, animating: false, destroyed: false
   });
-  assert.equal(typeof full.hold, 'function');
-  assert.deepEqual(
-    fullFixture.context.calls.find(([name]) => name === 'setTransform'),
-    ['setTransform', 1, 0, 0, 1, 0, 0]
-  );
-
-  const compactFixture = createFixture({ width: 200, height: 100, dpr: 3 });
-  const compact = createField(compactFixture, 'compact');
-  assert.equal(compactFixture.canvas.width, 200);
-  assert.equal(compactFixture.canvas.height, 100);
-  assert.equal(compact.getState().dpr, 1);
-
-  full.destroy();
-  compact.destroy();
+  assert.equal(typeof field.gather, 'function');
+  assert.equal(typeof field.scatter, 'function');
+  assert.equal(typeof field.hold, 'function');
+  field.destroy();
 });
 
-test('gather renders 260 bounded additive scanner sprites and clears at settlement', async () => {
+test('a portal burst uses the full fixed pool, one RAF, additive sprites, and bounded seam origins', async () => {
   const fixture = createFixture();
-  const field = createField(fixture, 'full');
-  const gathering = field.gather({ left: -50, top: 40, right: 500, bottom: 150 });
+  const field = createField(fixture, 'full', () => 0.5);
+  const gathering = field.gather({ left: 60, top: 50, right: 160, bottom: 50 }, 120);
 
-  assert.deepEqual(field.getState(), {
-    profile: 'full', particleCount: 260, dpr: 1, animating: true, destroyed: false
-  });
+  assert.equal(field.getState().particleCount, 320);
   assert.equal(fixture.scheduler.pendingCount, 1);
   assert.equal(fixture.canvas.dataset.phase, 'gather');
-
-  await runToIdle(fixture, gathering, { step: 45 });
-
-  const frames = renderedFrames(fixture.context.calls);
-  assert.ok(frames.length > 1);
-  assert.equal(frames[0].filter(([name]) => name === 'drawImage').length, 260);
-  const coordinates = frames.flatMap(frameCoordinates);
-  assert.ok(coordinates.every(Number.isFinite));
-  assert.ok(coordinates.every((coordinate, index) => (
-    coordinate >= 0 && coordinate <= (index % 2 === 0 ? 320 : 180)
-  )));
-  assert.ok(fixture.context.calls.some((call) => (
-    call[0] === 'globalCompositeOperation' && call[1] === 'lighter'
+  fixture.scheduler.step(0);
+  const firstFrame = renderedFrames(fixture.context.calls).at(-1);
+  const points = pointCenters(firstFrame);
+  assert.equal(points.length, 320);
+  assert.ok(points.every(([x, y]) => x >= 50 && x <= 150 && Math.abs(y - 30) < 1.31));
+  assert.ok(frameAlphas(firstFrame).every(Number.isFinite));
+  assert.ok(fixture.context.calls.some(([name, value]) => (
+    name === 'globalCompositeOperation' && value === 'lighter'
   )));
   assert.equal(fixture.context.globalCompositeOperation, 'source-over');
-  assert.equal(fixture.scheduler.pendingCount, 0);
-  assert.equal(fixture.canvas.dataset.phase, 'idle');
-  assert.equal(fixture.canvas.dataset.portalSide, undefined);
-  assert.ok(Number(fixture.canvas.dataset.frameCount) > 0);
-  assert.deepEqual(field.getState(), {
-    profile: 'full', particleCount: 0, dpr: 1, animating: false, destroyed: false
-  });
-  assert.equal(fixture.context.hasPixels, false);
-  assertTerminalClear(fixture.context.calls, 'settled gather');
-  field.destroy();
-});
-
-test('top gather and bottom scatter are born at their actual seam and stream toward stage center', async () => {
-  const fixture = createFixture();
-  const field = createLightParticleField({
-    canvas: fixture.canvas,
-    documentRef: fixture.document,
-    windowRef: fixture.dom.window,
-    profile: 'compact',
-    random: () => 0.5,
-    requestFrame: fixture.scheduler.requestFrame,
-    cancelFrame: fixture.scheduler.cancelFrame
-  });
-  const bounds = { left: 60, top: 50, width: 100, height: 80 };
-
-  const gathering = field.gather(bounds, 100, { portalSide: 'top' });
-  fixture.scheduler.step(0);
-  const gatherStart = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  assert.ok(gatherStart.every(([, y]) => Math.abs(y - 30) < 0.001));
-  assert.equal(fixture.canvas.dataset.portalSide, 'top');
-  fixture.scheduler.step(100);
-  await gathering;
-  const gatherEnd = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  assert.ok(gatherEnd.every(([, y]) => Math.abs(y - 98) < 0.001));
-  assert.ok(gatherEnd.every(([, y], index) => y > gatherStart[index][1]));
-  assert.equal(fixture.context.hasPixels, false);
-
-  const scattering = field.scatter(bounds, 100, { portalSide: 'bottom' });
-  assert.equal(fixture.context.hasPixels, false, 'scatter must not retain gather pixels');
-  fixture.scheduler.step(200);
-  const scatterStart = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  assert.ok(scatterStart.every(([, y]) => Math.abs(y - 110) < 0.001));
-  assert.equal(fixture.canvas.dataset.portalSide, 'bottom');
-  fixture.scheduler.step(300);
-  await scattering;
-  const scatterEnd = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  assert.ok(scatterEnd.every(([, y]) => Math.abs(y - 42) < 0.001));
-  assert.ok(scatterEnd.every(([, y], index) => y < scatterStart[index][1]));
-  const forbiddenLinearDraws = new Set(['moveTo', 'lineTo', 'stroke']);
-  assert.equal(
-    renderedFrames(fixture.context.calls)
-      .flat()
-      .some(([name]) => forbiddenLinearDraws.has(name)),
-    false,
-    'soft seam particles must not render linear stroke trails'
-  );
-  assert.equal(fixture.canvas.dataset.phase, 'idle');
-  assert.equal(fixture.context.hasPixels, false);
-  field.destroy();
-});
-
-test('motionDistance maps poster travel to an 18 percent particle range clamped between 56 and 128 pixels', async () => {
-  const cases = [
-    { motionDistance: 100, expectedTravel: 56 },
-    { motionDistance: 600, expectedTravel: 108 },
-    { motionDistance: 1000, expectedTravel: 128 }
-  ];
-
-  for (const { motionDistance, expectedTravel } of cases) {
-    const fixture = createFixture();
-    const field = createLightParticleField({
-      canvas: fixture.canvas,
-      documentRef: fixture.document,
-      windowRef: fixture.dom.window,
-      profile: 'compact',
-      random: () => 0.5,
-      requestFrame: fixture.scheduler.requestFrame,
-      cancelFrame: fixture.scheduler.cancelFrame
-    });
-    const gathering = field.gather(
-      { left: 60, top: 50, width: 100, height: 80 },
-      100,
-      { portalSide: 'top', motionDistance }
-    );
-
-    fixture.scheduler.step(0);
-    fixture.scheduler.step(100);
-    await gathering;
-    const endpoints = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-    assert.ok(endpoints.every(([, y]) => Math.abs(y - (30 + expectedTravel)) < 0.001));
-    field.destroy();
-  }
-});
-
-test('motionDistance seeds one quarter of particles along the poster path as an inertial wake', async () => {
-  const fixture = createFixture();
-  let randomCall = 0;
-  const field = createLightParticleField({
-    canvas: fixture.canvas,
-    documentRef: fixture.document,
-    windowRef: fixture.dom.window,
-    profile: 'compact',
-    random: () => {
-      const property = randomCall % 8;
-      const particle = Math.floor(randomCall / 8);
-      randomCall += 1;
-      if (property === 1) return (particle % 9) / 9;
-      return 0.5;
-    },
-    requestFrame: fixture.scheduler.requestFrame,
-    cancelFrame: fixture.scheduler.cancelFrame
-  });
-  const bounds = { left: 60, top: 50, width: 100, height: 80 };
-
-  const gathering = field.gather(bounds, 100, { portalSide: 'top', motionDistance: 600 });
-  fixture.scheduler.step(0);
-  const gatherStarts = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  const gatherWake = gatherStarts.filter(([, y]) => y > 30.001);
-  assert.equal(gatherWake.length, 40);
-  assert.ok(new Set(gatherWake.map(([, y]) => y.toFixed(3))).size > 5);
-  assert.equal(gatherStarts.filter(([, y]) => Math.abs(y - 30) < 0.001).length, 120);
-  fixture.scheduler.step(100);
-  await gathering;
-
-  const scattering = field.scatter(bounds, 100, { portalSide: 'bottom', motionDistance: 600 });
-  fixture.scheduler.step(200);
-  const scatterStarts = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  const scatterWake = scatterStarts.filter(([, y]) => y < 109.999);
-  assert.equal(scatterWake.length, 40);
-  assert.ok(new Set(scatterWake.map(([, y]) => y.toFixed(3))).size > 5);
-  assert.equal(scatterStarts.filter(([, y]) => Math.abs(y - 110) < 0.001).length, 120);
-  fixture.scheduler.step(300);
-  await scattering;
-
-  field.destroy();
-});
-
-test('hold phase keeps a bounded field of floating particles below the resting poster', async () => {
-  const fixture = createFixture();
-  const field = createField(fixture, 'full');
-  const holding = field.hold({ left: 60, top: 50, width: 100, height: 80 }, 100);
-
-  assert.equal(fixture.canvas.dataset.phase, 'hold');
-  assert.equal(field.getState().particleCount, 104);
-  fixture.scheduler.step(0);
-  fixture.scheduler.step(50);
-  const points = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  assert.equal(points.length, 104);
-  assert.ok(points.every(([, y]) => y > 110), 'hold particles remain below the artwork bottom');
-
-  fixture.scheduler.step(100);
-  await holding;
-  assert.equal(fixture.canvas.dataset.phase, 'idle');
-  assert.equal(fixture.context.hasPixels, false);
-  field.destroy();
-});
-
-test('scanner particles drift subtly left and right while moving away from a horizontal seam', async () => {
-  const fixture = createFixture();
-  let randomCall = 0;
-  const field = createLightParticleField({
-    canvas: fixture.canvas,
-    documentRef: fixture.document,
-    windowRef: fixture.dom.window,
-    profile: 'compact',
-    random: () => {
-      const property = randomCall % 8;
-      const particle = Math.floor(randomCall / 8);
-      randomCall += 1;
-      if (property === 1) return particle % 2 === 0 ? 0.1 : 0.9;
-      return 0.5;
-    },
-    requestFrame: fixture.scheduler.requestFrame,
-    cancelFrame: fixture.scheduler.cancelFrame
-  });
-  const bounds = { left: 60, top: 50, width: 100, height: 80 };
-
-  const gathering = field.gather(bounds, 100);
-  fixture.scheduler.step(0);
-  const starts = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  fixture.scheduler.step(100);
-  await gathering;
-  const ends = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-
-  assert.ok(starts.every(([x, y]) => Math.abs(x - 100) < 0.001 && Math.abs(y - 30) < 0.001));
-  const horizontalTravel = ends.map(([x], index) => x - starts[index][0]);
-  assert.ok(horizontalTravel.some((distance) => distance < -7.5));
-  assert.ok(horizontalTravel.some((distance) => distance > 7.5));
-  field.destroy();
-});
-
-test('seam particles arc away from the slit instead of interpolating along straight rays', async () => {
-  const fixture = createFixture();
-  const field = createLightParticleField({
-    canvas: fixture.canvas,
-    documentRef: fixture.document,
-    windowRef: fixture.dom.window,
-    profile: 'compact',
-    random: () => 0.5,
-    requestFrame: fixture.scheduler.requestFrame,
-    cancelFrame: fixture.scheduler.cancelFrame
-  });
-  const gathering = field.gather(
-    { left: 60, top: 50, width: 100, height: 80 },
-    100,
-    { portalSide: 'top' }
-  );
-
-  fixture.scheduler.step(0);
-  fixture.scheduler.step(50);
-  const midpoints = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  assert.ok(midpoints.some(([x]) => x < 99), 'one half of the burst should curl left of the seam normal');
-  assert.ok(midpoints.some(([x]) => x > 101), 'the mirrored half should curl right of the seam normal');
-
-  fixture.scheduler.step(100);
-  await gathering;
-  const endpoints = pointCenters(renderedFrames(fixture.context.calls).at(-1));
-  assert.ok(endpoints.every(([x]) => Math.abs(x - 100) < 0.001));
-  field.destroy();
-});
-
-test('particles are transparent at birth and settlement and fade as travel distance grows', async () => {
-  const cases = [
-    { method: 'gather', portalSide: 'top', seamY: 30 },
-    { method: 'scatter', portalSide: 'bottom', seamY: 110 }
-  ];
-
-  for (const { method, portalSide, seamY } of cases) {
-    const fixture = createFixture();
-    const field = createLightParticleField({
-      canvas: fixture.canvas,
-      documentRef: fixture.document,
-      windowRef: fixture.dom.window,
-      profile: 'compact',
-      random: () => 0.5,
-      requestFrame: fixture.scheduler.requestFrame,
-      cancelFrame: fixture.scheduler.cancelFrame
-    });
-    const pending = field[method](
-      { left: 60, top: 50, width: 100, height: 80 },
-      100,
-      { portalSide }
-    );
-
-    for (const timestamp of [0, 20, 70, 100]) fixture.scheduler.step(timestamp);
-    await pending;
-
-    const frames = renderedFrames(fixture.context.calls).slice(-4);
-    assert.equal(frames.length, 4, `${method} should render every sampled frame`);
-    const samples = frames.map((frame) => {
-      const [, y] = pointCenters(frame)[0];
-      return {
-        alpha: maxFrameAlpha(frame),
-        distance: Math.abs(y - seamY)
-      };
-    });
-
-    assert.equal(samples[0].alpha, 0, `${method} must be transparent at birth`);
-    assert.ok(samples[1].alpha > 0, `${method} must become visible after birth`);
-    assert.ok(samples[2].alpha > 0, `${method} must remain softly visible during travel`);
-    assert.ok(samples[2].distance > samples[1].distance, `${method} must travel away from its seam`);
-    assert.ok(samples[2].alpha < samples[1].alpha, `${method} must fade as distance grows`);
-    assert.equal(samples[3].alpha, 0, `${method} must be transparent before settlement`);
-    field.destroy();
-  }
-});
-
-test('frames reuse seeded storage without random regeneration or sprite recreation', async () => {
-  let randomCalls = 0;
-  const fixture = createFixture();
-  const field = createLightParticleField({
-    canvas: fixture.canvas,
-    documentRef: fixture.document,
-    windowRef: fixture.dom.window,
-    profile: 'compact',
-    random: () => {
-      randomCalls += 1;
-      return 0.375;
-    },
-    requestFrame: fixture.scheduler.requestFrame,
-    cancelFrame: fixture.scheduler.cancelFrame
-  });
-  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 }, 100);
-  const callsAfterSeed = randomCalls;
-
-  fixture.scheduler.step(0);
-  fixture.scheduler.step(35);
-  fixture.scheduler.step(70);
-  assert.equal(randomCalls, callsAfterSeed);
-  assert.equal(fixture.spriteContexts.length, 2);
-  fixture.scheduler.step(100);
-  await gathering;
-
-  const scattering = field.scatter({ left: 60, top: 50, width: 100, height: 80 }, 100);
-  const callsAfterScatterSeed = randomCalls;
-  fixture.scheduler.step(100);
-  fixture.scheduler.step(200);
-  await scattering;
-  assert.equal(randomCalls, callsAfterScatterSeed);
-  assert.equal(fixture.spriteContexts.length, 2);
-  field.setProfile('full');
-  assert.equal(fixture.spriteContexts.length, 2);
-  field.destroy();
-});
-
-test('resize redraws an active frame once without a new RAF or random regeneration', async () => {
-  let randomCalls = 0;
-  const fixture = createFixture({ width: 320, height: 180, dpr: 1 });
-  const field = createLightParticleField({
-    canvas: fixture.canvas,
-    documentRef: fixture.document,
-    windowRef: fixture.dom.window,
-    profile: 'compact',
-    random: () => {
-      randomCalls += 1;
-      return 0.375;
-    },
-    requestFrame: fixture.scheduler.requestFrame,
-    cancelFrame: fixture.scheduler.cancelFrame
-  });
-  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 }, 100);
-  fixture.scheduler.step(0);
-  fixture.scheduler.step(35);
-  const callsBeforeResize = randomCalls;
-  const pendingBeforeResize = fixture.scheduler.pendingCount;
-  const framesBeforeResize = renderedFrames(fixture.context.calls).length;
-
-  fixture.setSize(160, 90);
-  field.resize();
-
-  assert.equal(randomCalls, callsBeforeResize);
-  assert.equal(fixture.scheduler.pendingCount, pendingBeforeResize);
-  assert.equal(renderedFrames(fixture.context.calls).length, framesBeforeResize + 1);
-  const coordinates = frameCoordinates(renderedFrames(fixture.context.calls).at(-1));
-  assert.ok(coordinates.every((coordinate, index) => (
-    coordinate >= 0 && coordinate <= (index % 2 === 0 ? 160 : 90)
-  )));
-
-  field.destroy();
-  await gathering;
-});
-
-test('explicit scene durations override particle profile defaults', async () => {
-  const fixture = createFixture();
-  const field = createField(fixture, 'full');
-  const bounds = { left: 60, top: 50, width: 100, height: 80 };
-
-  const gathering = field.gather(bounds, 80);
-  fixture.scheduler.step(0);
-  fixture.scheduler.step(79);
-  assert.equal(field.getState().animating, true);
-  fixture.scheduler.step(80);
-  await gathering;
-  assert.equal(fixture.canvas.dataset.phase, 'idle');
-
-  const scattering = field.scatter(bounds, 240);
-  fixture.scheduler.step(80);
-  fixture.scheduler.step(319);
-  assert.equal(field.getState().animating, true);
-  fixture.scheduler.step(320);
-  await scattering;
-  assert.equal(fixture.canvas.dataset.phase, 'idle');
-  field.destroy();
-});
-
-test('resize after settlement keeps the Canvas empty and does not restart frames', async () => {
-  const fixture = createFixture({ width: 320, height: 180, dpr: 1 });
-  const field = createField(fixture, 'compact');
-  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 });
-  await runToIdle(fixture, gathering, { step: 50 });
-  assert.equal(fixture.context.hasPixels, false);
-  assert.equal(fixture.scheduler.pendingCount, 0);
-
-  fixture.setSize(160, 90);
-  const writesBefore = fixture.backingWrites.length;
-  field.resize();
-  assert.equal(fixture.backingWrites.length, writesBefore + 2);
-  assert.equal(fixture.context.hasPixels, false);
-  assert.equal(fixture.scheduler.pendingCount, 0);
-  assert.equal(field.getState().particleCount, 0);
-  field.destroy();
-});
-
-test('reduce, clear, render failure, profile replacement, and destroy erase and settle work', async () => {
-  const cases = [
-    ['clear', (field) => field.clear()],
-    ['reduce', (field) => field.setProfile('reduce')],
-    ['replacement', (field) => field.setProfile('full')],
-    ['destroy', (field) => field.destroy()]
-  ];
-
-  for (const [label, cancel] of cases) {
-    for (const phase of ['gather', 'scatter']) {
-      const fixture = createFixture();
-      const field = createField(fixture, 'compact');
-      const pending = field[phase]({ left: 60, top: 50, width: 100, height: 80 });
-      fixture.scheduler.step(0);
-      cancel(field);
-      await pending;
-      assert.equal(fixture.scheduler.pendingCount, 0);
-      assert.equal(fixture.canvas.dataset.phase, 'idle');
-      assert.equal(field.getState().animating, false);
-      assert.equal(field.getState().particleCount, 0);
-      assertTerminalClear(fixture.context.calls, `${label} pending ${phase}`);
-      if (!field.getState().destroyed) field.destroy();
-    }
-  }
-
-  for (const phase of ['gather', 'scatter']) {
-    const failureFixture = createFixture();
-    const originalDrawImage = failureFixture.context.drawImage;
-    failureFixture.context.drawImage = (...args) => {
-      originalDrawImage(...args);
-      throw new Error('render failed');
-    };
-    const failureField = createField(failureFixture, 'compact');
-    const failed = failureField[phase]({ left: 60, top: 50, width: 100, height: 80 });
-    assert.doesNotThrow(() => failureFixture.scheduler.step(0));
-    await failed;
-    assert.equal(failureFixture.scheduler.pendingCount, 0);
-    assert.equal(failureFixture.canvas.dataset.phase, 'idle');
-    assert.equal(failureField.getState().animating, false);
-    assertTerminalClear(failureFixture.context.calls, `render failure pending ${phase}`);
-    failureField.destroy();
-  }
-});
-
-test('a copied stale frame cannot mutate or duplicate a replacement command frame', async () => {
-  const fixture = createFixture();
-  const field = createField(fixture, 'compact');
-  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 });
-  const [staleFrame] = fixture.scheduler.takeCallbacks();
-  assert.equal(typeof staleFrame, 'function');
-
-  const scattering = field.scatter({ left: 60, top: 50, width: 100, height: 80 });
-  await gathering;
   assert.equal(fixture.scheduler.pendingCount, 1);
 
-  staleFrame(500);
-  assert.equal(fixture.scheduler.pendingCount, 1, 'stale callback must leave the valid frame untouched');
-  assert.equal(fixture.canvas.dataset.frameCount, '0');
-  assert.equal(fixture.canvas.dataset.phase, 'scatter');
-
+  await runToIdle(fixture, gathering, { start: 30, step: 30 });
+  assert.equal(field.getState().particleCount, 0);
+  assert.equal(fixture.canvas.dataset.phase, 'idle');
+  assert.equal(fixture.context.hasPixels, false);
+  assertTerminalClear(fixture.context.calls, 'settled burst');
   field.destroy();
-  await scattering;
-  assert.equal(fixture.scheduler.pendingCount, 0);
 });
 
-test('each animated command refreshes CSS size and DPR before seeding particles', async () => {
-  const fixture = createFixture({ width: 200, height: 100, dpr: 1 });
-  const field = createField(fixture, 'full');
-  assert.equal(fixture.canvas.width, 200);
-  assert.equal(field.getState().dpr, 1);
-
-  fixture.canvas.getBoundingClientRect = () => ({
-    x: 30,
-    y: 40,
-    left: 30,
-    top: 40,
-    right: 153.4,
-    bottom: 107.6,
-    width: 123.4,
-    height: 67.6
-  });
-  Object.defineProperty(fixture.dom.window, 'devicePixelRatio', {
-    configurable: true,
-    value: 3
+test('trajectory options keep slit particles and poster-edge trail particles in one simulation', async () => {
+  const fixture = createFixture();
+  const field = createField(fixture, 'compact', () => 0.5);
+  const bounds = { left: 60, top: 130, right: 160, bottom: 130 };
+  const scattering = field.scatter(bounds, 160, {
+    trajectory: {
+      distance: 60,
+      duration: 160,
+      easing: { sample: (progress) => progress, derivative: () => 1 },
+      side: 'bottom'
+    }
   });
 
-  const gathering = field.gather({ left: 50, top: 50, width: 80, height: 40 });
-  assert.equal(fixture.canvas.width, 123);
-  assert.equal(fixture.canvas.height, 68);
-  assert.equal(field.getState().dpr, 1);
-  assert.equal(field.getState().particleCount, 260);
+  assert.equal(field.getState().particleCount, 126);
+  fixture.scheduler.step(0);
+  const firstPoints = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+  assert.equal(firstPoints.filter(([, y]) => Math.abs(y - 110) < 1.31).length, 116);
+  assert.equal(firstPoints.filter(([, y]) => Math.abs(y - 50) < 0.01).length, 10);
 
+  fixture.scheduler.step(24);
+  const movingPoints = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+  assert.ok(
+    movingPoints.some(([, y]) => y > 50.5 && y < 80),
+    'bottom-exit trail inherits the poster downward velocity'
+  );
+  assert.ok(
+    movingPoints.some(([, y]) => y < 109),
+    'bottom slit particles simultaneously stream inward from the seam'
+  );
+  assert.ok(field.getState().particleCount <= 180);
+
+  await runToIdle(fixture, scattering, { start: 48, step: 24 });
   field.destroy();
-  await gathering;
 });
 
-test('visibility loss settles immediately and visibility restoration does not restart RAF', async () => {
+test('caller easing derivative changes inherited trajectory speed without changing its direction', async () => {
+  const sampleTrailY = (derivative) => {
+    const fixture = createFixture();
+    const field = createField(fixture, 'compact', () => 0.5);
+    const pending = field.scatter(
+      { left: 60, top: 130, right: 160, bottom: 130 },
+      200,
+      {
+        trajectory: {
+          distance: 80,
+          duration: 200,
+          side: 'bottom',
+          easing: { sample: (progress) => progress, derivative: () => derivative }
+        }
+      }
+    );
+    fixture.scheduler.step(0);
+    fixture.scheduler.step(20);
+    const points = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+    const trail = points.filter(([, y]) => y < 80);
+    const averageY = trail.reduce((sum, [, y]) => sum + y, 0) / trail.length;
+    field.finish();
+    return { averageY, pending };
+  };
+
+  const slow = sampleTrailY(0.35);
+  const fast = sampleTrailY(2);
+  await Promise.all([slow.pending, fast.pending]);
+  assert.ok(Number.isFinite(slow.averageY));
+  assert.ok(Number.isFinite(fast.averageY));
+  assert.ok(fast.averageY > slow.averageY, 'larger easing velocity produces a faster inherited wake');
+});
+
+test('gather, scatter, and hold coexist without clearing and share exactly one RAF under the cap', async () => {
+  const fixture = createFixture();
+  const field = createField(fixture, 'compact', () => 0.5);
+  const bounds = { left: 30, top: 50, right: 90, bottom: 50 };
+  let gathered = false;
+  const gathering = field.gather(bounds, 200, {
+    trajectory: { distance: 70, duration: 200, easing: 'linear', side: 'top' }
+  }).then(() => { gathered = true; });
+  fixture.scheduler.step(0);
+  assert.equal(fixture.context.hasPixels, false, 'birth frame is transparent');
+  fixture.scheduler.step(20);
+  assert.equal(fixture.context.hasPixels, true);
+  const clearCountBeforeOverlap = fixture.context.calls.filter(([name]) => name === 'clearRect').length;
+
+  const scattering = field.scatter(
+    { left: 130, top: 130, right: 190, bottom: 130 },
+    200,
+    { trajectory: { distance: 70, duration: 200, easing: 'linear', side: 'bottom' } }
+  );
+  const holding = field.hold({ left: 230, top: 50, width: 60, height: 70 }, 200);
+
+  assert.equal(gathered, false, 'starting a new emitter must not settle the first one');
+  assert.equal(fixture.canvas.dataset.emitterCount, '3');
+  assert.equal(fixture.canvas.dataset.phase, 'mixed');
+  assert.equal(fixture.canvas.dataset.portalSide, 'mixed');
+  assert.equal(fixture.scheduler.pendingCount, 1, 'all emitters share one scheduled frame');
+  assert.equal(
+    fixture.context.calls.filter(([name]) => name === 'clearRect').length,
+    clearCountBeforeOverlap,
+    'adding emitters does not clear the previous composited frame'
+  );
+  assert.equal(field.getState().particleCount, 180);
+
+  fixture.scheduler.step(40);
+  const overlappingPoints = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+  assert.ok(overlappingPoints.some(([x]) => x >= 10 && x <= 100), 'gather keeps a live owner quota');
+  assert.ok(overlappingPoints.some(([x]) => x >= 110 && x <= 200), 'scatter receives a live owner quota');
+  assert.ok(overlappingPoints.some(([x]) => x >= 210 && x <= 310), 'hold receives visible particles');
+
+  await runToIdle(fixture, [gathering, scattering, holding], { start: 65, step: 25 });
+  assert.equal(fixture.canvas.dataset.emitterCount, '0');
+  assert.equal(field.getState().particleCount, 0);
+  field.destroy();
+});
+
+test('hold uses its dedicated 112/64 limits and keeps particles below the artwork', async () => {
+  for (const [profile, expected] of [['full', 112], ['compact', 64]]) {
+    const fixture = createFixture();
+    const field = createField(fixture, profile, () => 0.375);
+    const holding = field.hold({ left: 60, top: 50, width: 100, height: 70 }, 120);
+    assert.equal(field.getState().particleCount, expected);
+    fixture.scheduler.step(0);
+    fixture.scheduler.step(30);
+    const points = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+    assert.equal(points.length, expected);
+    assert.ok(points.every(([, y]) => y > 100), 'hold source remains below the poster bottom');
+    await runToIdle(fixture, holding, { start: 60, step: 30 });
+    field.destroy();
+  }
+});
+
+test('pool capacity remains bounded across repeated overlapping emitters', async () => {
+  for (const [profile, limit] of [['full', 320], ['compact', 180]]) {
+    const fixture = createFixture();
+    const field = createField(fixture, profile, () => 0.5);
+    const pending = [];
+    for (let index = 0; index < 8; index += 1) {
+      pending.push(field[index % 2 === 0 ? 'gather' : 'scatter'](
+        { left: 50 + index, top: 70, right: 150 + index, bottom: 70 },
+        180,
+        {
+          trajectory: {
+            distance: 50,
+            duration: 180,
+            easing: 'linear',
+            side: index % 2 === 0 ? 'top' : 'bottom'
+          }
+        }
+      ));
+      assert.ok(field.getState().particleCount <= limit);
+      assert.equal(fixture.scheduler.pendingCount, 1);
+    }
+    fixture.scheduler.step(0);
+    for (let timestamp = 20; timestamp <= 180; timestamp += 20) {
+      fixture.scheduler.step(timestamp);
+      assert.ok(field.getState().particleCount <= limit);
+    }
+    await runToIdle(fixture, pending, { start: 200, step: 25 });
+    field.destroy();
+  }
+});
+
+test('particle frames reuse sprites and seeded random state when no trajectory emitter is active', async () => {
+  let randomCalls = 0;
+  const fixture = createFixture();
+  const field = createLightParticleField({
+    canvas: fixture.canvas,
+    documentRef: fixture.document,
+    windowRef: fixture.dom.window,
+    profile: 'compact',
+    random: () => {
+      randomCalls += 1;
+      return 0.375;
+    },
+    requestFrame: fixture.scheduler.requestFrame,
+    cancelFrame: fixture.scheduler.cancelFrame
+  });
+  const pending = field.gather({ left: 60, top: 50, width: 100, height: 0 }, 100);
+  const callsAfterSeed = randomCalls;
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(30);
+  fixture.scheduler.step(60);
+  assert.equal(randomCalls, callsAfterSeed);
+  assert.equal(fixture.spriteContexts.length, 2);
+  await runToIdle(fixture, pending, { start: 90, step: 30 });
+  field.setProfile('full');
+  assert.equal(fixture.spriteContexts.length, 2, 'profile changes reuse the cached glow sprites');
+  field.destroy();
+});
+
+test('resize rescales and redraws an active pool without scheduling another RAF', async () => {
+  const fixture = createFixture({ width: 320, height: 180, dpr: 3 });
+  const field = createField(fixture, 'compact');
+  const pending = field.gather({ left: 60, top: 50, width: 100, height: 0 }, 140);
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(30);
+  const framesBefore = renderedFrames(fixture.context.calls).length;
+  const pendingFrames = fixture.scheduler.pendingCount;
+  fixture.setSize(160, 90);
+  field.resize();
+
+  assert.equal(fixture.canvas.width, 160);
+  assert.equal(fixture.canvas.height, 90);
+  assert.equal(fixture.scheduler.pendingCount, pendingFrames);
+  assert.equal(renderedFrames(fixture.context.calls).length, framesBefore + 1);
+  const points = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+  assert.ok(points.every(([x, y]) => x >= 0 && x <= 160 && y >= 0 && y <= 90));
+  field.finish();
+  await pending;
+  field.destroy();
+});
+
+test('explicit command durations resolve independently while particle tails continue on the shared RAF', async () => {
+  const fixture = createFixture();
+  const field = createField(fixture, 'compact', () => 0.5);
+  let resolved = false;
+  const pending = field.gather(
+    { left: 60, top: 50, width: 100, height: 0 },
+    80,
+    { trajectory: { distance: 70, duration: 180, easing: 'linear', side: 'top' } }
+  ).then(() => { resolved = true; });
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(79);
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  fixture.scheduler.step(80);
+  await Promise.resolve();
+  assert.equal(resolved, true);
+  assert.equal(fixture.canvas.dataset.phase, 'gather');
+  assert.equal(fixture.canvas.dataset.emitterCount, '1');
+  const midTrajectory = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+  assert.ok(midTrajectory.some(([, y]) => y > 45 && y < 80));
+  assert.ok(midTrajectory.every(([, y]) => y < 92), '180ms trajectory must not finish at 80ms');
+  assert.equal(fixture.scheduler.pendingCount, 1);
+  await runToIdle(fixture, pending, { start: 105, step: 25 });
+  field.destroy();
+});
+
+test('visibility loss clears emitters, RAF, Canvas, and pool without restarting on restore', async () => {
   const fixture = createFixture();
   const field = createField(fixture, 'compact');
-  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 80 });
-
+  const gathering = field.gather(
+    { left: 60, top: 50, width: 100, height: 0 },
+    200,
+    { trajectory: { distance: 60, duration: 200, easing: 'linear', side: 'top' } }
+  );
+  const holding = field.hold({ left: 60, top: 50, width: 100, height: 70 }, 200);
   fixture.scheduler.step(0);
-  fixture.scheduler.step(40);
-  const frameCountAtHide = Number(fixture.canvas.dataset.frameCount);
+  fixture.scheduler.step(30);
   fixture.setHidden(true);
-  await gathering;
+  await Promise.all([gathering, holding]);
+  const framesAtHide = Number(fixture.canvas.dataset.frameCount);
+
   assert.equal(fixture.scheduler.pendingCount, 0);
   assert.equal(fixture.canvas.dataset.phase, 'idle');
+  assert.equal(fixture.canvas.dataset.emitterCount, '0');
   assert.equal(field.getState().particleCount, 0);
   assert.equal(fixture.context.hasPixels, false);
-
-  fixture.setHidden(false);
   fixture.setHidden(false);
   assert.equal(fixture.scheduler.pendingCount, 0);
-  assert.equal(Number(fixture.canvas.dataset.frameCount), frameCountAtHide);
-
-  fixture.setHidden(true);
-  await field.scatter({ left: 60, top: 50, width: 100, height: 80 });
-  assert.equal(fixture.scheduler.pendingCount, 0);
-  assert.equal(fixture.canvas.dataset.phase, 'idle');
+  assert.equal(Number(fixture.canvas.dataset.frameCount), framesAtHide);
   field.destroy();
 });
 
-test('reduce schedules no frames and clear erases the complete backing store', async () => {
-  const fixture = createFixture({ width: 101, height: 51, dpr: 3 });
-  const field = createField(fixture, 'reduce');
+test('fixed substeps keep particle displacement coherent across a 160ms dropped frame', async () => {
+  const smoothFixture = createFixture();
+  const stalledFixture = createFixture();
+  const smoothField = createField(smoothFixture, 'compact', () => 0.5);
+  const stalledField = createField(stalledFixture, 'compact', () => 0.5);
+  const bounds = { left: 60, top: 50, width: 100, height: 0 };
+  const smoothPending = smoothField.gather(bounds, 400);
+  const stalledPending = stalledField.gather(bounds, 400);
 
-  await field.gather({ left: 0, top: 0, right: 10, bottom: 10 });
-  await field.scatter({ left: 0, top: 0, right: 10, bottom: 10 });
-  assert.equal(field.getState().particleCount, 0);
-  assert.equal(fixture.scheduler.pendingCount, 0);
+  smoothFixture.scheduler.step(0);
+  stalledFixture.scheduler.step(0);
+  for (const timestamp of [32, 64, 96, 128, 160]) smoothFixture.scheduler.step(timestamp);
+  stalledFixture.scheduler.step(160);
 
-  field.clear();
-  assert.ok(fixture.context.calls.some((call) => (
-    call[0] === 'clearRect' && call[1] === 0 && call[2] === 0 && call[3] === 101 && call[4] === 51
+  const smoothPoint = pointCenters(renderedFrames(smoothFixture.context.calls).at(-1))[0];
+  const stalledPoint = pointCenters(renderedFrames(stalledFixture.context.calls).at(-1))[0];
+  assert.ok(Math.abs(smoothPoint[0] - stalledPoint[0]) < 0.001);
+  assert.ok(Math.abs(smoothPoint[1] - stalledPoint[1]) < 0.001);
+  assert.equal(smoothFixture.canvas.dataset.frameCount, '0', 'frame diagnostics are not written in RAF');
+  assert.equal(stalledFixture.canvas.dataset.frameCount, '0', 'dropped frame does not force DOM writes');
+
+  smoothField.finish();
+  stalledField.finish();
+  await Promise.all([smoothPending, stalledPending]);
+  assert.ok(Number(smoothFixture.canvas.dataset.frameCount) > 0);
+  assert.ok(Number(stalledFixture.canvas.dataset.frameCount) > 0);
+  smoothField.destroy();
+  stalledField.destroy();
+});
+
+test('reduce, finish, clear, profile replacement, and render failures settle and erase all work', async () => {
+  const reducedFixture = createFixture({ width: 101, height: 51, dpr: 4 });
+  const reduced = createField(reducedFixture, 'reduce');
+  await reduced.gather({ left: 0, top: 0, right: 10, bottom: 10 });
+  await reduced.scatter({ left: 0, top: 0, right: 10, bottom: 10 });
+  await reduced.hold({ left: 0, top: 0, right: 10, bottom: 10 });
+  assert.equal(reducedFixture.scheduler.pendingCount, 0);
+  assert.equal(reduced.getState().particleCount, 0);
+  reduced.clear();
+  assert.ok(reducedFixture.context.calls.some(([name, x, y, width, height]) => (
+    name === 'clearRect' && x === 0 && y === 0 && width === 101 && height === 51
   )));
-  field.destroy();
+  reduced.destroy();
+
+  for (const [label, settle] of [
+    ['finish', (field) => field.finish()],
+    ['clear', (field) => field.clear()],
+    ['profile replacement', (field) => field.setProfile('full')]
+  ]) {
+    const fixture = createFixture();
+    const field = createField(fixture, 'compact');
+    const gathering = field.gather({ left: 60, top: 50, width: 100, height: 0 }, 200);
+    const holding = field.hold({ left: 60, top: 50, width: 100, height: 70 }, 200);
+    fixture.scheduler.step(0);
+    settle(field);
+    await Promise.all([gathering, holding]);
+    assert.equal(fixture.scheduler.pendingCount, 0);
+    assert.equal(field.getState().particleCount, 0);
+    assert.equal(field.getState().animating, false);
+    assertTerminalClear(fixture.context.calls, label);
+    field.destroy();
+  }
+
+  const failureFixture = createFixture();
+  const originalDrawImage = failureFixture.context.drawImage;
+  failureFixture.context.drawImage = (...args) => {
+    originalDrawImage(...args);
+    throw new Error('render failed');
+  };
+  const failedField = createField(failureFixture, 'compact');
+  const failed = failedField.gather({ left: 60, top: 50, width: 100, height: 0 }, 100);
+  assert.doesNotThrow(() => failureFixture.scheduler.step(0));
+  await failed;
+  assert.equal(failureFixture.scheduler.pendingCount, 0);
+  assert.equal(failedField.getState().particleCount, 0);
+  assertTerminalClear(failureFixture.context.calls, 'render failure');
+  failedField.destroy();
 });
 
-test('finish, clear, and destroy settle promises and release Canvas backing stores', async () => {
+test('a stale canceled callback cannot mutate a replacement simulation', async () => {
+  const fixture = createFixture();
+  const field = createField(fixture, 'compact');
+  const gathering = field.gather({ left: 60, top: 50, width: 100, height: 0 }, 200);
+  const [staleFrame] = fixture.scheduler.takeCallbacks();
+  field.finish();
+  await gathering;
+  const scattering = field.scatter({ left: 60, top: 130, width: 100, height: 0 }, 200);
+  assert.equal(fixture.scheduler.pendingCount, 1);
+  staleFrame(500);
+  assert.equal(fixture.scheduler.pendingCount, 1);
+  assert.equal(fixture.canvas.dataset.frameCount, '0');
+  assert.equal(fixture.canvas.dataset.phase, 'scatter');
+  field.destroy();
+  await scattering;
+});
+
+test('destroy settles promises and releases Canvas and sprite backing stores', async () => {
   const fixture = createFixture({ width: 200, height: 100, dpr: 3 });
   const field = createField(fixture, 'full');
-  field.setProfile('compact');
-  assert.equal(fixture.canvas.width, 200);
-  assert.equal(fixture.canvas.height, 100);
-
-  const finished = field.gather({ left: 20, top: 30, width: 40, height: 50 });
-  field.finish();
-  await finished;
-  const cleared = field.scatter({ left: 20, top: 30, width: 40, height: 50 });
-  field.clear();
-  await cleared;
-  const destroyed = field.gather({ left: 20, top: 30, width: 40, height: 50 });
+  const gathering = field.gather({ left: 20, top: 30, width: 40, height: 0 });
+  const holding = field.hold({ left: 20, top: 30, width: 40, height: 50 });
   field.destroy();
-  await destroyed;
+  await Promise.all([gathering, holding]);
   assert.equal(fixture.scheduler.pendingCount, 0);
-  field.destroy();
-
   assert.equal(fixture.canvas.width, 0);
   assert.equal(fixture.canvas.height, 0);
   assert.ok(fixture.spriteCanvases.every((sprite) => sprite.width === 0 && sprite.height === 0));
   assert.deepEqual(field.getState(), {
-    profile: 'compact', particleCount: 0, dpr: 1, animating: false, destroyed: true
+    profile: 'full', particleCount: 0, dpr: 1, animating: false, destroyed: true
   });
+  field.destroy();
 });
 
 test('rejects unknown profiles and missing 2D contexts', () => {
