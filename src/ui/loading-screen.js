@@ -2,6 +2,12 @@ import { CriticalAssetError } from '../media/asset-loader.js';
 import { createLightParticleField } from './light-particle-field.js';
 import { POSTER_TIMING, createPosterTransition } from './poster-transition.js';
 
+export const OPENING_TITLE_TIMING = Object.freeze({
+  full: Object.freeze({ establish: 760, sweep: 460, skipDelay: 90 }),
+  compact: Object.freeze({ establish: 500, sweep: 320, skipDelay: 90 }),
+  reduce: Object.freeze({ establish: 120, sweep: 0, skipDelay: 0 })
+});
+
 const twoDigits = (value) => String(value).padStart(2, '0');
 
 const VISUAL_SLOT_CLASSES = Object.freeze([
@@ -84,7 +90,7 @@ const waitForTransition = (element, {
   signal?.addEventListener('abort', handleAbort, { once: true });
 });
 
-const waitForSlitOpacityZero = (root, slit, {
+const waitForPortalOpacityZero = (root, portal, {
   profile,
   windowRef,
   signal,
@@ -94,12 +100,12 @@ const waitForSlitOpacityZero = (root, slit, {
   let settled = false;
   let timer;
   const opacityIsZero = () => {
-    const style = windowRef?.getComputedStyle?.(slit);
-    return (Number.parseFloat(style?.opacity ?? slit.style?.opacity) || 0) <= 0.001;
+    const style = windowRef?.getComputedStyle?.(portal);
+    return (Number.parseFloat(style?.opacity ?? portal.style?.opacity) || 0) <= 0.001;
   };
   const cleanup = () => {
     clearTimer(timer);
-    slit.removeEventListener('animationend', handleAnimationEnd);
+    portal.removeEventListener('animationend', handleAnimationEnd);
     signal?.removeEventListener('abort', handleAbort);
   };
   const finish = (completed) => {
@@ -117,7 +123,7 @@ const waitForSlitOpacityZero = (root, slit, {
   };
   const handleAnimationEnd = (event) => {
     if (
-      event.target !== slit
+      event.target !== portal
       || event.animationName !== 'loading-final-tunnel'
     ) return;
     finish(true);
@@ -128,7 +134,7 @@ const waitForSlitOpacityZero = (root, slit, {
     finish(false);
     return;
   }
-  slit.addEventListener('animationend', handleAnimationEnd);
+  portal.addEventListener('animationend', handleAnimationEnd);
   signal?.addEventListener('abort', handleAbort, { once: true });
   if (opacityIsZero() && !root.classList.contains('is-final-resolving')) {
     finish(true);
@@ -139,8 +145,8 @@ const waitForSlitOpacityZero = (root, slit, {
   const finalTail = timing.finalResolve - timing.exitLead;
   timer = setTimer(() => {
     if (signal?.aborted) return;
-    slit.style.animation = 'none';
-    slit.style.opacity = '0';
+    portal.style.animation = 'none';
+    portal.style.opacity = '0';
     finish(true);
   }, finalTail + 80);
 });
@@ -149,6 +155,7 @@ export function createLoadingScreen(documentRef = document, {
   motionProfile = 'compact',
   particleFactory = createLightParticleField,
   transitionFactory = createPosterTransition,
+  openingTitle = true,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   onSkip = () => {}
@@ -159,7 +166,8 @@ export function createLoadingScreen(documentRef = document, {
   const retry = documentRef.querySelector('#loadingRetry');
   const skip = documentRef.querySelector('#loadingSkip');
   const canvas = documentRef.querySelector('#loadingParticles');
-  const slit = documentRef.querySelector('#loadingLightSlit');
+  const topPortal = documentRef.querySelector('#loadingTopPortal, #loadingLightSlit');
+  const bottomPortal = documentRef.querySelector('#loadingLightSlit, #loadingBottomPortal') ?? topPortal;
   const requiredNodes = {
     loadingScreen: root,
     loadingProgress: progress,
@@ -167,7 +175,8 @@ export function createLoadingScreen(documentRef = document, {
     loadingRetry: retry,
     loadingSkip: skip,
     loadingParticles: canvas,
-    loadingLightSlit: slit
+    loadingTopPortal: topPortal,
+    loadingBottomPortal: bottomPortal
   };
   const missingNodes = Object.entries(requiredNodes)
     .filter(([, node]) => !node)
@@ -367,7 +376,7 @@ export function createLoadingScreen(documentRef = document, {
   }
   const transition = transitionFactory({
     root,
-    slit,
+    portals: { top: topPortal, bottom: bottomPortal },
     particleField,
     profile: motionProfile,
     onFinalScene({ image, profile }) {
@@ -388,10 +397,65 @@ export function createLoadingScreen(documentRef = document, {
   let skipRequested = false;
   let nextVisualSlotIndex = 0;
   const admittedSlots = new Set();
+  let openingGeneration = 0;
+  let openingTimer = null;
+  let openingSettled = true;
+  let resolveOpening = () => {};
+  let openingReady = Promise.resolve();
+
+  const cancelOpeningTitle = () => {
+    openingGeneration += 1;
+    if (openingTimer !== null) clearTimer(openingTimer);
+    openingTimer = null;
+  };
+
+  const beginOpeningTitle = (profile = currentMotionProfile) => {
+    cancelOpeningTitle();
+    openingSettled = false;
+    openingReady = new Promise((resolve) => { resolveOpening = resolve; });
+    if (!openingTitle) {
+      openingSettled = true;
+      root.dataset.openingState = 'settled';
+      resolveOpening();
+      skip.hidden = false;
+      skip.disabled = false;
+      return;
+    }
+    const timing = OPENING_TITLE_TIMING[profile] ?? OPENING_TITLE_TIMING.compact;
+    const generation = openingGeneration;
+    skip.hidden = true;
+    skip.disabled = true;
+    root.dataset.openingState = 'opening';
+    root.classList.remove('is-opening-title', 'is-opening-settled');
+    // Restarting the class is intentional when motion preference changes mid-intro.
+    void root.offsetWidth;
+    root.classList.add('is-opening-title');
+    openingTimer = setTimer(() => {
+      if (destroyed || generation !== openingGeneration || root.dataset.state === 'error') return;
+      openingTimer = null;
+      openingSettled = true;
+      root.dataset.openingState = 'settled';
+      root.classList.remove('is-opening-title');
+      root.classList.add('is-opening-settled');
+      resolveOpening();
+      enqueueReadyVisuals();
+      if (!skipRequested) {
+        const revealSkip = () => {
+          if (destroyed || generation !== openingGeneration || skipRequested) return;
+          skip.hidden = false;
+          skip.disabled = false;
+        };
+        if (timing.skipDelay > 0) setTimer(revealSkip, timing.skipDelay);
+        else revealSkip();
+      }
+    }, timing.establish);
+  };
 
   const applyMotionProfile = (nextProfile) => {
+    const profileChanged = nextProfile !== currentMotionProfile;
     transition.setProfile(nextProfile);
     currentMotionProfile = nextProfile;
+    if (profileChanged && !openingSettled) beginOpeningTitle(nextProfile);
     if (nextProfile === 'reduce') {
       clearFinalHandoff();
       if (skipRequested) {
@@ -406,8 +470,10 @@ export function createLoadingScreen(documentRef = document, {
     exitController = null;
     root.classList.remove('is-exiting');
     if (!clearFallback) return;
-    slit.style.removeProperty('animation');
-    slit.style.removeProperty('opacity');
+    for (const portal of [topPortal, bottomPortal]) {
+      portal.style.removeProperty('animation');
+      portal.style.removeProperty('opacity');
+    }
   };
 
   const destroyControllers = () => {
@@ -489,6 +555,7 @@ export function createLoadingScreen(documentRef = document, {
   };
 
   const enqueueReadyVisuals = () => {
+    if (!openingSettled) return;
     if (skipRequested) {
       if (finalSlot.querySelector('img')) enqueueVisual(finalSlot);
       return;
@@ -557,7 +624,7 @@ export function createLoadingScreen(documentRef = document, {
       retry.hidden = true;
       retry.onclick = null;
       skip.hidden = false;
-      skip.disabled = false;
+      skip.disabled = true;
       skip.onclick = requestSkip;
       copy.textContent = LOADING_COPY;
       progress.textContent = `00 / ${twoDigits(totalSlots)}`;
@@ -576,6 +643,7 @@ export function createLoadingScreen(documentRef = document, {
         slot.querySelector('img')?.remove();
       }
       connectResizeObserver();
+      beginOpeningTitle(currentMotionProfile);
     },
     setProgress({ id, status, completed, total, result }) {
       if (destroyed) return;
@@ -602,6 +670,7 @@ export function createLoadingScreen(documentRef = document, {
     },
     showError(error, onRetry) {
       if (destroyed) return;
+      cancelOpeningTitle();
       cancelExit({ clearFallback: true });
       disconnectResizeObserver();
       transition.freeze();
@@ -647,6 +716,9 @@ export function createLoadingScreen(documentRef = document, {
       copy.textContent = LOADING_COPY;
       try {
         applyMotionProfile(profile ?? currentMotionProfile);
+        await openingReady;
+        if (destroyed) return;
+        enqueueReadyVisuals();
         let completedRevision;
         do {
           completedRevision = transitionRevision;
@@ -693,7 +765,7 @@ export function createLoadingScreen(documentRef = document, {
             setTimer,
             clearTimer
           }),
-          waitForSlitOpacityZero(root, slit, {
+          waitForPortalOpacityZero(root, bottomPortal, {
             profile,
             windowRef,
             signal: controller.signal,
@@ -722,6 +794,7 @@ export function createLoadingScreen(documentRef = document, {
       retry.onclick = null;
       skip.onclick = null;
       cancelExit({ clearFallback: true });
+      cancelOpeningTitle();
       disconnectResizeObserver();
       clearFinalHandoff();
       root.remove();

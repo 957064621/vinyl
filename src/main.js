@@ -2254,8 +2254,7 @@ const criticalAssetGate = startCriticalAssetGate({
         };
 
         const syncMotionPreference = () => {
-            if (!reducedMotionQuery) return;
-            prefersReducedMotion = reducedMotionQuery.matches;
+            prefersReducedMotion = Boolean(reducedMotionQuery?.matches);
             if (prefersReducedMotion) hidePointerLight();
             const nextProfile = detectMotionProfile();
             document.documentElement.dataset.motionProfile = nextProfile;
@@ -2272,6 +2271,7 @@ const criticalAssetGate = startCriticalAssetGate({
         } else {
             reducedMotionQuery?.addListener?.(syncMotionPreference);
         }
+        window.addEventListener('resize', syncMotionPreference, { passive: true });
 
         const runMotionCommand = async (command) => {
             try {

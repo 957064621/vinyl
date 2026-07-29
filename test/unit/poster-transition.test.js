@@ -1266,6 +1266,43 @@ test('freeze aborts queued work but keeps the current poster active and stable',
   assert.equal(controller.enqueue(slots[2]), false);
 });
 
+test('assigns activation to the fixed portal for the requested side', async () => {
+  const scheduler = makeManualScheduler();
+  const dom = new JSDOM(`
+    <div id="root">
+      <div id="top"></div><div id="bottom"></div>
+      <figure data-loading-slot="archive-01"><img alt="one"></figure>
+    </div>
+  `);
+  const root = dom.window.document.getElementById('root');
+  const top = dom.window.document.getElementById('top');
+  const bottom = dom.window.document.getElementById('bottom');
+  const slot = root.querySelector('[data-loading-slot]');
+  Object.defineProperties(slot.querySelector('img'), {
+    naturalWidth: { configurable: true, value: 300 },
+    naturalHeight: { configurable: true, value: 400 }
+  });
+  slot.getBoundingClientRect = () => ({ left: 0, top: 0, right: 180, bottom: 240, width: 180, height: 240 });
+  root.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 400, width: 600, height: 400 });
+  top.parentElement.getBoundingClientRect = root.getBoundingClientRect;
+  const particleField = { gather() {}, scatter() {}, finish() {}, setProfile() {} };
+  const controller = createPosterTransition({
+    root,
+    portals: { top, bottom },
+    particleField,
+    scheduler
+  });
+
+  controller.enqueue(slot);
+  await flush();
+  assert.equal(top.classList.contains('is-lit'), true);
+  assert.equal(bottom.classList.contains('is-lit'), false);
+  assert.equal(top.dataset.portalPhase, 'enter');
+  assert.equal(top.style.getPropertyValue('--portal-y'), '12.00px');
+  assert.equal(bottom.style.getPropertyValue('--portal-y'), '232.00px');
+  controller.freeze();
+});
+
 test('reset can discard queued work while preserving the active poster for a new finish run', async () => {
   const scheduler = makeManualScheduler();
   const { controller, root, slots } = makeFixture({ scheduler });

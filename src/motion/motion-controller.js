@@ -13,12 +13,14 @@ const tokensForProfile = (profile) => {
 
 export function detectMotionProfile({
   matchMedia = globalThis.matchMedia,
-  userAgent = globalThis.navigator?.userAgent || ''
+  userAgent = globalThis.navigator?.userAgent || '',
+  viewportHeight = globalThis.innerHeight
 } = {}) {
   const matches = (query) => typeof matchMedia === 'function' && matchMedia(query).matches;
   if (matches('(prefers-reduced-motion: reduce)')) return 'reduce';
   if (matches('(hover: none) and (pointer: coarse)')) return 'compact';
   if (/Android|iPhone|iPad|iPod|MicroMessenger|Mobile/i.test(userAgent)) return 'compact';
+  if (Number.isFinite(viewportHeight) && viewportHeight <= 720) return 'compact';
   return 'full';
 }
 

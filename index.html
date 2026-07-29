@@ -81,7 +81,7 @@
                     <p class="loading-copy" id="loadingCopy">讯号接入中</p>
                     <button class="loading-retry" id="loadingRetry" type="button" hidden>重新载入</button>
                 </div>
-                <button class="loading-skip" id="loadingSkip" type="button">跳过</button>
+                <button class="loading-skip" id="loadingSkip" type="button" hidden>跳过</button>
             </div>
             <div class="loading-stage">
                 <div class="loading-poster-stack">
@@ -97,7 +97,12 @@
                     <figure class="loading-frame" data-loading-slot="archive-10"><figcaption aria-hidden="true">AR-10</figcaption></figure>
                 </div>
                 <canvas class="loading-particles" id="loadingParticles" aria-hidden="true"></canvas>
-                <div class="loading-light-slit" id="loadingLightSlit" aria-hidden="true">
+                <div class="loading-light-slit" id="loadingTopPortal" data-portal-side="top" aria-hidden="true">
+                    <span class="loading-light-edge is-warm"></span>
+                    <span class="loading-light-core"></span>
+                    <span class="loading-light-edge is-cool"></span>
+                </div>
+                <div class="loading-light-slit" id="loadingBottomPortal" data-portal-side="bottom" aria-hidden="true">
                     <span class="loading-light-edge is-warm"></span>
                     <span class="loading-light-core"></span>
                     <span class="loading-light-edge is-cool"></span>

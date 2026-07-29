@@ -498,10 +498,10 @@ test('lamp portal separates Carbon stretch and luminance tracks around one bound
   const stretch = blockBody(archiveCss, '@keyframes loading-portal-stretch {');
   const luminance = blockBody(archiveCss, '@keyframes loading-portal-luminance {');
 
-  assert.match(gate, /height:\s*var\(--gate-height,\s*156px\)/);
+  assert.match(gate, /height:\s*var\(--portal-height,\s*156px\)/);
   assert.match(gate, /top:\s*var\(--portal-y,\s*50%\)/);
-  assert.match(gate, /left:\s*var\(--gate-x,\s*50%\)/);
-  assert.match(gate, /width:\s*var\(--gate-width,\s*min\(76vw,\s*560px\)\)/);
+  assert.match(gate, /left:\s*var\(--portal-x,\s*50%\)/);
+  assert.match(gate, /width:\s*var\(--portal-width,\s*min\(76vw,\s*560px\)\)/);
   assert.match(gate, /contain:\s*layout style/);
   assert.match(gate, /overflow:\s*visible/, 'the fixed blur halo must be allowed to bloom outside the gate box');
   assert.match(layers, /border-radius:\s*0/);
@@ -516,7 +516,7 @@ test('lamp portal separates Carbon stretch and luminance tracks around one bound
     /filter:[^;]*blur\(0\.2px\)[^;]*drop-shadow\(0 0 5px rgba\(255, 255, 255, 0\.86\)\)[^;]*drop-shadow\(0 0 14px rgba\(214, 235, 246, 0\.58\)\)/s,
     'the Lamp strip glow follows its tapered alpha instead of painting rectangular end caps'
   );
-  assert.match(coreHalo, /height:\s*calc\(var\(--gate-height, 156px\) \* 1\.85\)/);
+  assert.match(coreHalo, /height:\s*calc\(var\(--portal-height, 156px\) \* 1\.85\)/);
   assert.match(
     coreHalo,
     /mask-image:\s*linear-gradient\(\s*90deg,\s*transparent 0%,[\s\S]*rgba\(0, 0, 0, 0\.08\) 6%,[\s\S]*rgba\(0, 0, 0, 0\.76\) 28%,[\s\S]*#000 42%,[\s\S]*#000 58%,[\s\S]*transparent 100%\s*\)/,
@@ -534,7 +534,7 @@ test('lamp portal separates Carbon stretch and luminance tracks around one bound
   assert.doesNotMatch(`${core}\n${topHalo}\n${bottomHalo}`, /rgba\(0,\s*0,\s*0/, 'the portal must not paint a black core');
   assert.match(warm, /display:\s*none/);
   assert.match(cool, /display:\s*none/);
-  assert.match(archiveCss, /\.loading-screen\.is-portal-active \.loading-light-slit\.is-lit > span\s*\{[^}]*animation:\s*none/s);
+  assert.match(archiveCss, /\.loading-light-slit\.is-lit > span\s*\{[^}]*animation:\s*none/s);
   assert.equal(
     (archiveCss.match(
       /loading-portal-stretch var\(--portal-phase-ms, 760ms\) linear both,\s*loading-portal-luminance var\(--portal-phase-ms, 760ms\) linear both/g
@@ -627,12 +627,16 @@ test('posters travel vertically through geometric gates without edge transparenc
 test('portal geometry follows the fixed poster stage while preserving artwork gaps and hold particles', () => {
   const posterTransition = readSource(new URL('../../src/ui/poster-transition.js', import.meta.url));
 
-  assert.match(archiveCss, /--portal-y:\s*var\(--gate-y,\s*0px\)/);
+  assert.match(archiveCss, /top:\s*var\(--portal-y,\s*50%\)/);
   assert.match(posterTransition, /setProperty\('--gate-x'/);
   assert.match(posterTransition, /setProperty\('--gate-y'/);
   assert.match(posterTransition, /setProperty\('--gate-height'/);
   assert.match(posterTransition, /setProperty\('--gate-width'/);
   assert.match(posterTransition, /setProperty\('--portal-gap'/);
+  assert.match(posterTransition, /setProperty\('--portal-x'/);
+  assert.match(posterTransition, /setProperty\('--portal-y'/);
+  assert.match(posterTransition, /setProperty\('--portal-width'/);
+  assert.match(posterTransition, /setProperty\('--portal-height'/);
   assert.match(posterTransition, /particleBounds:\s*\{/);
   assert.match(
     css,
@@ -652,7 +656,7 @@ test('portal geometry follows the fixed poster stage while preserving artwork ga
   assert.match(posterTransition, /artWidth \* 1\.08/, 'the fixed horizontal gate includes an eight-percent breathing margin');
   assert.match(posterTransition, /const desiredGap = Math\.max\(20, Math\.min\(38, artHeight \* 0\.055\)\)/);
   assert.match(posterTransition, /const topY = Math\.max\(boundaryTop \+ 12, artTop - desiredGap\)/);
-  assert.match(posterTransition, /const bottomY = Math\.min\(boundaryBottom - 12, artBottom \+ desiredGap\)/);
+  assert.match(posterTransition, /const bottomY = Math\.min\(boundaryBottom - 168, artBottom \+ desiredGap\)/);
   assert.match(posterTransition, /const artworkCenterX = artLeft \+ \(artWidth \/ 2\)/);
   assert.match(posterTransition, /\? fixedPortalGeometry\.bottomY\s*:\s*fixedPortalGeometry\.topY/);
   assert.match(posterTransition, /\? Math\.max\(0, portalScreenY - artBottom\)\s*:\s*Math\.max\(0, artTop - portalScreenY\)/);

@@ -29,7 +29,8 @@ const createFixture = () => new JSDOM(`
         <figure class="loading-frame" data-loading-slot="archive-05"><figcaption aria-hidden="true">AR-05</figcaption></figure>
         </div>
         <canvas class="loading-particles" id="loadingParticles"></canvas>
-        <div class="loading-light-slit" id="loadingLightSlit"></div>
+        <div class="loading-light-slit" id="loadingTopPortal" data-portal-side="top"></div>
+        <div class="loading-light-slit" id="loadingLightSlit" data-portal-side="bottom"></div>
       </div>
     </div>
   </div>
@@ -94,6 +95,7 @@ const createInjectedView = (documentRef, options = {}) => {
     harness,
     view: createLoadingScreen(documentRef, {
       motionProfile: 'reduce',
+      openingTitle: false,
       ...viewOptions,
       ...harness.factories
     })
@@ -149,7 +151,8 @@ const createGateFixture = () => new JSDOM(`
     <div data-loading-slot="archive-04"></div>
     <div data-loading-slot="archive-05"></div>
     <canvas id="loadingParticles"></canvas>
-    <div id="loadingLightSlit"></div>
+    <div id="loadingTopPortal" data-portal-side="top"></div>
+    <div id="loadingLightSlit" data-portal-side="bottom"></div>
     <button id="loadingRetry" type="button" hidden>重新载入</button>
     <button id="loadingSkip" type="button">跳过</button>
     <p id="loadingCopy">讯号接入中</p>
@@ -171,7 +174,8 @@ test('visual factories receive the loading stage dependencies and motion profile
 
   const root = dom.window.document.getElementById('loadingScreen');
   const canvas = dom.window.document.getElementById('loadingParticles');
-  const slit = dom.window.document.getElementById('loadingLightSlit');
+  const topPortal = dom.window.document.getElementById('loadingTopPortal');
+  const bottomPortal = dom.window.document.getElementById('loadingLightSlit');
   const particleCall = harness.calls.find(([name]) => name === 'particleFactory');
   const transitionCall = harness.calls.find(([name]) => name === 'transitionFactory');
 
@@ -180,7 +184,8 @@ test('visual factories receive the loading stage dependencies and motion profile
   assert.strictEqual(particleCall[1].windowRef, dom.window);
   assert.equal(particleCall[1].profile, 'full');
   assert.strictEqual(transitionCall[1].root, root);
-  assert.strictEqual(transitionCall[1].slit, slit);
+  assert.strictEqual(transitionCall[1].portals.top, topPortal);
+  assert.strictEqual(transitionCall[1].portals.bottom, bottomPortal);
   assert.strictEqual(transitionCall[1].particleField, harness.particleField);
   assert.equal(transitionCall[1].profile, 'full');
   assert.equal(typeof transitionCall[1].onFinalScene, 'function');
@@ -356,6 +361,43 @@ test('loading screen validates required nodes and requires at least one slot', (
     () => createLoadingScreen(missingSlots.window.document, createControllerHarness().factories),
     /at least one loading slot/
   );
+});
+
+test('opening title establishes before the first poster can enter and reduced motion settles within 120ms', async () => {
+  const dom = createFixture();
+  const timers = createTimerHarness();
+  const { view, harness } = createInjectedView(dom.window.document, {
+    viewOptions: {
+      openingTitle: true,
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer
+    }
+  });
+  const document = dom.window.document;
+  const root = document.getElementById('loadingScreen');
+  const skip = document.getElementById('loadingSkip');
+  const image = document.createElement('img');
+  image.src = 'https://example.test/archive-01.jpg';
+
+  view.reset();
+  view.setProgress({
+    id: 'archive-01',
+    status: 'ready',
+    completed: 1,
+    total: 5,
+    result: { id: 'archive-01', image, alt: 'one' }
+  });
+  assert.equal(root.dataset.openingState, 'opening');
+  assert.equal(skip.hidden, true);
+  assert.equal(harness.calls.some(([name]) => name === 'transition.enqueue'), false);
+
+  await timers.advance(119);
+  assert.equal(harness.calls.some(([name]) => name === 'transition.enqueue'), false);
+  await timers.advance(1);
+  assert.equal(root.dataset.openingState, 'settled');
+  assert.equal(skip.hidden, false);
+  assert.equal(skip.disabled, false);
+  assert.equal(harness.calls.filter(([name]) => name === 'transition.enqueue').length, 1);
 });
 
 test('unavailable canvas context falls back to a finite no-op particle field only', async () => {
@@ -1359,7 +1401,8 @@ test('application markup starts as one inert root outside the loading screen', (
   assert.ok(slots.every((slot) => slot.querySelector('figcaption').getAttribute('aria-hidden') === 'true'));
   assert.doesNotMatch(loadingScreen.textContent, /LIGHT ARCHIVE|PROJECTION/);
   assert.equal(loadingScreen.querySelectorAll('canvas#loadingParticles').length, 1);
-  assert.equal(loadingScreen.querySelectorAll('div#loadingLightSlit').length, 1);
+  assert.equal(loadingScreen.querySelectorAll('div#loadingTopPortal').length, 1);
+  assert.equal(loadingScreen.querySelectorAll('div#loadingBottomPortal').length, 1);
   assert.equal(loadingScreen.querySelectorAll('button').length, 2);
   assert.equal(loadingScreen.querySelector('#loadingSkip').textContent.trim(), '跳过');
   assert.equal(loadingScreen.querySelectorAll('img').length, 0);

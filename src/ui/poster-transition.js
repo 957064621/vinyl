@@ -61,6 +61,7 @@ const hasMethods = (value, methods) => (
 
 export function createPosterTransition({
   root,
+  portals,
   slit,
   particleField,
   profile = 'compact',
@@ -72,8 +73,10 @@ export function createPosterTransition({
   if (!hasMethods(root, ['contains', 'querySelectorAll']) || !root.classList || !root.dataset) {
     throw new TypeError('Poster transition root is required');
   }
-  if (!slit?.classList || !slit.dataset) {
-    throw new TypeError('Poster transition slit is required');
+  const portalNodes = portals ?? { top: slit, bottom: slit };
+  if (!portalNodes?.top?.classList || !portalNodes.top.dataset
+    || !portalNodes?.bottom?.classList || !portalNodes.bottom.dataset) {
+    throw new TypeError('Poster transition top and bottom portals are required');
   }
   if (!hasMethods(particleField, ['gather', 'scatter', 'finish', 'setProfile'])) {
     throw new TypeError('Poster transition particle field is required');
@@ -114,6 +117,7 @@ export function createPosterTransition({
   const idleWaiters = new Set();
 
   const slots = () => [...root.querySelectorAll('[data-loading-slot]')];
+  const portalFor = (side) => portalNodes[side];
 
   const imageFor = (slot) => {
     try {
@@ -169,11 +173,14 @@ export function createPosterTransition({
 
   const clearPortalState = () => {
     root.classList.remove('is-scanning', 'is-portal-active');
-    slit.classList.remove('is-lit');
+    for (const portal of new Set(Object.values(portalNodes))) {
+      portal.classList.remove('is-lit');
+      delete portal.dataset.portalPhase;
+      delete portal.dataset.motionProfile;
+      delete portal.dataset.direction;
+    }
     delete root.dataset.portalSide;
     delete root.dataset.portalPhase;
-    delete slit.dataset.portalSide;
-    delete slit.dataset.portalPhase;
     root.style.removeProperty('--slit-duration');
     root.style.removeProperty('--portal-phase-ms');
     root.style.removeProperty('--gate-x');
@@ -188,7 +195,7 @@ export function createPosterTransition({
   const artMetrics = (item, side) => {
     try {
       const slotBounds = item?.slot?.getBoundingClientRect?.();
-      const stageBounds = slit?.parentElement?.getBoundingClientRect?.();
+      const stageBounds = portalFor('top')?.parentElement?.getBoundingClientRect?.();
       const naturalWidth = Number(item?.image?.naturalWidth);
       const naturalHeight = Number(item?.image?.naturalHeight);
       const stageWidth = Number(stageBounds?.width);
@@ -222,7 +229,9 @@ export function createPosterTransition({
       const desiredGap = Math.max(20, Math.min(38, artHeight * 0.055));
       if (!fixedPortalGeometry) {
         const topY = Math.max(boundaryTop + 12, artTop - desiredGap);
-        const bottomY = Math.min(boundaryBottom - 12, artBottom + desiredGap);
+        // The lower gate is measured once, but must leave the fixed skip control clear
+        // in compact-height viewports before any poster starts moving.
+        const bottomY = Math.min(boundaryBottom - 168, artBottom + desiredGap);
         const availableWidth = Math.max(1, boundaryRight - boundaryLeft - 24);
         const width = Math.max(1, Math.min(artWidth * 1.08, availableWidth));
         const height = Math.max(112, Math.min(168, width / 4.4));
@@ -325,6 +334,15 @@ export function createPosterTransition({
     root.style.setProperty('--gate-height', `${metrics.gateHeight.toFixed(2)}px`);
     root.style.setProperty('--gate-width', `${metrics.gateWidth.toFixed(2)}px`);
     root.style.setProperty('--portal-gap', `${metrics.portalGap.toFixed(2)}px`);
+    for (const [portal, portalY] of [
+      [portalFor('top'), fixedPortalGeometry.topY],
+      [portalFor('bottom'), fixedPortalGeometry.bottomY]
+    ]) {
+      portal.style.setProperty('--portal-x', `${fixedPortalGeometry.screenX.toFixed(2)}px`);
+      portal.style.setProperty('--portal-y', `${portalY.toFixed(2)}px`);
+      portal.style.setProperty('--portal-width', `${fixedPortalGeometry.width.toFixed(2)}px`);
+      portal.style.setProperty('--portal-height', `${fixedPortalGeometry.height.toFixed(2)}px`);
+    }
     item.slot.style.setProperty('--seam-inset', `${metrics.seamPercent.toFixed(3)}%`);
     item.slot.style.setProperty(
       '--poster-portal-offset',
@@ -346,16 +364,17 @@ export function createPosterTransition({
 
   // 门只在有限的进入或离开包络中点亮，稳定驻留时保持熄灭。
   const activatePortal = (side, phase, sceneProfile, duration) => {
+    const portal = portalFor(side);
     root.dataset.portalSide = side;
     root.dataset.portalPhase = phase;
-    slit.dataset.direction = portalOrientation;
-    slit.dataset.portalSide = side;
-    slit.dataset.portalPhase = phase;
-    slit.dataset.motionProfile = sceneProfile;
+    portal.dataset.direction = portalOrientation;
+    portal.dataset.portalSide = side;
+    portal.dataset.portalPhase = phase;
+    portal.dataset.motionProfile = sceneProfile;
     root.style.setProperty('--slit-duration', `${duration}ms`);
     root.style.setProperty('--portal-phase-ms', `${duration}ms`);
     root.classList.add('is-scanning', 'is-portal-active');
-    slit.classList.add('is-lit');
+    portal.classList.add('is-lit');
   };
 
   const stabilize = (item) => {
@@ -607,8 +626,6 @@ export function createPosterTransition({
     compressedDrain = false;
     if (!preserveActive) fixedPortalGeometry = null;
     clearPortalState();
-    delete slit.dataset.direction;
-    delete slit.dataset.motionProfile;
     root.style.removeProperty('--slit-duration');
     root.style.removeProperty('--final-resolve-ms');
     root.classList.remove('is-final-resolving');
@@ -644,8 +661,6 @@ export function createPosterTransition({
     }
 
     clearPortalState();
-    delete slit.dataset.direction;
-    delete slit.dataset.motionProfile;
     root.style.removeProperty('--slit-duration');
     root.style.removeProperty('--final-resolve-ms');
     root.classList.remove('is-final-resolving');
@@ -736,10 +751,6 @@ export function createPosterTransition({
             });
             root.dataset.portalSide = 'center';
             root.dataset.portalPhase = 'final-handoff';
-            slit.dataset.direction = portalOrientation;
-            slit.dataset.portalSide = 'center';
-            slit.dataset.portalPhase = 'final-handoff';
-            slit.dataset.motionProfile = finalSceneProfile;
             root.style.setProperty('--final-resolve-ms', `${profileTiming.finalResolve}ms`);
             root.style.setProperty('--portal-phase-ms', `${profileTiming.finalResolve}ms`);
             root.classList.add('is-final-resolving');
@@ -792,10 +803,8 @@ export function createPosterTransition({
     },
 
     resize() {
-      if (destroyed || !activeItem || currentProfile === 'reduce') return;
-      fixedPortalGeometry = null;
-      const side = activeItem.slot.dataset.portalSide === 'bottom' ? 'bottom' : 'top';
-      applyGateMetrics(activeItem, side);
+      // Portal geometry is intentionally locked for a loading run. The particle
+      // field owns its own canvas resize without moving either fixed portal.
     },
 
     destroy() {

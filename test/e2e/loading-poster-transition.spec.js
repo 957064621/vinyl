@@ -595,7 +595,7 @@ const getLightOracleRegions = (page, portalSide) => page.evaluate(({
 
 const readLightAnimation = ({ phase, peakOffset }) => {
   const root = document.querySelector('#loadingScreen');
-  const slit = document.querySelector('#loadingLightSlit');
+  const slit = document.querySelector('.loading-light-slit.is-lit');
   const final = phase === 'final';
   const animationName = final
     ? 'loading-final-ambient-converge'
@@ -671,7 +671,7 @@ const readLightAnimation = ({ phase, peakOffset }) => {
     direction: slit.dataset.direction,
     portalSide: slit.dataset.portalSide,
     portalPhase: slit.dataset.portalPhase,
-    parentOpacity: final ? primaryAmbientOpacity : opacity('#loadingLightSlit'),
+    parentOpacity: final ? primaryAmbientOpacity : opacity('.loading-light-slit.is-lit'),
     coreOpacity: final ? 0 : opacity('.loading-light-core'),
     warmOpacity: final ? 0 : opacity('.loading-light-edge.is-warm'),
     coolOpacity: final ? 0 : opacity('.loading-light-edge.is-cool'),
@@ -1009,7 +1009,7 @@ const installBrowserProbe = async (page) => {
           maskImage: imageStyle.maskImage,
           webkitMaskImage: imageStyle.webkitMaskImage
         };
-        const slit = document.querySelector('#loadingLightSlit');
+        const slit = document.querySelector('.loading-light-slit.is-lit');
         const core = slit?.querySelector('.loading-light-core');
         const warm = slit?.querySelector('.loading-light-edge.is-warm');
         const cool = slit?.querySelector('.loading-light-edge.is-cool');
@@ -1239,7 +1239,7 @@ const installBrowserProbe = async (page) => {
         probe.handoffFlightSeen ||= Boolean(loading.querySelector('.loading-handoff-flight'));
 
         const now = performance.now();
-        const slit = loading.querySelector('#loadingLightSlit');
+        const slit = loading.querySelector('.loading-light-slit.is-lit');
         const slitLit = Boolean(slit?.classList.contains('is-lit'));
         const finalResolving = loading.classList.contains('is-final-resolving');
         const lightPhase = finalResolving ? 'final' : (slitLit ? 'ordinary' : null);
@@ -1301,7 +1301,7 @@ const installBrowserProbe = async (page) => {
             portalLayoutHeight: Number.parseFloat(getComputedStyle(slit).height) || 0,
             portalAnimationDuration: Number(portalTiming?.duration) || null,
             portalAnimationPlayState: portalAnimation?.playState ?? null,
-            parentOpacity: finalResolving ? primaryAmbientOpacity : opacity('#loadingLightSlit'),
+            parentOpacity: finalResolving ? primaryAmbientOpacity : opacity('.loading-light-slit.is-lit'),
             coreOpacity: finalResolving ? 0 : opacity('.loading-light-core'),
             warmOpacity: finalResolving ? 0 : opacity('.loading-light-edge.is-warm'),
             coolOpacity: finalResolving ? 0 : opacity('.loading-light-edge.is-cool'),
@@ -1661,7 +1661,7 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       return loading
         && !loading.classList.contains('is-final-resolving')
         && document.querySelector('.loading-frame.is-active.is-stable')
-        && !document.querySelector('#loadingLightSlit')?.classList.contains('is-lit');
+        && !document.querySelector('.loading-light-slit.is-lit');
     });
     ordinaryLightOracle = await getLightOracleRegions(page, 'bottom');
     expect(ordinaryLightOracle.portalSide).toBe('bottom');
@@ -2455,7 +2455,7 @@ test('skip stays bottom-centered and clear of the fixed lower portal', async ({ 
   const readGeometry = () => page.evaluate(() => {
     const root = document.querySelector('#loadingScreen');
     const button = document.querySelector('#loadingSkip').getBoundingClientRect();
-    const slit = document.querySelector('#loadingLightSlit').getBoundingClientRect();
+    const slit = document.querySelector('.loading-light-slit.is-lit').getBoundingClientRect();
     const copyStyle = getComputedStyle(document.querySelector('#loadingCopy'));
     const value = (name) => Number.parseFloat(root.style.getPropertyValue(name));
     return {

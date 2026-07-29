@@ -35,6 +35,24 @@ test('selects reduce first, compact for coarse/mobile, and full for desktop', ()
   assert.equal(detectMotionProfile({ matchMedia: media(false, false), userAgent: 'Desktop Chrome' }), 'full');
 });
 
+test('selects compact for a short desktop viewport without overriding reduced motion', () => {
+  assert.equal(detectMotionProfile({
+    matchMedia: media(false, false),
+    userAgent: 'Desktop Chrome',
+    viewportHeight: 720
+  }), 'compact');
+  assert.equal(detectMotionProfile({
+    matchMedia: media(false, false),
+    userAgent: 'Desktop Chrome',
+    viewportHeight: 721
+  }), 'full');
+  assert.equal(detectMotionProfile({
+    matchMedia: media(true, false),
+    userAgent: 'Desktop Chrome',
+    viewportHeight: 640
+  }), 'reduce');
+});
+
 test('rejects an unknown motion profile', () => {
   assert.throws(
     () => createMotionController({ profile: 'cinematic', transitions: {} }),
