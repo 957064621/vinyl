@@ -409,7 +409,17 @@ export function createLoadingScreen(documentRef = document, {
     targetCover.dataset.loadingPrewarm = 'true';
   };
 
-  const createHandoffRun = ({ profile, source, targetCover, appShell, timing }) => {
+  const createHandoffRun = ({
+    profile,
+    source,
+    sourceFrame,
+    sourceFrameRect,
+    targetRect,
+    finalGeometry,
+    targetCover,
+    appShell,
+    timing
+  }) => {
     const controller = new AbortController();
     let settled = false;
     let resolveBarrier;
@@ -417,6 +427,10 @@ export function createLoadingScreen(documentRef = document, {
     const run = {
       profile,
       source,
+      sourceFrame,
+      sourceFrameRect,
+      targetRect,
+      finalGeometry,
       targetCover,
       appShell,
       timing,
@@ -429,6 +443,101 @@ export function createLoadingScreen(documentRef = document, {
       }
     };
     return run;
+  };
+
+  // Keep the same decoded <img> node after the loading root is removed so the
+  // player never exposes a second rasterization of the final artwork.
+  const createResidentPoster = (run) => {
+    if (
+      !run
+      || run.profile === 'reduce'
+      || !run.source
+      || !run.sourceFrameRect
+      || !run.targetRect
+      || run.sourceFrameRect.width <= 0
+      || run.sourceFrameRect.height <= 0
+    ) return null;
+
+    documentRef.querySelector('#loadingHandoffResident')?.remove();
+
+    const source = run.source;
+    const frameRect = run.sourceFrameRect;
+    const targetRect = run.targetRect;
+    const centerX = targetRect.left + (targetRect.width / 2);
+    const centerY = targetRect.top + (targetRect.height / 2);
+    const radius = Math.min(targetRect.width, targetRect.height) / 2;
+    const computed = windowRef?.getComputedStyle?.(source);
+    const geometry = run.finalGeometry || {};
+    const readComputed = (property, fallback = '') => {
+      const value = computed?.[property];
+      return value && value !== 'normal' ? value : fallback;
+    };
+    const fallbackTransform = geometry.transform
+      || 'translate3d(0, 0, 0) scale(1)';
+    const fallbackClipPath = geometry.clipPath || 'inset(0 round 999px)';
+    const fallbackOpacity = readComputed('opacity', '1');
+
+    const layer = documentRef.createElement('div');
+    layer.id = 'loadingHandoffResident';
+    layer.className = 'loading-handoff-resident';
+    layer.setAttribute('aria-hidden', 'true');
+    layer.dataset.centerX = String(centerX);
+    layer.dataset.centerY = String(centerY);
+    layer.dataset.radius = String(radius);
+    layer.dataset.sourceCenterX = String(frameRect.left + (frameRect.width / 2));
+    layer.dataset.sourceCenterY = String(frameRect.top + (frameRect.height / 2));
+    layer.dataset.handoffSquare = String(geometry.handoffSquare || (radius * 2));
+    layer.style.setProperty('--handoff-center-x', `${centerX}px`);
+    layer.style.setProperty('--handoff-center-y', `${centerY}px`);
+    layer.style.setProperty('--handoff-radius', `${radius}px`);
+    layer.style.setProperty('--handoff-diameter', `${radius * 2}px`);
+    layer.style.clipPath = `circle(${radius}px at ${centerX}px ${centerY}px)`;
+
+    const hole = documentRef.createElement('span');
+    hole.className = 'loading-handoff-resident-hole';
+    hole.setAttribute('aria-hidden', 'true');
+    layer.append(hole);
+
+    const sourceStyles = {
+      objectFit: readComputed('objectFit', 'contain'),
+      objectPosition: readComputed('objectPosition', '50% 50%'),
+      borderRadius: readComputed('borderRadius', '0px'),
+      filter: readComputed('filter', 'none'),
+      transformOrigin: readComputed('transformOrigin', '50% 50%'),
+      backfaceVisibility: readComputed('backfaceVisibility', 'hidden'),
+      opacity: fallbackOpacity,
+      transform: readComputed('transform', fallbackTransform),
+      clipPath: readComputed('clipPath', fallbackClipPath)
+    };
+
+    source.classList.remove('loading-image');
+    source.classList.add('loading-handoff-resident-image');
+    source.style.position = 'fixed';
+    source.style.inset = 'auto';
+    source.style.left = `${frameRect.left}px`;
+    source.style.top = `${frameRect.top}px`;
+    source.style.width = `${frameRect.width}px`;
+    source.style.height = `${frameRect.height}px`;
+    source.style.zIndex = '1';
+    source.style.margin = '0';
+    source.style.objectFit = sourceStyles.objectFit;
+    source.style.objectPosition = sourceStyles.objectPosition;
+    source.style.borderRadius = sourceStyles.borderRadius;
+    source.style.filter = sourceStyles.filter;
+    source.style.transformOrigin = sourceStyles.transformOrigin;
+    source.style.backfaceVisibility = sourceStyles.backfaceVisibility;
+    source.style.opacity = sourceStyles.opacity;
+    source.style.transform = sourceStyles.transform;
+    source.style.clipPath = sourceStyles.clipPath;
+    source.style.animation = 'none';
+    source.style.transition = 'none';
+    layer.append(source);
+
+    const host = documentRef.body || root.parentElement;
+    if (!host) return null;
+    host.append(layer);
+    documentRef.body?.setAttribute('data-loading-handoff-resident', 'true');
+    return { element: layer, source, initialClipPath: layer.style.clipPath };
   };
 
   const beginPlayerReveal = (run) => {
@@ -546,6 +655,7 @@ export function createLoadingScreen(documentRef = document, {
     run.targetCover.style.backgroundPosition = 'center';
     run.targetCover.style.backgroundSize = 'cover';
     run.targetCover.classList.add('is-active');
+    createResidentPoster(run);
     delete run.targetCover.dataset.loadingHandoff;
     delete run.targetCover.dataset.loadingPrewarm;
     delete run.source.dataset.loadingHandoff;
@@ -627,7 +737,21 @@ export function createLoadingScreen(documentRef = document, {
     targetCover.dataset.loadingPrewarm = 'true';
     targetCover.dataset.loadingHandoff = 'true';
     appShell.style.setProperty('--loading-player-reveal-ms', `${timing.playerReveal}ms`);
-    const run = createHandoffRun({ profile, source, targetCover, appShell, timing });
+    const run = createHandoffRun({
+      profile,
+      source,
+      sourceFrame,
+      sourceFrameRect: sourceRect,
+      targetRect,
+      finalGeometry: {
+        transform: `translate3d(${targetCenterX - sourceCenterX}px, ${targetCenterY - sourceCenterY}px, 0) scale(${scale})`,
+        clipPath: `inset(${asPercent(finalInsetY, sourceRect.height)} ${asPercent(finalInsetX, sourceRect.width)} ${asPercent(finalInsetY, sourceRect.height)} ${asPercent(finalInsetX, sourceRect.width)} round ${handoffSquare / 2}px)`,
+        handoffSquare
+      },
+      targetCover,
+      appShell,
+      timing
+    });
     handoffRun = run;
     const generation = ++handoffGeneration;
     handoffFrame = requestFrame(() => {

@@ -197,6 +197,7 @@ const installDelayedFinalCover = async (page) => {
 };
 
 const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
+  let finalSourceNode = null;
   const probe = window.__vinylSkipHandoffProbe = {
     samples: [],
     skipAt: null,
@@ -327,9 +328,14 @@ const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
     const active = document.querySelector('.loading-frame.is-active, .loading-frame.is-outgoing');
     const activeImage = active?.querySelector('.loading-image');
     const source = document.querySelector('.loading-image[data-loading-handoff="true"]');
+    if (source) finalSourceNode = source;
+    const resident = document.querySelector('#loadingHandoffResident');
+    const residentImage = resident?.querySelector('.loading-handoff-resident-image');
     const target = document.querySelector('.vinyl-sticker');
     const targetCover = document.querySelector('#vinylCoverA');
     const appShell = document.querySelector('#appShell');
+    const grooves = document.querySelector('.vinyl-grooves');
+    const highlight = document.querySelector('.vinyl-highlight');
     const activeRect = rect(activeImage);
     const stageRect = rect(document.querySelector('.loading-stage'));
     const activeStyle = activeImage ? getComputedStyle(activeImage) : null;
@@ -347,9 +353,11 @@ const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
     const frameOpacity = active ? number(getComputedStyle(active).opacity) : 0;
     const rootOpacity = root ? number(getComputedStyle(root).opacity) : 0;
     const sourceOpacity = source ? frameOpacity * number(sourceStyle.opacity) * rootOpacity : 0;
+    const residentOpacity = resident ? number(getComputedStyle(resident).opacity) : 0;
     const coverOpacity = targetCover ? number(getComputedStyle(targetCover).opacity) : 0;
     const shellOpacity = appShell ? number(getComputedStyle(appShell).opacity) : 0;
     const targetOpacity = coverOpacity * shellOpacity;
+    const handoffHoleStyle = source ? getComputedStyle(source.closest('.loading-frame'), '::after') : null;
     const motion = animationState(source, 'loading-poster-to-player-motion');
     const glide = animationState(activeImage, 'loading-poster-glide-in');
 
@@ -370,8 +378,18 @@ const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
       motion,
       sourceVisible: sourceOpacity > 0.05,
       sourceOpacity,
+      residentConnected: Boolean(resident),
+      residentVisible: residentOpacity > 0.05,
+      residentOpacity,
+      residentSameNode: Boolean(residentImage && residentImage === finalSourceNode),
+      residentArtwork: residentImage?.currentSrc || residentImage?.src || null,
       targetVisible: targetOpacity > 0.05,
       targetOpacity,
+      shellOpacity,
+      grooveOpacity: grooves ? number(getComputedStyle(grooves).opacity) : 0,
+      highlightOpacity: highlight ? number(getComputedStyle(highlight).opacity) : 0,
+      handoffHoleOpacity: handoffHoleStyle ? number(handoffHoleStyle.opacity) : 0,
+      loadingBackdrop: root ? getComputedStyle(root).backgroundColor : null,
       overlap: sourceOpacity > 0.05 && targetOpacity > 0.05,
       sourceArtwork: source?.currentSrc || source?.src || null,
       targetArtwork: targetCover?.style.backgroundImage || null,
@@ -2775,6 +2793,16 @@ test('skip preserves the in-flight poster and hands end.jpg to the player withou
       && sample.targetActive
     ));
     expect(settledTarget).toBeTruthy();
+    const settledResident = finalProbe.samples.findLast((sample) => (
+      !sample.rootConnected
+      && sample.residentConnected
+      && sample.residentVisible
+    ));
+    expect(settledResident).toMatchObject({
+      residentSameNode: true,
+      residentOpacity: 1
+    });
+    expect(new URL(settledResident.residentArtwork).pathname).toBe(FINAL_COVER_PATHNAME);
     const handoffSamples = finalProbe.samples.filter(({ motion, sourceClip, targetRect }) => (
       motion && sourceClip && targetRect
     ));
@@ -2816,6 +2844,15 @@ test('skip preserves the in-flight poster and hands end.jpg to the player withou
     ))).toBe(true);
 
     expect(settledTarget.targetOpacity).toBeGreaterThanOrEqual(0.99);
+    const heldHandoff = handoffSamples.findLast(({ motion }) => motion.progress >= 0.9);
+    expect(heldHandoff).toBeTruthy();
+    expect(heldHandoff.shellOpacity).toBeGreaterThanOrEqual(0.99);
+    expect(heldHandoff.grooveOpacity).toBeCloseTo(0.76, 2);
+    expect(heldHandoff.highlightOpacity).toBeCloseTo(0.62, 2);
+    expect(heldHandoff.handoffHoleOpacity).toBeGreaterThanOrEqual(0.99);
+    expect(heldHandoff.loadingBackdrop).toBe('rgba(0, 0, 0, 0)');
+    expect(settledTarget.grooveOpacity).toBeCloseTo(heldHandoff.grooveOpacity, 2);
+    expect(settledTarget.highlightOpacity).toBeCloseTo(heldHandoff.highlightOpacity, 2);
     expect(settledTarget.targetArtwork).toContain(FINAL_COVER_PATHNAME);
     expect(settledTarget.targetBackgroundPosition).toBe('50% 50%');
     expect(settledTarget.targetBackgroundSize).toBe('cover');

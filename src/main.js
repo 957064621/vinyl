@@ -1408,6 +1408,95 @@ const criticalAssetGate = startCriticalAssetGate({
             layer.style.removeProperty('will-change');
         };
 
+        let handoffResidentResizeFrame = null;
+        const syncLoadingHandoffResident = () => {
+            handoffResidentResizeFrame = null;
+            const layer = document.getElementById('loadingHandoffResident');
+            const image = layer?.querySelector('.loading-handoff-resident-image');
+            const sticker = document.querySelector('.vinyl-sticker');
+            if (!layer || !image || !sticker || layer.hasAttribute('data-motion-active')) return;
+
+            const targetRect = sticker.getBoundingClientRect();
+            const sourceCenterX = Number(layer.dataset.sourceCenterX);
+            const sourceCenterY = Number(layer.dataset.sourceCenterY);
+            const handoffSquare = Number(layer.dataset.handoffSquare);
+            if (
+                targetRect.width <= 0
+                || targetRect.height <= 0
+                || !Number.isFinite(sourceCenterX)
+                || !Number.isFinite(sourceCenterY)
+                || !Number.isFinite(handoffSquare)
+                || handoffSquare <= 0
+            ) return;
+
+            const centerX = targetRect.left + (targetRect.width / 2);
+            const centerY = targetRect.top + (targetRect.height / 2);
+            const radius = Math.min(targetRect.width, targetRect.height) / 2;
+            const scale = (radius * 2) / handoffSquare;
+            layer.dataset.centerX = String(centerX);
+            layer.dataset.centerY = String(centerY);
+            layer.dataset.radius = String(radius);
+            layer.style.setProperty('--handoff-center-x', `${centerX}px`);
+            layer.style.setProperty('--handoff-center-y', `${centerY}px`);
+            layer.style.setProperty('--handoff-radius', `${radius}px`);
+            layer.style.setProperty('--handoff-diameter', `${radius * 2}px`);
+            layer.style.clipPath = `circle(${radius}px at ${centerX}px ${centerY}px)`;
+            image.style.transform = `translate3d(${centerX - sourceCenterX}px, ${centerY - sourceCenterY}px, 0) scale(${scale})`;
+        };
+        const scheduleLoadingHandoffResidentSync = () => {
+            if (handoffResidentResizeFrame !== null) return;
+            handoffResidentResizeFrame = requestAnimationFrame(syncLoadingHandoffResident);
+        };
+        window.addEventListener('resize', scheduleLoadingHandoffResidentSync, { passive: true });
+
+        const releaseLoadingHandoffResident = (duration, signal) => {
+            const layer = document.getElementById('loadingHandoffResident');
+            if (!layer) return Promise.resolve({ status: 'none' });
+
+            const initialClipPath = layer.style.clipPath
+                || `circle(${layer.dataset.radius || 0}px at ${layer.dataset.centerX || 0}px ${layer.dataset.centerY || 0}px)`;
+            const centerX = layer.dataset.centerX || '0';
+            const centerY = layer.dataset.centerY || '0';
+            const finalClipPath = `circle(0px at ${centerX}px ${centerY}px)`;
+            const removeLayer = () => {
+                layer.remove();
+                if (!document.getElementById('loadingHandoffResident')) {
+                    delete document.body?.dataset.loadingHandoffResident;
+                }
+            };
+
+            if (prefersReducedMotion || duration <= 0) {
+                removeLayer();
+                return Promise.resolve({ status: 'completed' });
+            }
+
+            layer.style.opacity = '1';
+            const release = animateWithCleanup(
+                layer,
+                [
+                    { opacity: 1, clipPath: initialClipPath },
+                    { opacity: 0, clipPath: finalClipPath }
+                ],
+                {
+                    duration: Math.min(duration, 560),
+                    fill: 'forwards',
+                    easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+                },
+                signal,
+                safeAnimate
+            );
+
+            return release.then((result) => {
+                if (result.status === 'completed') {
+                    removeLayer();
+                } else {
+                    layer.style.opacity = '1';
+                    layer.style.clipPath = initialClipPath;
+                }
+                return result;
+            });
+        };
+
         const applyPreparedCoverVisual = async (preparedVisual, { profile = motionProfile, signal } = {}) => {
             if (!coverLayerA || !coverLayerB) return '';
 
@@ -1445,6 +1534,7 @@ const criticalAssetGate = startCriticalAssetGate({
 
             const duration = COVER_REVEAL_DURATION[profile] ?? COVER_REVEAL_DURATION.full;
             const revealSignal = signal || new AbortController().signal;
+            const residentRelease = releaseLoadingHandoffResident(duration, revealSignal);
             const result = await animateWithCleanup(
                 incoming,
                 [
@@ -1465,8 +1555,13 @@ const criticalAssetGate = startCriticalAssetGate({
                 revealSignal,
                 safeAnimate
             );
+            const residentResult = await residentRelease;
 
-            if (requestId !== coverSwapRequestId || result.status !== 'completed') return artworkSrc;
+            if (
+                requestId !== coverSwapRequestId
+                || result.status !== 'completed'
+                || (residentResult.status !== 'completed' && residentResult.status !== 'none')
+            ) return artworkSrc;
 
             outgoing.classList.remove('is-active');
             incoming.classList.add('is-active');

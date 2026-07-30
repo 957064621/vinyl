@@ -445,6 +445,7 @@ test('linear wrappers are limited to physical motion and keyframes with explicit
 
   assert.deepEqual(declarationCounts, {
     'animation: loading-poster-to-player-motion var(--loading-handoff-morph-ms, 1280ms) linear both, loading-poster-to-player-shape var(--loading-handoff-morph-ms, 1280ms) linear both;': 1,
+    'animation: loading-handoff-hole-reveal var(--loading-handoff-morph-ms, 1280ms) linear both;': 1,
     'animation: loading-vinyl-grooves-reveal var(--loading-player-reveal-ms, 794ms) linear var(--loading-player-reveal-delay-ms, 486ms) both;': 1,
     'animation: loading-vinyl-highlight-reveal var(--loading-player-reveal-ms, 794ms) linear var(--loading-player-reveal-delay-ms, 486ms) both;': 1,
     'animation: loading-vinyl-surface-reveal var(--loading-player-reveal-ms, 794ms) linear var(--loading-player-reveal-delay-ms, 486ms) both;': 1,

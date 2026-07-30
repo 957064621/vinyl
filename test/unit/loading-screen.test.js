@@ -383,6 +383,12 @@ test('final handoff starts one shared timeline and transfers artwork atomically'
   assert.equal(targetCover.style.opacity, '1');
   assert.equal(targetCover.style.transition, 'none');
   assert.equal(appShell.classList.contains('is-loading-reveal'), true);
+  const resident = document.getElementById('loadingHandoffResident');
+  assert.ok(resident);
+  assert.strictEqual(resident.querySelector('.loading-handoff-resident-image'), image);
+  assert.equal(image.isConnected, true);
+  assert.equal(image.classList.contains('loading-image'), false);
+  assert.equal(document.body.dataset.loadingHandoffResident, 'true');
 
   view.completeHandoff();
   assert.equal(appShell.classList.contains('is-loading-reveal'), false);
@@ -391,6 +397,10 @@ test('final handoff starts one shared timeline and transfers artwork atomically'
   assert.equal(targetCover.style.animation, '');
   assert.equal(targetCover.style.transition, '');
   assert.equal(targetCover.style.opacity, '');
+  assert.strictEqual(
+    document.querySelector('#loadingHandoffResident .loading-handoff-resident-image'),
+    image
+  );
 });
 
 test('loading screen forwards live profiles to its transition and uses the latest profile by default', async () => {
@@ -1994,6 +2004,62 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
                 both`
       },
       `${animationName} handoff timing`
+    );
+  }
+
+  for (const [name, finalOpacity] of [
+    ['loading-player-shell-reveal', '1'],
+    ['loading-vinyl-grooves-reveal', '0.76'],
+    ['loading-vinyl-highlight-reveal', '0.62'],
+    ['loading-vinyl-surface-reveal', '1'],
+    ['loading-handoff-hole-reveal', '1']
+  ]) {
+    expectKeyframeStops(css, name, {
+      '88%, 100%': { opacity: finalOpacity }
+    });
+  }
+  expectKeyframeStops(css, 'loading-backdrop-reveal', {
+    '88%, 100%': { 'background-color': 'transparent' }
+  });
+  expectKeyframeStops(css, 'loading-final-ambient-converge', {
+    '88%, 100%': { opacity: '0' }
+  });
+
+  const handoffHole = extractCssBlock(
+    css,
+    'html:not([data-motion-profile="reduce"]) .loading-screen.is-final-resolving[data-handoff-ready="true"] .loading-frame[data-final-poster="true"]::after'
+  );
+  expectDeclarations(handoffHole, {
+    'z-index': '7',
+    width: '12px',
+    height: '12px',
+    background: 'var(--bg-base)',
+    animation: 'loading-handoff-hole-reveal var(--loading-handoff-morph-ms, 1280ms) linear both'
+  }, 'final handoff center hole');
+  const handoffHoleFinal = extractCssBlock(
+    extractCssBlock(css, '@keyframes loading-handoff-hole-reveal'),
+    '88%, 100%'
+  );
+  assert.match(handoffHoleFinal, /calc\(-50% \+ var\(--poster-final-x, 0px\)\)/);
+  assert.match(handoffHoleFinal, /calc\(-50% \+ var\(--poster-final-y, 0px\)\)/);
+
+  const grooveRules = [...css.matchAll(/(?:^|\})\s*\.vinyl-grooves\s*\{([^}]*)\}/gm)]
+    .map((match) => match[1]);
+  assert.ok(grooveRules.length >= 2, 'expected base and archive groove rules');
+  assert.ok(
+    grooveRules.every((rule) => /repeating-radial-gradient\(\s*circle at center/.test(rule)),
+    'every groove layer must use one centered circular micro-groove field'
+  );
+  assert.match(grooveRules.at(-1), /opacity:\s*0\.76/);
+
+  const centerRingToken = extractCssBlock(css, '.loading-handoff-resident,\n        .vinyl-sticker');
+  assert.match(centerRingToken, /--vinyl-center-ring:/);
+  assert.match(centerRingToken, /rgba\(6, 9, 16, 0\.34\) 23\.5% 25\.5%/);
+  for (const selector of ['.loading-handoff-resident::before', '.vinyl-sticker::before']) {
+    assert.match(
+      extractCssBlock(css, selector),
+      /background:\s*var\(--vinyl-center-ring\)/,
+      `${selector} must share the centered pressing ring`
     );
   }
 
