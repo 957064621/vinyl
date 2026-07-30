@@ -458,7 +458,7 @@ test('draw crossfades the switched record cover before the 500ms lyric hold', as
     expect(timing.sawCoverOverlap).toBe(true);
     expect(timing.sawBalancedDepth).toBe(true);
     expect(Math.max(...timing.coverAnimationDurations)).toBeGreaterThanOrEqual(
-      testInfo.project.name === 'desktop-chromium' ? 1000 : 800
+      testInfo.project.name === 'desktop-chromium' ? 1000 : 1100
     );
   }
   expect(timing.metadataCommits.length).toBeGreaterThan(0);

@@ -1884,7 +1884,7 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /\.loading-screen\s*\{[^}]*box-sizing:\s*border-box/s);
   assert.match(loadingBlock, /padding:\s*max\(24px, env\(safe-area-inset-top\)\)\s+max\(24px, env\(safe-area-inset-right\)\)\s+max\(24px, env\(safe-area-inset-bottom\)\)\s+max\(24px, env\(safe-area-inset-left\)\)/s);
   assert.match(loadingBlock, /\.loading-intake\s*\{[^}]*width:\s*min\(100%, 680px\)[^}]*height:\s*min\(100%, 820px\)/s);
-  assert.deepEqual(LOADING_PRELUDE_TIMING, { full: 1200, compact: 900, reduce: 120 });
+  assert.deepEqual(LOADING_PRELUDE_TIMING, { full: 1200, compact: 1200, reduce: 120 });
   assert.match(loadingBlock, /\.loading-screen\.is-loading-prelude \.loading-hole\s*\{[^}]*opacity:\s*1/s);
   assert.match(
     loadingBlock,
@@ -1961,9 +1961,9 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.equal(POSTER_TIMING.full.finalResolve, 1280);
   assert.equal(POSTER_TIMING.full.exitLead, 1280);
   assert.equal(POSTER_TIMING.full.rootFade, 680);
-  assert.equal(POSTER_TIMING.compact.finalResolve, 920);
-  assert.equal(POSTER_TIMING.compact.exitLead, 920);
-  assert.equal(POSTER_TIMING.compact.rootFade, 680);
+  assert.equal(POSTER_TIMING.compact.finalResolve, 1280);
+  assert.equal(POSTER_TIMING.compact.exitLead, 1280);
+  assert.equal(POSTER_TIMING.compact.rootFade, 760);
   for (const profile of ['full', 'compact']) {
     const timing = FINAL_HANDOFF_TIMING[profile];
     assert.equal(
@@ -1980,7 +1980,7 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(loadingBlock, /--slit-duration:\s*760ms/);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*opacity var\(--poster-handoff-ms, 600ms\) var\(--loading-handoff-ease\)/s);
   assert.match(loadingBlock, /\.loading-image\s*\{[^}]*transform var\(--poster-handoff-ms, 600ms\) var\(--loading-settle-ease\)/s);
-  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="compact"\]\s*\{[^}]*--poster-handoff-ms:\s*480ms[^}]*--slit-duration:\s*760ms/s);
+  assert.match(loadingBlock, /\.loading-screen\[data-motion-profile="compact"\]\s*\{[^}]*--poster-handoff-ms:\s*520ms[^}]*--slit-duration:\s*760ms/s);
 
   for (const [selector, animationName] of [
     [

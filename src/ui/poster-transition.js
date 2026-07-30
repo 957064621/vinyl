@@ -10,12 +10,12 @@ export const POSTER_TIMING = Object.freeze({
     rootFade: 680
   }),
   compact: Object.freeze({
-    normal: Object.freeze({ gather: 220, handoff: 520, exit: 440, hold: 560 }),
-    compressed: Object.freeze({ gather: 220, handoff: 520, exit: 440, hold: 380 }),
-    finalHold: 720,
-    finalResolve: 920,
-    exitLead: 920,
-    rootFade: 680
+    normal: Object.freeze({ gather: 220, handoff: 520, exit: 520, hold: 760 }),
+    compressed: Object.freeze({ gather: 220, handoff: 520, exit: 520, hold: 520 }),
+    finalHold: 900,
+    finalResolve: 1280,
+    exitLead: 1280,
+    rootFade: 760
   }),
   reduce: Object.freeze({ fade: 120 })
 });

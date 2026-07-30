@@ -4,13 +4,13 @@ import { POSTER_TIMING, createPosterTransition } from './poster-transition.js';
 
 export const LOADING_PRELUDE_TIMING = Object.freeze({
   full: 1200,
-  compact: 900,
+  compact: 1200,
   reduce: 120
 });
 
 export const FINAL_HANDOFF_TIMING = Object.freeze({
   full: Object.freeze({ morph: 1280, revealAt: 486, playerReveal: 794, backdropExit: 1280 }),
-  compact: Object.freeze({ morph: 920, revealAt: 350, playerReveal: 570, backdropExit: 920 }),
+  compact: Object.freeze({ morph: 1280, revealAt: 486, playerReveal: 794, backdropExit: 1280 }),
   reduce: Object.freeze({ finalHold: 500, crossfade: 120 })
 });
 

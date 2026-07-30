@@ -312,7 +312,7 @@ test('does not allow caller options to replace controller-owned switch context',
   assert.equal(received.showLyrics, false);
   assert.equal(received.profile, 'compact');
   assert.notEqual(received.signal, suppliedSignal);
-  assert.equal(received.tokens.enter, 280);
+  assert.equal(received.tokens.enter, 900);
 });
 
 test('activity callback failures cannot strand motion ownership', async () => {

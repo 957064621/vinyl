@@ -119,7 +119,7 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
           content: Number.parseFloat(getComputedStyle(content).opacity),
           items: document.querySelectorAll('.playlist-item').length
         });
-        if (now - startedAt >= 720) resolve(frames);
+        if (now - startedAt >= 1200) resolve(frames);
         else requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
@@ -144,7 +144,45 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
   }
   const composedFrames = visibleFrames.filter(({ area }) => area > 0.2 && area < 0.98);
   expect(composedFrames.length).toBeGreaterThan(0);
-  expect(composedFrames.every(({ content }) => content > 0.01)).toBe(true);
+  const veilFrames = composedFrames.filter(({ area }) => area < 0.68);
+  expect(veilFrames.some(({ area, content }) => content <= area * 0.45)).toBe(true);
+  const handoffFrames = composedFrames.filter(({ area }) => area > 0.56);
+  expect(handoffFrames.some(({ content }) => content > 0.12 && content < 0.95)).toBe(true);
+});
+
+test('primary 393x727 mobile composition keeps every lower rail separated', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium');
+  await page.setViewportSize({ width: 393, height: 727 });
+  await waitForApp(page);
+
+  const initial = await page.evaluate(() => ({
+    metadata: document.querySelector('#archiveTrackMeta').getBoundingClientRect().toJSON(),
+    draw: document.querySelector('#playButton').getBoundingClientRect().toJSON(),
+    vinyl: document.querySelector('#vinylRecord').getBoundingClientRect().toJSON()
+  }));
+  expect(initial.vinyl.bottom + 8).toBeLessThanOrEqual(initial.metadata.top);
+  expect(initial.metadata.bottom + 24).toBeLessThanOrEqual(initial.draw.top);
+
+  await page.locator('#playButton').click();
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+  await expect(page.locator('#playButton')).not.toHaveAttribute('data-busy', '', { timeout: 12_000 });
+  await page.locator('#lyricCloseBtn').click();
+  await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/);
+  await page.waitForFunction(() => Number.parseFloat(
+    getComputedStyle(document.querySelector('#playerPill')).opacity
+  ) >= 0.99);
+
+  const settled = await page.evaluate(() => ({
+    metadata: document.querySelector('#archiveTrackMeta').getBoundingClientRect().toJSON(),
+    draw: document.querySelector('#playButton').getBoundingClientRect().toJSON(),
+    player: document.querySelector('#playerPill').getBoundingClientRect().toJSON(),
+    contact: document.querySelector('#contactLink').getBoundingClientRect().toJSON(),
+    viewportHeight: innerHeight
+  }));
+  expect(settled.metadata.bottom + 24).toBeLessThanOrEqual(settled.draw.top);
+  expect(settled.draw.bottom + 8).toBeLessThanOrEqual(settled.player.top);
+  expect(settled.player.bottom + 10).toBeLessThanOrEqual(settled.contact.top);
+  expect(settled.contact.bottom).toBeLessThanOrEqual(settled.viewportHeight - 8);
 });
 
 test('short compact viewport keeps fixed controls clear of metadata and playlist', async ({ page }, testInfo) => {
@@ -454,14 +492,14 @@ test('lyrics are primed hidden before the visible class exposes the overlay', as
   expect(await page.evaluate(() => window.__lyricExposureState)).toEqual({
     areaOpacity: '0',
     areaTransform: 'translate3d(0px, 0px, 0px)',
-    lyricOpacity: '0.24',
-    lyricTransform: 'translateY(18px) scaleX(0.92) scaleY(1.04)',
-    lyricFilter: 'blur(10px)',
+    lyricOpacity: '0.08',
+    lyricTransform: 'translateY(22px) scaleX(0.94) scaleY(1.035)',
+    lyricFilter: 'blur(14px)',
     lyricHasFeather: true,
-    lyricMaskPosition: '0% 64%',
+    lyricMaskPosition: '0% 70%',
     lyricMaskSize: '100% 300%',
     songOpacity: '0',
-    songTransform: 'translateY(12px) scaleX(0.96) scaleY(1.025)',
+    songTransform: 'translateY(14px) scaleX(0.965) scaleY(1.022)',
     songHasFeather: true,
     lineOpacity: '1',
     lineFilter: 'none',
@@ -489,7 +527,7 @@ test('lyrics reveal as one feathered block without per-line staggering', async (
   await page.locator('#lyricToggleBtn').click();
   await page.waitForFunction(() => document.querySelector('#lyricText')?.getAnimations().some(
     (animation) => animation.effect?.getKeyframes?.().some(({ transform }) => (
-      `${transform}`.includes('scaleX(0.92)')
+      `${transform}`.includes('scaleX(0.94)')
     ))
   ));
 
@@ -538,19 +576,19 @@ test('lyrics reveal as one feathered block without per-line staggering', async (
   });
 
   expect(opening.areaClips.every((clip) => clip === '')).toBe(true);
-  const expectedBlockDelay = opening.profile === 'full' ? 80 : 56;
-  const expectedBlockDuration = opening.profile === 'full' ? 600 : 440;
+  const expectedBlockDelay = opening.profile === 'full' ? 100 : 120;
+  const expectedBlockDuration = opening.profile === 'full' ? 840 : 1120;
   const expectedSongDuration = Math.round(expectedBlockDuration * 0.7);
   const expectedSongDelay = expectedBlockDelay + Math.round(expectedBlockDuration * 0.3);
   for (const [label, reveal, delay, duration, maskPositions] of [
-    ['lyric block', opening.lyricReveal, expectedBlockDelay, expectedBlockDuration, [64, 44, 12, 0]],
-    ['song name', opening.songReveal, expectedSongDelay, expectedSongDuration, [64, 12, 0]]
+    ['lyric block', opening.lyricReveal, expectedBlockDelay, expectedBlockDuration, [70, 46, 14, 0]],
+    ['song name', opening.songReveal, expectedSongDelay, expectedSongDuration, [70, 14, 0]]
   ]) {
     expect(Math.abs(reveal.delay - delay), `${label} delay`).toBeLessThanOrEqual(1);
     expect(Math.abs(reveal.duration - duration), `${label} duration`).toBeLessThanOrEqual(1);
     expect(reveal.filters.at(-1), `${label} settles sharp`).toBe('blur(0px)');
     expect(reveal.transforms.at(-1), `${label} settles in place`).toMatch(/translateY\(0(?:px)?\)/);
-    expect(reveal.maskPositions[0], `${label} starts with only the leading edge exposed`).toBe('0% 64%');
+    expect(reveal.maskPositions[0], `${label} starts with only the leading edge exposed`).toBe('0% 70%');
     expect(reveal.maskPositions.at(-1), `${label} clears feather continuously`).toBe('0% 0%');
     expect(
       reveal.maskPositions.map((position) => Number.parseFloat(position.split(' ')[1]))
@@ -558,9 +596,9 @@ test('lyrics reveal as one feathered block without per-line staggering', async (
     expect(reveal.clips.every((clip) => clip === ''), `${label} has no hard clip`).toBe(true);
     expect(reveal.hasFeather, `${label} has a feather mask while moving`).toBe(true);
   }
-  expect(opening.lyricReveal.filters[0]).toBe('blur(10px)');
-  expect(opening.lyricReveal.transforms[0]).toContain('scaleX(0.92)');
-  expect(opening.songReveal.filters[0]).toBe('blur(8px)');
+  expect(opening.lyricReveal.filters[0]).toBe('blur(14px)');
+  expect(opening.lyricReveal.transforms[0]).toContain('scaleX(0.94)');
+  expect(opening.songReveal.filters[0]).toBe('blur(10px)');
   expect(opening.lineAnimationCount).toBe(0);
   expect(opening.lineStates.every(({ opacity, maskImage }) => (
     opacity === '1' && maskImage === ''

@@ -1,6 +1,6 @@
 export const MOTION_TOKENS = Object.freeze({
   full: Object.freeze({ enter: 520, move: 900, settle: 720, itemStagger: 16 }),
-  compact: Object.freeze({ enter: 280, move: 460, settle: 360, itemStagger: 0 }),
+  compact: Object.freeze({ enter: 900, move: 1160, settle: 980, itemStagger: 0 }),
   reduce: Object.freeze({ enter: 0, move: 0, settle: 0, itemStagger: 0 })
 });
 

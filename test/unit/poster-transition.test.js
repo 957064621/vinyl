@@ -207,12 +207,12 @@ test('timing tables are deeply frozen and preserve fast portal travel with a rea
       rootFade: 680
     },
     compact: {
-      normal: { gather: 220, handoff: 520, exit: 440, hold: 560 },
-      compressed: { gather: 220, handoff: 520, exit: 440, hold: 380 },
-      finalHold: 720,
-      finalResolve: 920,
-      exitLead: 920,
-      rootFade: 680
+      normal: { gather: 220, handoff: 520, exit: 520, hold: 760 },
+      compressed: { gather: 220, handoff: 520, exit: 520, hold: 520 },
+      finalHold: 900,
+      finalResolve: 1280,
+      exitLead: 1280,
+      rootFade: 760
     },
     reduce: { fade: 120 }
   });
@@ -222,8 +222,8 @@ test('timing tables are deeply frozen and preserve fast portal travel with a rea
   assert.equal(exchangeTime(VISUAL8_TIMING.full.normal), 2220);
   assert.equal(firstPosterTime(VISUAL8_TIMING.full.compressed), 1240);
   assert.equal(exchangeTime(VISUAL8_TIMING.full.compressed), 2000);
-  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.normal), 1320);
-  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.compressed), 1140);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.normal), 1520);
+  assert.equal(firstPosterTime(VISUAL8_TIMING.compact.compressed), 1280);
   assert.equal(Object.isFrozen(VISUAL8_TIMING), true);
   for (const profile of ['full', 'compact', 'reduce']) {
     assert.equal(Object.isFrozen(VISUAL8_TIMING[profile]), true);
