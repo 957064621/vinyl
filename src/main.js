@@ -165,9 +165,6 @@ const criticalAssetGate = startCriticalAssetGate({
         const shouldUseLeanPlaylistMotion = () => prefersReducedMotion;
         const overlayCardDuration = shouldUseCompactOverlayMotion ? 420 : 560;
         const overlayLyricDuration = shouldUseCompactOverlayMotion ? 560 : 740;
-        const overlaySongDuration = shouldUseCompactOverlayMotion ? 500 : 660;
-        const overlayLineDuration = shouldUseCompactOverlayMotion ? 500 : 660;
-        const overlayLineDelayStep = shouldUseCompactOverlayMotion ? 44 : 66;
         const playlistContentDuration = shouldUseCompactOverlayMotion ? 520 : 680;
         const playlistItemDuration = shouldUseCompactOverlayMotion ? 360 : 430;
 
@@ -1190,11 +1187,15 @@ const criticalAssetGate = startCriticalAssetGate({
         let activeCoverReveal = Promise.resolve();
         const COVER_PRELOAD_TIMEOUT_MS = 4000;
         const COVER_REVEAL_DURATION = Object.freeze({
-            full: 620,
-            compact: 420,
+            full: 1080,
+            compact: 840,
             reduce: 0
         });
-        const COVER_REVEAL_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+        const COVER_DEPTH_EASING = Object.freeze({
+            approach: 'cubic-bezier(0.4, 0, 0.6, 1)',
+            handoff: 'cubic-bezier(0.42, 0, 0.58, 1)',
+            settle: 'cubic-bezier(0.22, 1, 0.36, 1)'
+        });
 
         const waitForActiveCoverReveal = ({ signal } = {}) => {
             if (signal?.aborted) return Promise.resolve();
@@ -1404,6 +1405,7 @@ const criticalAssetGate = startCriticalAssetGate({
             layer.style.removeProperty('clip-path');
             layer.style.removeProperty('opacity');
             layer.style.removeProperty('transform');
+            layer.style.removeProperty('filter');
             layer.style.removeProperty('z-index');
             layer.style.removeProperty('will-change');
         };
@@ -1470,6 +1472,7 @@ const criticalAssetGate = startCriticalAssetGate({
                 return Promise.resolve({ status: 'completed' });
             }
 
+            layer.dataset.ringState = 'releasing';
             layer.style.opacity = '1';
             const release = animateWithCleanup(
                 layer,
@@ -1490,6 +1493,7 @@ const criticalAssetGate = startCriticalAssetGate({
                 if (result.status === 'completed') {
                     removeLayer();
                 } else {
+                    layer.dataset.ringState = 'entering';
                     layer.style.opacity = '1';
                     layer.style.clipPath = initialClipPath;
                 }
@@ -1518,16 +1522,21 @@ const criticalAssetGate = startCriticalAssetGate({
 
             const outgoing = activeCoverLayer;
             const incoming = activeCoverLayer === coverLayerA ? coverLayerB : coverLayerA;
+            outgoing.getAnimations?.().forEach((animation) => animation.cancel());
             incoming.getAnimations?.().forEach((animation) => animation.cancel());
             delete incoming.dataset.loadingHandoff;
             delete incoming.dataset.loadingPrewarm;
             incoming.style.backgroundImage = `url("${artworkSrc}")`;
-            incoming.style.opacity = '1';
+            incoming.style.opacity = '0';
             incoming.style.zIndex = '1';
-            incoming.style.clipPath = 'circle(0% at 50% 50%)';
-            incoming.style.transform = 'scale(1.035) rotate(-1.4deg)';
-            incoming.style.willChange = 'clip-path, transform';
+            incoming.style.transform = 'scale(1.048) rotate(-0.62deg)';
+            incoming.style.filter = 'blur(12px) saturate(0.76) brightness(0.84)';
+            incoming.style.willChange = 'opacity, filter, transform';
+            outgoing.style.opacity = '1';
+            outgoing.style.transform = 'scale(1) rotate(0deg)';
+            outgoing.style.filter = 'blur(0px) saturate(1) brightness(1)';
             outgoing.style.zIndex = '0';
+            outgoing.style.willChange = 'opacity, filter, transform';
             delete document.body.dataset.coverState;
             incoming.classList.remove('is-active');
             outgoing.classList.add('is-active');
@@ -1535,31 +1544,117 @@ const criticalAssetGate = startCriticalAssetGate({
             const duration = COVER_REVEAL_DURATION[profile] ?? COVER_REVEAL_DURATION.full;
             const revealSignal = signal || new AbortController().signal;
             const residentRelease = releaseLoadingHandoffResident(duration, revealSignal);
-            const result = await animateWithCleanup(
-                incoming,
-                [
-                    {
-                        clipPath: 'circle(0% at 50% 50%)',
-                        transform: 'scale(1.035) rotate(-1.4deg)'
-                    },
-                    {
-                        clipPath: 'circle(72% at 50% 50%)',
-                        transform: 'scale(1) rotate(0deg)'
-                    }
-                ],
-                {
-                    duration,
-                    fill: 'forwards',
-                    easing: COVER_REVEAL_EASING
-                },
-                revealSignal,
-                safeAnimate
-            );
-            const residentResult = await residentRelease;
+            const animationOptions = {
+                duration,
+                fill: 'forwards',
+                easing: 'linear'
+            };
+            const [incomingResult, outgoingResult, residentResult] = await Promise.all([
+                animateWithCleanup(
+                    incoming,
+                    [
+                        {
+                            offset: 0,
+                            opacity: 0,
+                            transform: 'scale(1.048) rotate(-0.62deg)',
+                            filter: 'blur(12px) saturate(0.76) brightness(0.84)',
+                            easing: COVER_DEPTH_EASING.approach
+                        },
+                        {
+                            offset: 0.22,
+                            opacity: 0.03,
+                            transform: 'scale(1.042) rotate(-0.48deg)',
+                            filter: 'blur(10.5px) saturate(0.8) brightness(0.87)',
+                            easing: COVER_DEPTH_EASING.handoff
+                        },
+                        {
+                            offset: 0.48,
+                            opacity: 0.38,
+                            transform: 'scale(1.025) rotate(-0.24deg)',
+                            filter: 'blur(5.8px) saturate(0.9) brightness(0.94)',
+                            easing: COVER_DEPTH_EASING.handoff
+                        },
+                        {
+                            offset: 0.68,
+                            opacity: 0.76,
+                            transform: 'scale(1.009) rotate(-0.08deg)',
+                            filter: 'blur(2.4px) saturate(0.97) brightness(0.985)',
+                            easing: COVER_DEPTH_EASING.handoff
+                        },
+                        {
+                            offset: 0.84,
+                            opacity: 0.96,
+                            transform: 'scale(1.002) rotate(-0.01deg)',
+                            filter: 'blur(0.6px) saturate(0.995) brightness(1)',
+                            easing: COVER_DEPTH_EASING.settle
+                        },
+                        {
+                            offset: 1,
+                            opacity: 1,
+                            transform: 'scale(1) rotate(0deg)',
+                            filter: 'blur(0px) saturate(1) brightness(1)'
+                        }
+                    ],
+                    animationOptions,
+                    revealSignal,
+                    safeAnimate
+                ),
+                animateWithCleanup(
+                    outgoing,
+                    [
+                        {
+                            offset: 0,
+                            opacity: 1,
+                            transform: 'scale(1) rotate(0deg)',
+                            filter: 'blur(0px) saturate(1) brightness(1)',
+                            easing: COVER_DEPTH_EASING.approach
+                        },
+                        {
+                            offset: 0.22,
+                            opacity: 0.97,
+                            transform: 'scale(1) rotate(0deg)',
+                            filter: 'blur(0.25px) saturate(0.99) brightness(0.99)',
+                            easing: COVER_DEPTH_EASING.handoff
+                        },
+                        {
+                            offset: 0.48,
+                            opacity: 0.68,
+                            transform: 'scale(0.993) rotate(0.04deg)',
+                            filter: 'blur(2.2px) saturate(0.91) brightness(0.92)',
+                            easing: COVER_DEPTH_EASING.handoff
+                        },
+                        {
+                            offset: 0.68,
+                            opacity: 0.28,
+                            transform: 'scale(0.982) rotate(0.14deg)',
+                            filter: 'blur(5.6px) saturate(0.8) brightness(0.78)',
+                            easing: COVER_DEPTH_EASING.handoff
+                        },
+                        {
+                            offset: 0.84,
+                            opacity: 0.04,
+                            transform: 'scale(0.974) rotate(0.22deg)',
+                            filter: 'blur(8px) saturate(0.73) brightness(0.71)',
+                            easing: COVER_DEPTH_EASING.settle
+                        },
+                        {
+                            offset: 1,
+                            opacity: 0,
+                            transform: 'scale(0.971) rotate(0.24deg)',
+                            filter: 'blur(9px) saturate(0.7) brightness(0.68)'
+                        }
+                    ],
+                    animationOptions,
+                    revealSignal,
+                    safeAnimate
+                ),
+                residentRelease
+            ]);
 
             if (
                 requestId !== coverSwapRequestId
-                || result.status !== 'completed'
+                || incomingResult.status !== 'completed'
+                || outgoingResult.status !== 'completed'
                 || (residentResult.status !== 'completed' && residentResult.status !== 'none')
             ) return artworkSrc;
 
@@ -1580,40 +1675,97 @@ const criticalAssetGate = startCriticalAssetGate({
         setCoverPalette(getInitialCoverPalette());
 
         const lyricLines = () => Array.from(lyricEl.querySelectorAll('.lyric-line'));
+        const LYRIC_FEATHER_MASK = 'linear-gradient(to bottom, #000 0%, #000 33%, rgba(0, 0, 0, 0.96) 35%, rgba(0, 0, 0, 0.68) 39%, rgba(0, 0, 0, 0.3) 44%, transparent 50%, transparent 100%)';
+        const createLyricRevealKeyframes = () => ([
+            {
+                opacity: 0.24,
+                transform: 'translateY(18px) scaleX(0.92) scaleY(1.04)',
+                filter: 'blur(10px)',
+                maskPosition: '0% 64%',
+                webkitMaskPosition: '0% 64%'
+            },
+            {
+                offset: 0.34,
+                opacity: 0.9,
+                transform: 'translateY(7px) scaleX(0.97) scaleY(1.015)',
+                filter: 'blur(4.5px)',
+                maskPosition: '0% 44%',
+                webkitMaskPosition: '0% 44%'
+            },
+            {
+                offset: 0.72,
+                opacity: 1,
+                transform: 'translateY(1px) scaleX(0.997) scaleY(1.002)',
+                filter: 'blur(0.7px)',
+                maskPosition: '0% 12%',
+                webkitMaskPosition: '0% 12%'
+            },
+            {
+                opacity: 1,
+                transform: 'translateY(0) scale(1)',
+                filter: 'blur(0px)',
+                maskPosition: '0% 0%',
+                webkitMaskPosition: '0% 0%'
+            }
+        ]);
+        const createSongRevealKeyframes = () => ([
+            {
+                opacity: 0,
+                transform: 'translateY(12px) scaleX(0.96) scaleY(1.025)',
+                filter: 'blur(8px)',
+                maskPosition: '0% 64%',
+                webkitMaskPosition: '0% 64%'
+            },
+            {
+                offset: 0.7,
+                opacity: 0.82,
+                transform: 'translateY(2px) scaleX(0.994) scaleY(1.004)',
+                filter: 'blur(1.2px)',
+                maskPosition: '0% 12%',
+                webkitMaskPosition: '0% 12%'
+            },
+            {
+                opacity: 1,
+                transform: 'translateY(0) scale(1)',
+                filter: 'blur(0px)',
+                maskPosition: '0% 0%',
+                webkitMaskPosition: '0% 0%'
+            }
+        ]);
+        const applyLyricFeather = (element) => {
+            element.style.setProperty('-webkit-mask-image', LYRIC_FEATHER_MASK);
+            element.style.setProperty('mask-image', LYRIC_FEATHER_MASK);
+            element.style.setProperty('-webkit-mask-repeat', 'no-repeat');
+            element.style.setProperty('mask-repeat', 'no-repeat');
+            element.style.setProperty('-webkit-mask-size', '100% 300%');
+            element.style.setProperty('mask-size', '100% 300%');
+            element.style.setProperty('-webkit-mask-position', '0% 64%');
+            element.style.setProperty('mask-position', '0% 64%');
+        };
+        const clearLyricFeather = (element) => {
+            element.style.removeProperty('-webkit-mask-image');
+            element.style.removeProperty('mask-image');
+            element.style.removeProperty('-webkit-mask-repeat');
+            element.style.removeProperty('mask-repeat');
+            element.style.removeProperty('-webkit-mask-size');
+            element.style.removeProperty('mask-size');
+            element.style.removeProperty('-webkit-mask-position');
+            element.style.removeProperty('mask-position');
+        };
 
-        const clearLyricMotionResidue = ({ clearOrigin = false, clearLines = false } = {}) => {
+        const clearLyricMotionResidue = ({ clearLines = false } = {}) => {
             resultArea.style.removeProperty('clip-path');
             lyricEl.style.removeProperty('clip-path');
-            if (clearOrigin) {
-                resultArea.style.removeProperty('--overlay-origin-x');
-                resultArea.style.removeProperty('--overlay-origin-y');
-            }
+            clearLyricFeather(lyricEl);
             if (!clearLines) return;
             lyricLines().forEach((line) => {
                 line.style.removeProperty('opacity');
                 line.style.removeProperty('transform');
                 line.style.removeProperty('filter');
                 line.style.removeProperty('clip-path');
+                clearLyricFeather(line);
             });
-        };
-
-        const measureLyricOverlayOrigin = () => {
-            const overlayRect = resultArea.getBoundingClientRect();
-            const vinylRect = vinyl.getBoundingClientRect();
-            if (
-                overlayRect.width <= 0
-                || overlayRect.height <= 0
-                || vinylRect.width <= 0
-                || vinylRect.height <= 0
-            ) return;
-
-            const clampPercent = (value) => Math.max(0, Math.min(100, value));
-            const centerX = vinylRect.left + (vinylRect.width / 2);
-            const centerY = vinylRect.top + (vinylRect.height / 2);
-            const originX = clampPercent(((centerX - overlayRect.left) / overlayRect.width) * 100);
-            const originY = clampPercent(((centerY - overlayRect.top) / overlayRect.height) * 100);
-            resultArea.style.setProperty('--overlay-origin-x', `${originX.toFixed(3)}%`);
-            resultArea.style.setProperty('--overlay-origin-y', `${originY.toFixed(3)}%`);
+            clearLyricFeather(songEl);
         };
 
         const revealLyricContentImmediately = () => {
@@ -1621,15 +1773,18 @@ const criticalAssetGate = startCriticalAssetGate({
             lyricEl.style.opacity = '1';
             lyricEl.style.transform = 'translateY(0)';
             lyricEl.style.filter = 'blur(0px)';
+            clearLyricFeather(lyricEl);
             songEl.style.opacity = '1';
             songEl.style.transform = 'translateY(0)';
             songEl.style.filter = 'blur(0px)';
+            clearLyricFeather(songEl);
 
             lyricLines().forEach((line) => {
                 line.style.opacity = '1';
                 line.style.transform = 'translateY(0)';
                 line.style.filter = 'blur(0px)';
                 line.style.clipPath = '';
+                clearLyricFeather(line);
             });
         };
 
@@ -1723,6 +1878,7 @@ const criticalAssetGate = startCriticalAssetGate({
                 clipPath: layer?.style.clipPath || '',
                 opacity: layer?.style.opacity || '',
                 transform: layer?.style.transform || '',
+                filter: layer?.style.filter || '',
                 zIndex: layer?.style.zIndex || '',
                 willChange: layer?.style.willChange || ''
             }
@@ -2060,7 +2216,7 @@ const criticalAssetGate = startCriticalAssetGate({
         const resetResultVisual = () => {
             lyricAnimations.forEach((anim) => anim.cancel());
             lyricAnimations = [];
-            clearLyricMotionResidue({ clearOrigin: true, clearLines: true });
+            clearLyricMotionResidue({ clearLines: true });
             resultArea.classList.remove('is-visible');
             resultArea.classList.remove('show-dismiss-hint');
             setInteractiveState(resultArea, false);
@@ -2124,36 +2280,27 @@ const criticalAssetGate = startCriticalAssetGate({
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
-            const lyricAnim = safeAnimate(lyricEl, [
-                { opacity: 0, transform: 'translateY(16px) scale(0.995)' },
-                { opacity: 1, transform: 'translateY(0) scale(1)' }
-            ], {
+            applyLyricFeather(lyricEl);
+            applyLyricFeather(songEl);
+            lyricLines().forEach((line) => {
+                line.style.opacity = '1';
+                line.style.transform = 'none';
+                line.style.filter = 'none';
+            });
+            const lyricAnim = safeAnimate(lyricEl, createLyricRevealKeyframes(), {
                 duration: overlayLyricDuration,
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
-            const songAnim = safeAnimate(songEl, [
-                { opacity: 0, transform: 'translateY(12px)' },
-                { opacity: 1, transform: 'translateY(0)' }
-            ], {
-                duration: overlaySongDuration,
-                delay: 150,
+            const songAnim = safeAnimate(songEl, createSongRevealKeyframes(), {
+                duration: Math.round(overlayLyricDuration * 0.7),
+                delay: Math.round(overlayLyricDuration * 0.3),
                 fill: 'forwards',
                 easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
             });
 
-            const lineAnimations = Array.from(lyricEl.querySelectorAll('.lyric-line')).map((line, index) => safeAnimate(line, [
-                { opacity: 0, transform: 'translateY(14px) scale(0.99)' },
-                { opacity: 1, transform: 'translateY(0) scale(1)' }
-            ], {
-                duration: overlayLineDuration,
-                delay: 100 + index * overlayLineDelayStep,
-                fill: 'forwards',
-                easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
-            }));
-
-            lyricAnimations = [cardAnim, lyricAnim, songAnim, ...lineAnimations];
+            lyricAnimations = [cardAnim, lyricAnim, songAnim];
         };
 
         const animatePlaylistIn = () => {
@@ -2338,24 +2485,27 @@ const criticalAssetGate = startCriticalAssetGate({
 
             element.style.opacity = `${isLyrics ? 0 : playlistStart.area}`;
             element.style.transform = isLyrics
-                ? 'translate3d(0, 0, 0) scale(0.985)'
+                ? 'translate3d(0, 0, 0)'
                 : 'translateY(8px)';
-            content.style.opacity = `${isLyrics ? 0 : playlistStart.content}`;
+            content.style.opacity = `${isLyrics ? 0.24 : playlistStart.content}`;
             content.style.transform = isLyrics
-                ? 'translateY(18px) scaleY(0.78) scaleX(0.985)'
+                ? 'translateY(18px) scaleX(0.92) scaleY(1.04)'
                 : PLAYLIST_CONTENT_ENTER_START_TRANSFORM;
             content.style.clipPath = '';
-            content.style.filter = isLyrics ? 'blur(14px)' : '';
+            content.style.filter = isLyrics ? 'blur(10px)' : '';
 
             if (!isLyrics) return;
             songEl.style.opacity = '0';
-            songEl.style.transform = 'translateY(12px)';
-            songEl.style.filter = 'blur(10px)';
+            songEl.style.transform = 'translateY(12px) scaleX(0.96) scaleY(1.025)';
+            songEl.style.filter = 'blur(8px)';
+            applyLyricFeather(lyricEl);
+            applyLyricFeather(songEl);
             lyricLines().forEach((line) => {
-                line.style.opacity = '0';
-                line.style.transform = 'translateY(20px) scale(0.985)';
-                line.style.filter = 'blur(14px)';
+                line.style.opacity = '1';
+                line.style.transform = 'none';
+                line.style.filter = 'none';
                 line.style.clipPath = '';
+                clearLyricFeather(line);
             });
         };
 
@@ -2448,7 +2598,6 @@ const criticalAssetGate = startCriticalAssetGate({
                 const element = isLyrics ? resultArea : playlistArea;
                 const content = isLyrics ? lyricEl : playlistContent;
                 rememberOverlayFocusOrigin(kind, element);
-                if (isLyrics) measureLyricOverlayOrigin();
                 primeOverlayOpen(kind, profile);
                 element.classList.add('is-visible');
                 setInteractiveState(element, true);
@@ -2468,90 +2617,32 @@ const criticalAssetGate = startCriticalAssetGate({
                 const primaryEasing = 'cubic-bezier(0.16, 1, 0.3, 1)';
                 try {
                     if (isLyrics) {
-                        const lyricDuration = profile === 'full' ? 760 : (profile === 'compact' ? 520 : 0);
-                        const titleDelay = profile === 'full' ? 100 : (profile === 'compact' ? 72 : 0);
-                        const contentDuration = profile === 'full' ? 720 : (profile === 'compact' ? 500 : 0);
-                        const lineStart = profile === 'full' ? 260 : (profile === 'compact' ? 170 : 0);
-                        const lineDuration = profile === 'full' ? 580 : (profile === 'compact' ? 460 : 0);
-                        const lineDelay = profile === 'full' ? 110 : (profile === 'compact' ? 84 : 0);
-                        const lines = lyricLines();
-                        const lastLineDelay = lineStart + (Math.max(0, lines.length - 1) * lineDelay);
-                        const songDelay = profile === 'reduce'
-                            ? 0
-                            : lastLineDelay + Math.round(lineDuration * 0.62);
-                        const songDuration = profile === 'full' ? 420 : (profile === 'compact' ? 340 : 0);
+                        const overlayDuration = profile === 'full' ? 520 : (profile === 'compact' ? 360 : 0);
+                        const blockDuration = profile === 'full' ? 600 : (profile === 'compact' ? 440 : 0);
+                        const blockDelay = profile === 'full' ? 80 : (profile === 'compact' ? 56 : 0);
+                        const songDuration = Math.round(blockDuration * 0.7);
+                        const songDelay = blockDelay + Math.round(blockDuration * 0.3);
                         await Promise.all([
                             runOverlayAnimation(element, [
                                 {
                                     opacity: 0,
-                                    transform: 'translate3d(0, 0, 0) scale(0.985)',
-                                    clipPath: 'circle(0% at var(--overlay-origin-x, 50%) var(--overlay-origin-y, 50%))'
+                                    transform: 'translate3d(0, 0, 0)'
                                 },
                                 {
                                     opacity: 1,
-                                    transform: 'translate3d(0, 0, 0) scale(1)',
-                                    clipPath: 'circle(150% at var(--overlay-origin-x, 50%) var(--overlay-origin-y, 50%))'
+                                    transform: 'translate3d(0, 0, 0)'
                                 }
-                            ], { duration: lyricDuration, easing: primaryEasing }, signal),
-                            runOverlayAnimation(content, [
-                                {
-                                    opacity: 0,
-                                    transform: 'translateY(18px) scaleY(0.78) scaleX(0.985)',
-                                    filter: 'blur(14px)'
-                                },
-                                {
-                                    offset: 0.46,
-                                    opacity: 0.34,
-                                    transform: 'translateY(10px) scaleY(0.92) scaleX(0.993)',
-                                    filter: 'blur(6px)'
-                                },
-                                {
-                                    opacity: 1,
-                                    transform: 'translateY(0) scaleY(1) scaleX(1)',
-                                    filter: 'blur(0px)'
-                                }
-                            ], {
-                                duration: contentDuration,
-                                delay: titleDelay,
+                            ], { duration: overlayDuration, easing: primaryEasing }, signal),
+                            runOverlayAnimation(lyricEl, createLyricRevealKeyframes(), {
+                                duration: blockDuration,
+                                delay: blockDelay,
                                 easing: primaryEasing
                             }, signal),
-                            runOverlayAnimation(songEl, [
-                                { opacity: 0, transform: 'translateY(14px) scaleX(0.9)', filter: 'blur(10px)' },
-                                { offset: 0.64, opacity: 0.72, transform: 'translateY(3px) scaleX(0.985)', filter: 'blur(2px)' },
-                                { opacity: 1, transform: 'translateY(0) scaleX(1)', filter: 'blur(0px)' }
-                            ], {
+                            runOverlayAnimation(songEl, createSongRevealKeyframes(), {
                                 duration: songDuration,
                                 delay: songDelay,
                                 easing: primaryEasing
-                            }, signal),
-                            ...lines.map((line, index) => runOverlayAnimation(line, [
-                                {
-                                    opacity: 0,
-                                    transform: 'translateY(20px) scale(0.985)',
-                                    filter: 'blur(14px)'
-                                },
-                                {
-                                    offset: 0.34,
-                                    opacity: 0.12,
-                                    transform: 'translateY(14px) scale(0.989)',
-                                    filter: 'blur(9px)'
-                                },
-                                {
-                                    offset: 0.76,
-                                    opacity: 0.78,
-                                    transform: 'translateY(2px) scale(0.998)',
-                                    filter: 'blur(1.6px)'
-                                },
-                                {
-                                    opacity: 1,
-                                    transform: 'translateY(0) scale(1)',
-                                    filter: 'blur(0px)'
-                                }
-                            ], {
-                                duration: lineDuration,
-                                delay: lineStart + (index * lineDelay),
-                                easing: primaryEasing
-                            }, signal))
+                            }, signal)
                         ]);
                     } else {
                         const cardDuration = profile === 'full'
@@ -2583,7 +2674,6 @@ const criticalAssetGate = startCriticalAssetGate({
 
                 const restoreFocus = element.contains(document.activeElement);
                 setInteractiveState(element, false);
-                if (isLyrics) measureLyricOverlayOrigin();
                 const content = isLyrics ? lyricEl : playlistContent;
                 const closeButton = isLyrics ? lyricCloseBtn : playlistCloseBtn;
                 const contentStartTransform = isLyrics
@@ -2597,13 +2687,11 @@ const criticalAssetGate = startCriticalAssetGate({
                         runOverlayAnimation(element, isLyrics ? [
                             {
                                 opacity: 1,
-                                transform: 'translate3d(0, 0, 0) scale(1)',
-                                clipPath: 'circle(150% at var(--overlay-origin-x, 50%) var(--overlay-origin-y, 50%))'
+                                transform: 'translate3d(0, 0, 0)'
                             },
                             {
                                 opacity: 0,
-                                transform: 'translate3d(0, 0, 0) scale(0.985)',
-                                clipPath: 'circle(0% at var(--overlay-origin-x, 50%) var(--overlay-origin-y, 50%))'
+                                transform: 'translate3d(0, 0, 0)'
                             }
                         ] : [
                             { opacity: 1, transform: 'translateY(0)' },

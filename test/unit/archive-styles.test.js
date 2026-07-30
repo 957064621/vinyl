@@ -288,28 +288,45 @@ test('terminal interaction and error states use the archive palette with compact
   assert.match(audioStatus, /border-left-color:\s*var\(--archive-red\)/);
   assert.match(audioStatus, /background:\s*var\(--archive-graphite\)/);
   assert.match(audioStatus, /color:\s*var\(--archive-projector\)/);
-  assert.match(audioRetry, /border-color:\s*color-mix\(in srgb,\s*var\(--archive-silver\)/);
-  assert.match(audioRetry, /background:\s*var\(--archive-slate\)/);
+  assert.match(audioRetry, /border-color:\s*var\(--control-glass-border\)/);
+  assert.match(audioRetry, /background:\s*var\(--control-glass-fill\)/);
   assert.match(audioRetry, /color:\s*var\(--archive-projector\)/);
   assert.match(hover, /\.audio-status \.audio-retry:not\(:disabled\):hover\s*\{[\s\S]*border-color:\s*var\(--archive-projector\)/);
   assert.match(archiveCss, /\.audio-status \.audio-retry:focus-visible\s*\{[\s\S]*outline:\s*2px solid var\(--archive-projector\)/);
   assert.match(
     archiveRuleBody('.lyric-toggle-btn.is-visible:active,\n        .playlist-toggle-btn.is-visible:active,\n        .playlist-mode-switch:active,\n        .audio-status .audio-retry:not(:disabled):active'),
-    /background:\s*color-mix\(in srgb, var\(--archive-void\) 62%, transparent\)/
+    /background:\s*var\(--control-glass-fill-active\)/
   );
   assert.match(
     archiveRuleBody('.result-area.is-visible .overlay-close-btn:active,\n        .playlist-area.is-visible .overlay-close-btn:active'),
-    /background:\s*color-mix\(in srgb, var\(--archive-void\) 62%, transparent\)/
+    /background:\s*var\(--control-glass-fill-active\)/
   );
 
   // 播放页控件是透光玻璃，不是实心色块。
-  assert.match(archiveRuleBody('.play-btn'), /background:\s*color-mix\(in srgb, var\(--archive-graphite\) 46%, transparent\)/);
-  assert.match(archiveRuleBody('.player-pill'), /background:\s*color-mix\(in srgb, var\(--archive-slate\) 48%, transparent\)/);
-  assert.match(archiveRuleBody('.player-ctrl-btn'), /background:\s*color-mix\(in srgb, var\(--archive-projector\) 16%, transparent\)/);
+  assert.match(archiveRuleBody('.play-btn'), /background:\s*var\(--control-glass-fill\)/);
+  assert.match(archiveRuleBody('.player-pill'), /background:\s*var\(--control-glass-fill\)/);
+  assert.match(archiveRuleBody('.player-ctrl-btn'), /background:\s*var\(--control-glass-fill\)/);
   assert.match(archiveRuleBody('.player-ctrl-btn'), /color:\s*var\(--archive-projector\)/);
   assert.match(
     archiveRuleBody('.lyric-toggle-btn,\n        .playlist-toggle-btn,\n        .overlay-close-btn'),
-    /background:\s*color-mix\(in srgb, var\(--archive-slate\) 48%, transparent\)/
+    /background:\s*var\(--control-glass-fill\)/
+  );
+  assert.match(css, /--control-glass-fill:\s*color-mix\(in srgb, var\(--archive-slate\) 20%, transparent\)/);
+  assert.match(
+    archiveRuleBody('.loading-retry,\n        .loading-skip,\n        .play-btn,\n        .lyric-toggle-btn,\n        .playlist-toggle-btn,\n        .player-pill'),
+    /backdrop-filter:\s*var\(--control-glass-blur\)/
+  );
+  assert.match(sourceRuleBody('.footer-link'), /background:\s*transparent/);
+  assert.match(sourceRuleBody('.footer-link'), /padding:\s*0 0 2px/);
+  assert.match(sourceRuleBody('.footer-link'), /border-bottom:\s*1px solid/);
+  assert.doesNotMatch(sourceRuleBody('.footer-link'), /backdrop-filter|border-radius|box-shadow/);
+  assert.match(
+    archiveRuleBody('.player-ctrl-btn,\n        .overlay-close-btn,\n        .playlist-mode-switch,\n        .audio-retry'),
+    /backdrop-filter:\s*none/
+  );
+  assert.match(
+    archiveRuleBody('.result-area.is-visible .overlay-close-btn:focus-visible,\n        .playlist-area.is-visible .overlay-close-btn:focus-visible'),
+    /outline:\s*none/
   );
   assert.doesNotMatch(archiveCss, /rgba\(255,\s*151,\s*135/);
   assert.match(groupCover, /border-radius:\s*6px/);
@@ -458,9 +475,18 @@ test('linear wrappers are limited to physical motion and keyframes with explicit
   });
 
   const linearJavaScriptEasings = [...mainSource.matchAll(/easing:\s*['"]linear['"]/g)];
-  assert.equal(linearJavaScriptEasings.length, 2);
+  assert.equal(linearJavaScriptEasings.length, 3);
   assert.match(mainSource, /const spinAnimation[\s\S]*?easing:\s*'linear'/);
   assert.match(mainSource, /const sheenAnimation[\s\S]*?easing:\s*'linear'/);
+  assert.match(
+    mainSource,
+    /const animationOptions = \{\s*duration,\s*fill: 'forwards',\s*easing: 'linear'\s*\};/
+  );
+  const coverSegmentCurves = [...mainSource.matchAll(
+    /COVER_DEPTH_EASING\.(approach|handoff|settle)/g
+  )].map((match) => match[1]);
+  assert.ok(coverSegmentCurves.length >= 6);
+  assert.deepEqual(new Set(coverSegmentCurves), new Set(['approach', 'handoff', 'settle']));
 });
 
 test('controls reserve a stable three-column rail and keep time inside the player', () => {
@@ -480,6 +506,8 @@ test('controls reserve a stable three-column rail and keep time inside the playe
   assert.match(time, /font-variant-numeric:\s*tabular-nums/);
   assert.match(mobile, /--mobile-content-rail:\s*min\(calc\(100vw - 32px\),\s*340px\)/);
   assert.match(mobile, /--side-control-size:\s*44px/);
+  assert.match(mobile, /\.header\s*\{[\s\S]*margin:\s*0 0 20px/);
+  assert.match(mobile, /\.header::after\s*\{[\s\S]*bottom:\s*-4px/);
   assert.match(mobile, /\.vinyl-wrapper\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);
   assert.match(mobile, /\.archive-track-meta\s*\{[\s\S]*width:\s*min\(calc\(var\(--mobile-content-rail\) - 44px\),\s*300px\)/);
   assert.match(mobile, /\.dynamic-island\s*\{[\s\S]*width:\s*var\(--mobile-content-rail\)/);

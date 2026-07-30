@@ -302,7 +302,7 @@ const hitTestControlCenter = (page, selector) => page.locator(selector).evaluate
   };
 });
 
-test('draw keeps the switched record cover visible for 500ms before lyrics appear', async ({ page }) => {
+test('draw crossfades the switched record cover before the 500ms lyric hold', async ({ page }, testInfo) => {
   await waitForApp(page);
   await page.evaluate(() => {
     const coverRoot = document.querySelector('.vinyl-sticker');
@@ -318,14 +318,35 @@ test('draw keeps the switched record cover visible for 500ms before lyrics appea
       archiveStates: [archiveState.textContent],
       activeCoverCounts: [coverRoot.querySelectorAll('.vinyl-cover.is-active').length],
       metadataCommits: [],
-      sawRadialReveal: false
+      sawDepthCrossfade: false,
+      sawBlurredDepth: false,
+      sawCoverOverlap: false,
+      sawBalancedDepth: false,
+      coverAnimationDurations: [],
+      ringFrames: []
     };
 
     const recordCoverState = () => {
       const timing = window.__drawRevealTiming;
       timing.activeCoverCounts.push(coverRoot.querySelectorAll('.vinyl-cover.is-active').length);
-      timing.sawRadialReveal ||= Array.from(coverRoot.querySelectorAll('.vinyl-cover'))
-        .some((cover) => cover.style.clipPath.startsWith('circle('));
+      const coverAnimations = Array.from(coverRoot.querySelectorAll('.vinyl-cover'))
+        .flatMap((cover) => cover.getAnimations())
+        .map((animation) => ({
+          duration: Number(animation.effect?.getTiming?.().duration) || 0,
+          frames: animation.effect?.getKeyframes?.() || []
+        }));
+      const directions = coverAnimations.map(({ frames }) => {
+        const firstOpacity = Number.parseFloat(frames.at(0)?.opacity);
+        const lastOpacity = Number.parseFloat(frames.at(-1)?.opacity);
+        if (firstOpacity === 0 && lastOpacity === 1) return 'incoming';
+        if (firstOpacity === 1 && lastOpacity === 0) return 'outgoing';
+        return '';
+      });
+      timing.sawDepthCrossfade ||= directions.includes('incoming') && directions.includes('outgoing');
+      timing.sawBlurredDepth ||= coverAnimations.some(({ frames }) => (
+        frames.some(({ filter }) => /blur\((?:[1-9]|\d{2,})(?:\.\d+)?px\)/.test(`${filter || ''}`))
+      ));
+      timing.coverAnimationDurations.push(...coverAnimations.map(({ duration }) => duration));
     };
     new MutationObserver(recordCoverState).observe(coverRoot, {
       attributes: true,
@@ -345,6 +366,21 @@ test('draw keeps the switched record cover visible for 500ms before lyrics appea
 
     const sampleCover = () => {
       const timing = window.__drawRevealTiming;
+      const coverOpacities = Array.from(coverRoot.querySelectorAll('.vinyl-cover'), (cover) => (
+        Number.parseFloat(getComputedStyle(cover).opacity)
+      ));
+      const coverBlurs = Array.from(coverRoot.querySelectorAll('.vinyl-cover'), (cover) => (
+        Number.parseFloat(getComputedStyle(cover).filter.match(/blur\(([-\d.]+)px\)/)?.[1]) || 0
+      ));
+      const ringStyle = getComputedStyle(coverRoot, '::before');
+      timing.ringFrames.push({
+        opacity: Number.parseFloat(ringStyle.opacity),
+        zIndex: ringStyle.zIndex,
+        residentConnected: Boolean(document.querySelector('#loadingHandoffResident'))
+      });
+      timing.sawCoverOverlap ||= coverOpacities.filter((opacity) => opacity > 0.04).length === 2;
+      timing.sawBalancedDepth ||= coverOpacities.every((opacity) => opacity >= 0.28 && opacity <= 0.74)
+        && coverBlurs.every((blur) => blur >= 1.8);
       const activeCover = coverRoot.querySelector('.vinyl-cover.is-active');
       if (activeCover && activeCover !== initialActiveCover) {
         timing.coverChangedAt ??= performance.now();
@@ -389,6 +425,20 @@ test('draw keeps the switched record cover visible for 500ms before lyrics appea
     ...window.__drawRevealTiming,
     activeCoverCount: document.querySelectorAll('.vinyl-cover.is-active').length
   }));
+  const settledCovers = await page.locator('.vinyl-cover').evaluateAll((covers) => covers.map((cover) => ({
+    active: cover.classList.contains('is-active'),
+    computedOpacity: Number.parseFloat(getComputedStyle(cover).opacity),
+    motionActive: cover.hasAttribute('data-motion-active'),
+    animationCount: cover.getAnimations().length,
+    residue: {
+      clipPath: cover.style.clipPath,
+      opacity: cover.style.opacity,
+      transform: cover.style.transform,
+      filter: cover.style.filter,
+      zIndex: cover.style.zIndex,
+      willChange: cover.style.willChange
+    }
+  })));
   expect(timing.coverAt).not.toBeNull();
   expect(timing.coverChangedAt).not.toBeNull();
   expect(timing.lyricsAt).not.toBeNull();
@@ -398,12 +448,33 @@ test('draw keeps the switched record cover visible for 500ms before lyrics appea
     .toBeLessThanOrEqual(DRAW_LYRIC_HOLD_MS + 150);
   expect(timing.activeCoverCount).toBe(1);
   expect(Math.max(...timing.activeCoverCounts)).toBe(1);
-  expect(timing.sawRadialReveal).toBe(true);
+  expect(timing.sawDepthCrossfade).toBe(true);
+  expect(timing.ringFrames.length).toBeGreaterThanOrEqual(8);
+  expect(timing.ringFrames.every(({ opacity, zIndex }) => (
+    opacity >= 0.99 && zIndex === '2'
+  ))).toBe(true);
+  if (testInfo.project.name !== 'mobile-reduce') {
+    expect(timing.sawBlurredDepth).toBe(true);
+    expect(timing.sawCoverOverlap).toBe(true);
+    expect(timing.sawBalancedDepth).toBe(true);
+    expect(Math.max(...timing.coverAnimationDurations)).toBeGreaterThanOrEqual(
+      testInfo.project.name === 'desktop-chromium' ? 1000 : 800
+    );
+  }
   expect(timing.metadataCommits.length).toBeGreaterThan(0);
   expect(timing.metadataCommits.every(({ activeCoverCount }) => activeCoverCount === 1)).toBe(true);
   expect(timing.metadataCommits.at(-1).activeCoverId).toBe(
     await page.locator('.vinyl-cover.is-active').getAttribute('id')
   );
+  expect(settledCovers.filter(({ active }) => active)).toHaveLength(1);
+  expect(settledCovers.find(({ active }) => active)?.computedOpacity).toBe(1);
+  expect(settledCovers.find(({ active }) => !active)?.computedOpacity).toBe(0);
+  expect(settledCovers.every(({ motionActive, animationCount }) => (
+    !motionActive && animationCount === 0
+  ))).toBe(true);
+  expect(settledCovers.every(({ residue }) => (
+    Object.values(residue).every((value) => value === '')
+  ))).toBe(true);
   expect(timing.archiveStates).toContain('抽取中');
   expect(timing.archiveStates.at(-1)).toBe('播放');
   const drawingIndex = timing.archiveStates.indexOf('抽取中');

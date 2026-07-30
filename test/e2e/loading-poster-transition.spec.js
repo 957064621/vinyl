@@ -217,11 +217,22 @@ const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
       ({ animationName }) => animationName === name
     );
     const timing = animation?.effect?.getComputedTiming?.();
-    return animation ? {
+    if (!animation) return null;
+    const keyframes = animation.effect?.getKeyframes?.() ?? [];
+    return {
       progress: Number.isFinite(timing?.progress) ? Number(timing.progress) : null,
       playState: animation.playState,
-      startTime: Number.isFinite(animation.startTime) ? Number(animation.startTime) : null
-    } : null;
+      startTime: Number.isFinite(animation.startTime) ? Number(animation.startTime) : null,
+      duration: Number(timing?.duration) || 0,
+      animatedProperties: [...new Set(keyframes.flatMap((keyframe) => (
+        Object.keys(keyframe).filter((property) => ![
+          'offset',
+          'computedOffset',
+          'easing',
+          'composite'
+        ].includes(property))
+      )))].sort()
+    };
   };
   const rect = (element) => {
     if (!element) return null;
@@ -334,6 +345,8 @@ const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
     const target = document.querySelector('.vinyl-sticker');
     const targetCover = document.querySelector('#vinylCoverA');
     const appShell = document.querySelector('#appShell');
+    const dynamicIsland = document.querySelector('.dynamic-island');
+    const playButton = document.querySelector('.play-btn');
     const grooves = document.querySelector('.vinyl-grooves');
     const highlight = document.querySelector('.vinyl-highlight');
     const activeRect = rect(activeImage);
@@ -354,12 +367,19 @@ const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
     const rootOpacity = root ? number(getComputedStyle(root).opacity) : 0;
     const sourceOpacity = source ? frameOpacity * number(sourceStyle.opacity) * rootOpacity : 0;
     const residentOpacity = resident ? number(getComputedStyle(resident).opacity) : 0;
+    const residentRingOpacity = resident
+      ? number(getComputedStyle(resident, '::before').opacity)
+      : 0;
+    const playerRingOpacity = target
+      ? number(getComputedStyle(target, '::before').opacity)
+      : 0;
     const coverOpacity = targetCover ? number(getComputedStyle(targetCover).opacity) : 0;
     const shellOpacity = appShell ? number(getComputedStyle(appShell).opacity) : 0;
     const targetOpacity = coverOpacity * shellOpacity;
     const handoffHoleStyle = source ? getComputedStyle(source.closest('.loading-frame'), '::after') : null;
     const motion = animationState(source, 'loading-poster-to-player-motion');
     const glide = animationState(activeImage, 'loading-poster-glide-in');
+    const shellReveal = animationState(appShell, 'loading-player-shell-reveal');
 
     probe.samples.push({
       at,
@@ -376,11 +396,14 @@ const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
       activeOpacity: activeImage ? frameOpacity * number(activeStyle.opacity) : 0,
       glide,
       motion,
+      shellReveal,
       sourceVisible: sourceOpacity > 0.05,
       sourceOpacity,
       residentConnected: Boolean(resident),
       residentVisible: residentOpacity > 0.05,
       residentOpacity,
+      residentRingOpacity,
+      playerRingOpacity,
       residentSameNode: Boolean(residentImage && residentImage === finalSourceNode),
       residentArtwork: residentImage?.currentSrc || residentImage?.src || null,
       targetVisible: targetOpacity > 0.05,
@@ -402,13 +425,21 @@ const installSkipHandoffContinuityProbe = (page) => page.addInitScript(() => {
       ),
       targetCrop: naturalCropForCover(naturalWidth, naturalHeight, targetRect),
       targetRect,
+      appShellRect: rect(appShell),
+      appShellTransform: appShell ? getComputedStyle(appShell).transform : null,
+      dynamicIslandRect: rect(dynamicIsland),
+      playButtonRect: rect(playButton),
       targetActive: Boolean(targetCover?.classList.contains('is-active')),
       targetBackgroundPosition: targetCover ? getComputedStyle(targetCover).backgroundPosition : null,
       targetBackgroundSize: targetCover ? getComputedStyle(targetCover).backgroundSize : null
     });
     if (probe.samples.length > 1800) probe.samples.shift();
 
-    if (!root && targetOpacity > 0.98) probe.settledFrames += 1;
+    if (
+      !root
+      && targetOpacity > 0.98
+      && (!resident || residentRingOpacity > 0.98)
+    ) probe.settledFrames += 1;
     if (probe.settledFrames < 4) requestAnimationFrame(sample);
   };
 
@@ -1596,7 +1627,18 @@ const installBrowserProbe = async (page) => {
             const handoff = loading.querySelector('.loading-image[data-loading-handoff="true"]');
             const target = document.querySelector('.vinyl-sticker');
             const targetCover = document.querySelector('#vinylCoverA');
-            if (poster && handoff && target && targetCover) {
+            const appShell = document.querySelector('#appShell');
+            const dynamicIsland = document.querySelector('.dynamic-island');
+            const playButton = document.querySelector('.play-btn');
+            if (
+              poster
+              && handoff
+              && target
+              && targetCover
+              && appShell
+              && dynamicIsland
+              && playButton
+            ) {
               const handoffStyle = getComputedStyle(handoff);
               const handoffRect = handoff.getBoundingClientRect();
               const sourceFrameRect = handoff.closest('.loading-frame').getBoundingClientRect();
@@ -1605,6 +1647,10 @@ const installBrowserProbe = async (page) => {
               const scale = matrix ? Math.hypot(matrix.a, matrix.b) : 1;
               const clip = readClipGeometry(handoffStyle.clipPath, handoffRect, scale);
               const targetRect = target.getBoundingClientRect();
+              const appShellRect = appShell.getBoundingClientRect();
+              const dynamicIslandRect = dynamicIsland.getBoundingClientRect();
+              const playButtonRect = playButton.getBoundingClientRect();
+              const appShellStyle = getComputedStyle(appShell);
               const visibleCenterX = clip.visibleLeft + (clip.visibleWidth / 2);
               const visibleCenterY = clip.visibleTop + (clip.visibleHeight / 2);
               const targetCenterX = targetRect.left + (targetRect.width / 2);
@@ -1649,6 +1695,7 @@ const installBrowserProbe = async (page) => {
               };
               const motion = readAnimationState(handoff, 'loading-poster-to-player-motion');
               const shape = readAnimationState(handoff, 'loading-poster-to-player-shape');
+              const shellReveal = readAnimationState(appShell, 'loading-player-shell-reveal');
               probe.handoffReadySeen ||= loading.dataset.handoffReady === 'true';
               probe.finalHandoffSamples.push({
                 at: now,
@@ -1667,6 +1714,7 @@ const installBrowserProbe = async (page) => {
                 roundRadiusY: clip.roundRadiusY,
                 motion,
                 shape,
+                shellReveal,
                 sourceIsActivePoster: handoff === poster,
                 handoffSourceCount: loading.querySelectorAll(
                   '.loading-image[data-loading-handoff="true"]'
@@ -1680,6 +1728,32 @@ const installBrowserProbe = async (page) => {
                 },
                 targetWidth: targetRect.width,
                 targetHeight: targetRect.height,
+                targetRect: {
+                  left: targetRect.left,
+                  top: targetRect.top,
+                  width: targetRect.width,
+                  height: targetRect.height
+                },
+                appShellRect: {
+                  left: appShellRect.left,
+                  top: appShellRect.top,
+                  width: appShellRect.width,
+                  height: appShellRect.height
+                },
+                dynamicIslandRect: {
+                  left: dynamicIslandRect.left,
+                  top: dynamicIslandRect.top,
+                  width: dynamicIslandRect.width,
+                  height: dynamicIslandRect.height
+                },
+                playButtonRect: {
+                  left: playButtonRect.left,
+                  top: playButtonRect.top,
+                  width: playButtonRect.width,
+                  height: playButtonRect.height
+                },
+                appShellOpacity: Number.parseFloat(appShellStyle.opacity) || 0,
+                appShellTransform: appShellStyle.transform,
                 targetCoverLoadingHandoff: targetCover?.dataset.loadingHandoff === 'true',
                 targetCoverActive: Boolean(targetCover?.classList.contains('is-active')),
                 targetCoverOpacity: Number.parseFloat(getComputedStyle(targetCover).opacity) || 0,
@@ -2430,6 +2504,37 @@ test('single-poster loading sequence is bounded and settles', async ({ page }, t
       expect(Math.max(...values) - Math.min(...values), `source frame ${property} is fixed`)
         .toBeLessThanOrEqual(0.5);
     }
+    for (const [label, key] of [
+      ['player shell', 'appShellRect'],
+      ['vinyl target', 'targetRect'],
+      ['control rail', 'dynamicIslandRect'],
+      ['draw button', 'playButtonRect']
+    ]) {
+      for (const property of frameGeometry) {
+        const values = handoffSamples.map((sample) => sample[key][property]);
+        expect(Math.max(...values) - Math.min(...values), `${label} ${property} is fixed`)
+          .toBeLessThanOrEqual(0.5);
+      }
+    }
+    expect(handoffSamples.every(({ appShellTransform }) => (
+      appShellTransform === 'none' || appShellTransform === 'matrix(1, 0, 0, 1, 0, 0)'
+    ))).toBe(true);
+    const shellRevealSamples = handoffSamples.filter(({ shellReveal }) => shellReveal);
+    expect(shellRevealSamples.length).toBeGreaterThanOrEqual(8);
+    expect(shellRevealSamples.every(({ shellReveal }) => (
+      JSON.stringify(shellReveal.animatedProperties) === JSON.stringify(['opacity'])
+    ))).toBe(true);
+    const shellOpacitySteps = shellRevealSamples.slice(1).map((sample, index) => ({
+      elapsed: sample.at - shellRevealSamples[index].at,
+      delta: sample.appShellOpacity - shellRevealSamples[index].appShellOpacity
+    })).filter(({ elapsed }) => elapsed > 0);
+    expect(shellOpacitySteps.every(({ delta }) => delta >= -0.005)).toBe(true);
+    const presentedShellSteps = shellOpacitySteps.filter(({ elapsed }) => (
+      elapsed >= 8 && elapsed <= 34
+    ));
+    expect(presentedShellSteps.length).toBeGreaterThanOrEqual(6);
+    expect(Math.max(...presentedShellSteps.map(({ delta }) => delta)))
+      .toBeLessThanOrEqual(0.08);
     const animatedHandoffSamples = handoffSamples.filter(({ motion, shape }) => (
       motion?.name === 'loading-poster-to-player-motion'
       && shape?.name === 'loading-poster-to-player-shape'
@@ -2787,6 +2892,44 @@ test('skip preserves the in-flight poster and hands end.jpg to the player withou
     ), null, { timeout: 5_000 });
 
     const finalProbe = await page.evaluate(() => window.__vinylSkipHandoffProbe);
+    const removalIndex = finalProbe.samples.findIndex((sample, index, samples) => (
+      index > 0
+      && samples[index - 1].rootConnected
+      && !sample.rootConnected
+    ));
+    expect(removalIndex).toBeGreaterThan(0);
+    const beforeRemoval = finalProbe.samples[removalIndex - 1];
+    const afterRemoval = finalProbe.samples[removalIndex];
+    for (const [label, key] of [
+      ['control rail', 'dynamicIslandRect'],
+      ['draw button', 'playButtonRect']
+    ]) {
+      expect(beforeRemoval[key], `${label} exists before removal`).toBeTruthy();
+      expect(afterRemoval[key], `${label} exists after removal`).toBeTruthy();
+      for (const property of ['left', 'top', 'width', 'height']) {
+        expect(
+          Math.abs(afterRemoval[key][property] - beforeRemoval[key][property]),
+          `${label} ${property} stays continuous`
+        ).toBeLessThanOrEqual(0.5);
+      }
+    }
+    const revealWindow = finalProbe.samples.slice(0, removalIndex + 1)
+      .filter(({ shellReveal }) => shellReveal);
+    expect(revealWindow.length).toBeGreaterThanOrEqual(8);
+    expect(revealWindow.every(({ shellReveal }) => (
+      JSON.stringify(shellReveal.animatedProperties) === JSON.stringify(['opacity'])
+    ))).toBe(true);
+    const opacitySteps = revealWindow.slice(1).map((sample, index) => ({
+      elapsed: sample.at - revealWindow[index].at,
+      delta: sample.shellOpacity - revealWindow[index].shellOpacity
+    })).filter(({ elapsed }) => elapsed > 0);
+    expect(opacitySteps.every(({ delta }) => delta >= -0.005)).toBe(true);
+    const presentedOpacitySteps = opacitySteps.filter(({ elapsed }) => (
+      elapsed >= 8 && elapsed <= 34
+    ));
+    expect(presentedOpacitySteps.length).toBeGreaterThanOrEqual(6);
+    expect(Math.max(...presentedOpacitySteps.map(({ delta }) => delta)))
+      .toBeLessThanOrEqual(0.08);
     const settledTarget = finalProbe.samples.findLast((sample) => (
       !sample.rootConnected
       && sample.targetVisible
@@ -2803,6 +2946,17 @@ test('skip preserves the in-flight poster and hands end.jpg to the player withou
       residentOpacity: 1
     });
     expect(new URL(settledResident.residentArtwork).pathname).toBe(FINAL_COVER_PATHNAME);
+    const residentRingSamples = finalProbe.samples.filter((sample) => (
+      !sample.rootConnected && sample.residentConnected
+    ));
+    expect(residentRingSamples.length).toBeGreaterThanOrEqual(12);
+    expect(residentRingSamples[0].residentRingOpacity).toBeLessThanOrEqual(0.05);
+    expect(residentRingSamples.at(-1).residentRingOpacity).toBeGreaterThanOrEqual(0.98);
+    expect(residentRingSamples.every(({ playerRingOpacity }) => playerRingOpacity >= 0.99)).toBe(true);
+    const residentRingSteps = residentRingSamples.slice(1).map((sample, index) => (
+      sample.residentRingOpacity - residentRingSamples[index].residentRingOpacity
+    ));
+    expect(residentRingSteps.every((delta) => delta >= -0.01)).toBe(true);
     const handoffSamples = finalProbe.samples.filter(({ motion, sourceClip, targetRect }) => (
       motion && sourceClip && targetRect
     ));

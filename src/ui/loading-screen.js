@@ -481,6 +481,7 @@ export function createLoadingScreen(documentRef = document, {
     layer.id = 'loadingHandoffResident';
     layer.className = 'loading-handoff-resident';
     layer.setAttribute('aria-hidden', 'true');
+    layer.dataset.ringState = 'entering';
     layer.dataset.centerX = String(centerX);
     layer.dataset.centerY = String(centerY);
     layer.dataset.radius = String(radius);
@@ -559,14 +560,22 @@ export function createLoadingScreen(documentRef = document, {
   const startAnimatedHandoff = (run) => {
     const { signal } = run.controller;
     const { timing } = run;
-    root.dataset.handoffReady = 'true';
-    root.dataset.handoffPhase = 'morphing';
     root.style.setProperty('--final-resolve-ms', `${timing.morph}ms`);
     root.style.setProperty('--loading-handoff-morph-ms', `${timing.morph}ms`);
     root.style.setProperty('--loading-player-reveal-delay-ms', `${timing.revealAt}ms`);
     root.style.setProperty('--loading-player-reveal-ms', `${timing.playerReveal}ms`);
     run.appShell.style.setProperty('--loading-player-reveal-delay-ms', `${timing.revealAt}ms`);
     run.appShell.style.setProperty('--loading-player-reveal-ms', `${timing.playerReveal}ms`);
+
+    // Start the player reveal before exposing the source so both layers share
+    // the same composited handoff frame.
+    if (!beginPlayerReveal(run)) {
+      run.settle(false);
+      return;
+    }
+    run.source.dataset.loadingHandoff = 'true';
+    root.dataset.handoffReady = 'true';
+    root.dataset.handoffPhase = 'morphing';
 
     const options = { signal, setTimer, clearTimer };
     const morphWork = waitForAnimation(
@@ -575,9 +584,7 @@ export function createLoadingScreen(documentRef = document, {
       { ...options, timeoutMs: timing.morph + 80 }
     );
     const backdropWork = waitForDelay(timing.backdropExit, options);
-    const playerWork = beginPlayerReveal(run)
-      ? waitForDelay(timing.morph, options)
-      : Promise.resolve(false);
+    const playerWork = waitForDelay(timing.morph, options);
 
     void Promise.all([morphWork, playerWork, backdropWork])
       .then((results) => {
@@ -731,7 +738,6 @@ export function createLoadingScreen(documentRef = document, {
     const artworkSource = source.currentSrc || source.src;
     if (!artworkSource) return;
 
-    source.dataset.loadingHandoff = 'true';
     targetCover.classList.remove('is-active');
     targetCover.style.backgroundImage = `url(${JSON.stringify(artworkSource)})`;
     targetCover.dataset.loadingPrewarm = 'true';

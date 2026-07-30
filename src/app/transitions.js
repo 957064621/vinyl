@@ -370,7 +370,11 @@ export function createAppTransitions({
                 })
               ]));
             })();
-        const loading = inFlight.track(loadPreparedTrack(transaction, operationSignal, profile));
+        const loading = inFlight.track(loadPreparedTrack(
+          transaction,
+          operationSignal,
+          headless ? 'reduce' : profile
+        ));
         const [closedOverlayState] = await Promise.all([overlayStatePromise, bridge, loading]);
         overlayState ||= closedOverlayState;
         assertActive(operationSignal);

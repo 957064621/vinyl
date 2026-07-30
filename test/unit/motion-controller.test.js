@@ -1224,10 +1224,12 @@ test('a headless track switch synchronizes the playing mechanics without transit
   );
   const arm = fakes.events.find(([name]) => name === 'arm');
   const rate = fakes.events.find(([name]) => name === 'rate');
+  const commit = fakes.events.find(([name]) => name === 'commit');
   assert.deepEqual(arm.slice(0, 2), ['arm', 'play']);
   assert.equal(arm[2].duration, 0);
   assert.equal(rate[1], 0.68);
   assert.equal(rate[2].duration, 0);
+  assert.equal(commit[2].profile, 'reduce');
 });
 
 test('the composition root routes player commands through exclusive motion ownership', () => {

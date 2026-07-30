@@ -271,7 +271,7 @@ test('reset cancels the final handoff barrier and clears every temporary marker'
   assert.equal(root.style.getPropertyValue('--poster-final-inset-right'), '3.1250%');
   assert.equal(root.style.getPropertyValue('--poster-final-inset-bottom'), '12.5000%');
   assert.equal(root.style.getPropertyValue('--poster-final-inset-left'), '3.1250%');
-  assert.equal(image.dataset.loadingHandoff, 'true');
+  assert.equal(image.dataset.loadingHandoff, undefined);
   assert.equal(targetCover.dataset.loadingHandoff, 'true');
   assert.equal(targetCover.dataset.loadingPrewarm, 'true');
   assert.equal(targetCover.classList.contains('is-active'), false);
@@ -279,6 +279,7 @@ test('reset cancels the final handoff barrier and clears every temporary marker'
   assert.equal(appShell.classList.contains('is-loading-reveal'), false);
 
   await timers.advance(16);
+  assert.equal(image.dataset.loadingHandoff, 'true');
   assert.equal(root.dataset.handoffReady, 'true');
   assert.equal(root.dataset.handoffPhase, 'morphing');
   assert.equal(root.style.getPropertyValue('--final-resolve-ms'), '1280ms');
@@ -386,6 +387,7 @@ test('final handoff starts one shared timeline and transfers artwork atomically'
   const resident = document.getElementById('loadingHandoffResident');
   assert.ok(resident);
   assert.strictEqual(resident.querySelector('.loading-handoff-resident-image'), image);
+  assert.equal(resident.dataset.ringState, 'entering');
   assert.equal(image.isConnected, true);
   assert.equal(image.classList.contains('loading-image'), false);
   assert.equal(document.body.dataset.loadingHandoffResident, 'true');
@@ -2007,8 +2009,30 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
     );
   }
 
+  expectDeclarations(
+    extractCssBlock(
+      css,
+      'html:not([data-motion-profile="reduce"]) .app-shell.is-loading-reveal[data-loading-handoff="true"]'
+    ),
+    {
+      animation: `loading-player-shell-reveal
+                var(--loading-player-reveal-ms, 794ms)
+                var(--crossfade-ease)
+                var(--loading-player-reveal-delay-ms, 486ms)
+                both`,
+      transition: 'none'
+    },
+    'player shell uses one continuous opacity reveal'
+  );
+
+  const shellReveal = extractCssBlock(css, '@keyframes loading-player-shell-reveal');
+  expectKeyframeStops(css, 'loading-player-shell-reveal', {
+    '0%': { opacity: '0' },
+    '100%': { opacity: '1' }
+  });
+  assert.doesNotMatch(shellReveal, /\btransform\s*:/);
+
   for (const [name, finalOpacity] of [
-    ['loading-player-shell-reveal', '1'],
     ['loading-vinyl-grooves-reveal', '0.76'],
     ['loading-vinyl-highlight-reveal', '0.62'],
     ['loading-vinyl-surface-reveal', '1'],
@@ -2062,6 +2086,13 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
       `${selector} must share the centered pressing ring`
     );
   }
+  const residentRing = extractCssBlock(css, '.loading-handoff-resident::before');
+  assert.match(residentRing, /opacity:\s*0/);
+  assert.match(residentRing, /scale\(0\.94\)/);
+  const residentRingEnter = extractCssBlock(css, 'body[data-loading-handoff-resident="true"] .loading-handoff-resident::before');
+  assert.match(residentRingEnter, /loading-handoff-resident-ring-enter 520ms/);
+  const playerRing = extractCssBlock(css, '.vinyl-sticker::before');
+  assert.match(playerRing, /z-index:\s*2/);
 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),

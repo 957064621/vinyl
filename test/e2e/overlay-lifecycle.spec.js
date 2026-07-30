@@ -154,9 +154,16 @@ test('short compact viewport keeps fixed controls clear of metadata and playlist
 
   const initialBounds = await page.evaluate(() => ({
     metadata: document.querySelector('#archiveTrackMeta').getBoundingClientRect().toJSON(),
-    draw: document.querySelector('#playButton').getBoundingClientRect().toJSON()
+    draw: document.querySelector('#playButton').getBoundingClientRect().toJSON(),
+    vinyl: document.querySelector('#vinylRecord').getBoundingClientRect().toJSON(),
+    header: document.querySelector('.header').getBoundingClientRect().toJSON(),
+    headerRuleBottom: Number.parseFloat(
+      getComputedStyle(document.querySelector('.header'), '::after').bottom
+    )
   }));
   expect(initialBounds.metadata.bottom + 12).toBeLessThanOrEqual(initialBounds.draw.top);
+  const headerLineBottom = initialBounds.header.bottom - initialBounds.headerRuleBottom;
+  expect(headerLineBottom + 28).toBeLessThanOrEqual(initialBounds.vinyl.top);
 
   await page.locator('#playButton').click();
   await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
@@ -177,6 +184,128 @@ test('short compact viewport keeps fixed controls clear of metadata and playlist
   expect(overlayBounds.playlist.bottom + 12).toBeLessThanOrEqual(overlayBounds.draw.top);
   expect(overlayBounds.draw.bottom + 6).toBeLessThanOrEqual(overlayBounds.player.top);
   expect(overlayBounds.player.bottom + 12).toBeLessThanOrEqual(overlayBounds.viewportHeight);
+});
+
+test('mobile overlays keep glass controls and playlist content in separate safe regions', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await waitForApp(page);
+
+  const headerStageGap = await page.evaluate(() => {
+    const header = document.querySelector('.header');
+    const headerBounds = header.getBoundingClientRect();
+    const lineBottom = headerBounds.bottom - Number.parseFloat(
+      getComputedStyle(header, '::after').bottom
+    );
+    return {
+      lineBottom,
+      vinylTop: document.querySelector('#vinylRecord').getBoundingClientRect().top
+    };
+  });
+  expect(headerStageGap.lineBottom + 28).toBeLessThanOrEqual(headerStageGap.vinylTop);
+
+  await page.locator('#playButton').click();
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+  await expect(page.locator('#playButton')).not.toHaveAttribute('data-busy', '', { timeout: 12_000 });
+
+  const lyricCloseMaterial = await page.locator('#lyricCloseBtn').evaluate((button) => {
+    const style = getComputedStyle(button);
+    return {
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      backdropFilter: style.backdropFilter || style.webkitBackdropFilter,
+      boxShadow: style.boxShadow,
+      focusVisible: button.matches(':focus-visible')
+    };
+  });
+  expect(lyricCloseMaterial.backdropFilter).toBe('none');
+  expect(lyricCloseMaterial.boxShadow).not.toContain('0px 0px 0px 1px');
+  expect(lyricCloseMaterial.outlineStyle === 'none' || lyricCloseMaterial.outlineWidth === '0px')
+    .toBe(true);
+
+  await page.locator('#lyricCloseBtn').click();
+  await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/);
+  await page.locator('#playlistToggleBtn').click();
+  await expect(page.locator('#playlistArea')).toHaveClass(/is-visible/);
+  await page.waitForFunction(() => Number.parseFloat(
+    getComputedStyle(document.querySelector('#playlistContent')).opacity
+  ) >= 0.99);
+
+  const geometry = await page.evaluate(() => {
+    const playlist = document.querySelector('#playlistContent').getBoundingClientRect();
+    const list = document.querySelector('#playlistList');
+    const draw = document.querySelector('#playButton').getBoundingClientRect();
+    const player = document.querySelector('#playerPill').getBoundingClientRect();
+    const closeStyle = getComputedStyle(document.querySelector('#playlistCloseBtn'));
+    const controlStyles = Object.fromEntries([
+      '#playButton',
+      '#playerToggleBtn',
+      '#playlistToggleBtn',
+      '#lyricToggleBtn',
+      '#playlistCloseBtn',
+      '#playlistModeSwitch'
+    ].map((selector) => {
+      const style = getComputedStyle(document.querySelector(selector));
+      return [selector, style.backdropFilter || style.webkitBackdropFilter];
+    }));
+    return {
+      playlist: playlist.toJSON(),
+      draw: draw.toJSON(),
+      player: player.toJSON(),
+      listScrollsInternally: list.scrollHeight > list.clientHeight,
+      listOverflowY: getComputedStyle(list).overflowY,
+      closeOutline: `${closeStyle.outlineStyle} ${closeStyle.outlineWidth}`,
+      controlStyles
+    };
+  });
+
+  expect(geometry.playlist.bottom + 20).toBeLessThanOrEqual(geometry.draw.top);
+  expect(geometry.draw.bottom + 6).toBeLessThanOrEqual(geometry.player.top);
+  expect(geometry.listScrollsInternally).toBe(true);
+  expect(geometry.listOverflowY).toBe('auto');
+  for (const selector of ['#playButton', '#playlistToggleBtn', '#lyricToggleBtn']) {
+    expect(geometry.controlStyles[selector]).toContain('blur(16px)');
+  }
+  for (const selector of ['#playerToggleBtn', '#playlistCloseBtn', '#playlistModeSwitch']) {
+    expect(geometry.controlStyles[selector]).toBe('none');
+  }
+});
+
+test('short wide viewports keep playlist content above the fixed control rail', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await page.setViewportSize({ width: 1280, height: 640 });
+  await waitForApp(page);
+  await drawAndOpenPlaylist(page);
+
+  const readGeometry = () => page.evaluate(() => {
+    const playlist = document.querySelector('#playlistContent').getBoundingClientRect();
+    const controls = [
+      document.querySelector('#playButton'),
+      document.querySelector('#playerPill'),
+      document.querySelector('#playlistToggleBtn'),
+      document.querySelector('#lyricToggleBtn')
+    ].map((element) => ({
+      rect: element.getBoundingClientRect().toJSON(),
+      opacity: Number.parseFloat(getComputedStyle(element).opacity) || 0
+    })).filter(({ rect, opacity }) => rect.width > 0 && rect.height > 0 && opacity > 0.05);
+    return {
+      playlist: playlist.toJSON(),
+      controlsTop: Math.min(...controls.map(({ rect }) => rect.top)),
+      viewport: { width: innerWidth, height: innerHeight }
+    };
+  });
+
+  for (const viewport of [
+    { width: 1280, height: 640 },
+    { width: 844, height: 390 }
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const geometry = await readGeometry();
+    expect(geometry.viewport).toEqual(viewport);
+    expect(geometry.playlist.bottom + 10).toBeLessThanOrEqual(geometry.controlsTop);
+    expect(geometry.playlist.top).toBeGreaterThanOrEqual(48);
+  }
 });
 
 test('desktop playlist material begins revealing with the backdrop', async ({ page }, testInfo) => {
@@ -302,9 +431,16 @@ test('lyrics are primed hidden before the visible class exposes the overlay', as
         lyricOpacity: lyric.style.opacity,
         lyricTransform: lyric.style.transform,
         lyricFilter: lyric.style.filter,
+        lyricHasFeather: lyric.style.maskImage.includes('linear-gradient'),
+        lyricMaskPosition: lyric.style.maskPosition,
+        lyricMaskSize: lyric.style.maskSize,
         songOpacity: song.style.opacity,
+        songTransform: song.style.transform,
+        songHasFeather: song.style.maskImage.includes('linear-gradient'),
         lineOpacity: line?.style.opacity || '',
         lineFilter: line?.style.filter || '',
+        lineTransform: line?.style.transform || '',
+        lineHasFeather: line?.style.maskImage.includes('linear-gradient') || false,
         inert: area.hasAttribute('inert'),
         ariaHidden: area.getAttribute('aria-hidden')
       };
@@ -317,13 +453,20 @@ test('lyrics are primed hidden before the visible class exposes the overlay', as
   await expect.poll(() => page.evaluate(() => window.__lyricExposureState)).not.toBeNull();
   expect(await page.evaluate(() => window.__lyricExposureState)).toEqual({
     areaOpacity: '0',
-    areaTransform: 'translate3d(0, 0, 0) scale(0.985)',
-    lyricOpacity: '0',
-    lyricTransform: 'translateY(18px) scaleY(0.78) scaleX(0.985)',
-    lyricFilter: 'blur(14px)',
+    areaTransform: 'translate3d(0px, 0px, 0px)',
+    lyricOpacity: '0.24',
+    lyricTransform: 'translateY(18px) scaleX(0.92) scaleY(1.04)',
+    lyricFilter: 'blur(10px)',
+    lyricHasFeather: true,
+    lyricMaskPosition: '0% 64%',
+    lyricMaskSize: '100% 300%',
     songOpacity: '0',
-    lineOpacity: '0',
-    lineFilter: 'blur(14px)',
+    songTransform: 'translateY(12px) scaleX(0.96) scaleY(1.025)',
+    songHasFeather: true,
+    lineOpacity: '1',
+    lineFilter: 'none',
+    lineTransform: 'none',
+    lineHasFeather: false,
     inert: false,
     ariaHidden: null
   });
@@ -335,7 +478,7 @@ test('lyrics are primed hidden before the visible class exposes the overlay', as
   });
 });
 
-test('lyrics reveal from the live vinyl center and retract without transition residue', async ({ page }, testInfo) => {
+test('lyrics reveal as one feathered block without per-line staggering', async ({ page }, testInfo) => {
   test.skip(!['desktop-chromium', 'mobile-chromium'].includes(testInfo.project.name));
   await waitForApp(page);
   await page.locator('#playButton').click();
@@ -344,105 +487,126 @@ test('lyrics reveal from the live vinyl center and retract without transition re
   await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/);
 
   await page.locator('#lyricToggleBtn').click();
-  await page.waitForFunction(() => document.querySelector('#resultArea')?.getAnimations().some((animation) => (
-    animation.effect?.getKeyframes?.().some(({ clipPath }) => `${clipPath}`.startsWith('circle(0%'))
-  )));
+  await page.waitForFunction(() => document.querySelector('#lyricText')?.getAnimations().some(
+    (animation) => animation.effect?.getKeyframes?.().some(({ transform }) => (
+      `${transform}`.includes('scaleX(0.92)')
+    ))
+  ));
 
   const opening = await page.evaluate(() => {
     const area = document.querySelector('#resultArea');
-    const vinyl = document.querySelector('#vinylRecord');
-    const areaRect = area.getBoundingClientRect();
-    const vinylRect = vinyl.getBoundingClientRect();
-    const animation = area.getAnimations().find((candidate) => (
-      candidate.effect?.getKeyframes?.().some(({ clipPath }) => `${clipPath}`.startsWith('circle(0%'))
+    const lyric = document.querySelector('#lyricText');
+    const song = document.querySelector('#songName');
+    const areaFrames = area.getAnimations().flatMap((animation) => (
+      animation.effect?.getKeyframes?.() || []
     ));
-    const lineTimings = Array.from(document.querySelectorAll('#lyricText .lyric-line'))
-      .map((line) => line.getAnimations().map((candidate) => {
-        const timing = candidate.effect.getTiming();
-        const keyframes = candidate.effect.getKeyframes();
-        return {
-          delay: Number(timing.delay || 0),
-          duration: Number(timing.duration || 0),
-          filters: keyframes.map(({ filter }) => filter || ''),
-          clips: keyframes.map(({ clipPath }) => clipPath || '')
-        };
-      }).find(({ filters }) => filters.some((filter) => filter.includes('blur('))))
-      .filter(Boolean);
+    const describeReveal = (element) => {
+      const animation = element.getAnimations().find((candidate) => (
+        candidate.effect.getKeyframes().some(({ filter }) => `${filter}`.includes('blur('))
+      ));
+      const timing = animation.effect.getTiming();
+      const keyframes = animation.effect.getKeyframes();
+      const style = getComputedStyle(element);
+      return {
+        delay: Number(timing.delay || 0),
+        duration: Number(timing.duration || 0),
+        filters: keyframes.map(({ filter }) => filter || ''),
+        transforms: keyframes.map(({ transform }) => transform || ''),
+        maskPositions: keyframes.map(({ maskPosition }) => maskPosition || ''),
+        maskSizes: keyframes.map(({ maskSize }) => maskSize || ''),
+        clips: keyframes.map(({ clipPath }) => clipPath || ''),
+        hasFeather: [
+          style.maskImage,
+          style.webkitMaskImage,
+          element.style.maskImage,
+          element.style.webkitMaskImage
+        ].some((value) => value && value !== 'none')
+      };
+    };
+    const lines = Array.from(document.querySelectorAll('#lyricText .lyric-line'));
     return {
       profile: document.documentElement.dataset.motionProfile,
-      originX: Number.parseFloat(area.style.getPropertyValue('--overlay-origin-x')),
-      originY: Number.parseFloat(area.style.getPropertyValue('--overlay-origin-y')),
-      expectedX: ((vinylRect.left + vinylRect.width / 2 - areaRect.left) / areaRect.width) * 100,
-      expectedY: ((vinylRect.top + vinylRect.height / 2 - areaRect.top) / areaRect.height) * 100,
-      areaWidth: areaRect.width,
-      areaHeight: areaRect.height,
-      frames: animation.effect.getKeyframes().map(({ clipPath }) => clipPath),
-      lineTimings
+      areaClips: areaFrames.map(({ clipPath }) => clipPath || ''),
+      lyricReveal: describeReveal(lyric),
+      songReveal: describeReveal(song),
+      lineAnimationCount: lines.reduce((count, line) => count + line.getAnimations().length, 0),
+      lineStates: lines.map((line) => ({
+        opacity: getComputedStyle(line).opacity,
+        maskImage: line.style.maskImage
+      }))
     };
   });
 
-  const originErrorPx = Math.hypot(
-    ((opening.originX - opening.expectedX) / 100) * opening.areaWidth,
-    ((opening.originY - opening.expectedY) / 100) * opening.areaHeight
-  );
-  expect(originErrorPx).toBeLessThanOrEqual(2.5);
-  expect(opening.frames[0]).toContain('circle(0%');
-  expect(opening.frames.at(-1)).toContain('circle(150%');
-  expect(opening.lineTimings.length).toBeGreaterThan(1);
-  const expectedLineDelay = opening.profile === 'full' ? 110 : 84;
-  const expectedLineDuration = opening.profile === 'full' ? 580 : 460;
-  const delays = opening.lineTimings.map(({ delay }) => delay);
-  expect(delays.slice(1).every((delay, index) => (
-    Math.abs((delay - delays[index]) - expectedLineDelay) <= 1
-  ))).toBe(true);
-  expect(opening.lineTimings.every(({ duration, filters, clips }) => (
-    Math.abs(duration - expectedLineDuration) <= 1
-    && filters[0] === 'blur(14px)'
-    && filters.at(-1) === 'blur(0px)'
-    && clips.every((clip) => clip === '')
+  expect(opening.areaClips.every((clip) => clip === '')).toBe(true);
+  const expectedBlockDelay = opening.profile === 'full' ? 80 : 56;
+  const expectedBlockDuration = opening.profile === 'full' ? 600 : 440;
+  const expectedSongDuration = Math.round(expectedBlockDuration * 0.7);
+  const expectedSongDelay = expectedBlockDelay + Math.round(expectedBlockDuration * 0.3);
+  for (const [label, reveal, delay, duration, maskPositions] of [
+    ['lyric block', opening.lyricReveal, expectedBlockDelay, expectedBlockDuration, [64, 44, 12, 0]],
+    ['song name', opening.songReveal, expectedSongDelay, expectedSongDuration, [64, 12, 0]]
+  ]) {
+    expect(Math.abs(reveal.delay - delay), `${label} delay`).toBeLessThanOrEqual(1);
+    expect(Math.abs(reveal.duration - duration), `${label} duration`).toBeLessThanOrEqual(1);
+    expect(reveal.filters.at(-1), `${label} settles sharp`).toBe('blur(0px)');
+    expect(reveal.transforms.at(-1), `${label} settles in place`).toMatch(/translateY\(0(?:px)?\)/);
+    expect(reveal.maskPositions[0], `${label} starts with only the leading edge exposed`).toBe('0% 64%');
+    expect(reveal.maskPositions.at(-1), `${label} clears feather continuously`).toBe('0% 0%');
+    expect(
+      reveal.maskPositions.map((position) => Number.parseFloat(position.split(' ')[1]))
+    ).toEqual(maskPositions);
+    expect(reveal.clips.every((clip) => clip === ''), `${label} has no hard clip`).toBe(true);
+    expect(reveal.hasFeather, `${label} has a feather mask while moving`).toBe(true);
+  }
+  expect(opening.lyricReveal.filters[0]).toBe('blur(10px)');
+  expect(opening.lyricReveal.transforms[0]).toContain('scaleX(0.92)');
+  expect(opening.songReveal.filters[0]).toBe('blur(8px)');
+  expect(opening.lineAnimationCount).toBe(0);
+  expect(opening.lineStates.every(({ opacity, maskImage }) => (
+    opacity === '1' && maskImage === ''
   ))).toBe(true);
 
-  await expect.poll(() => accessibilityState(page, '#resultArea')).toEqual({
-    inert: false,
-    ariaHidden: null,
-    visible: true,
-    opacity: '1'
+  await page.waitForFunction(() => {
+    const lyric = document.querySelector('#lyricText');
+    const song = document.querySelector('#songName');
+    return !lyric?.hasAttribute('data-motion-active')
+      && !song?.hasAttribute('data-motion-active')
+      && lyric?.style.maskImage === ''
+      && song?.style.maskImage === ''
+      && getComputedStyle(lyric).opacity === '1';
   });
-  await page.locator('#lyricCloseBtn').click({ noWaitAfter: true });
+
+  await page.locator('#lyricCloseBtn').dispatchEvent('click');
   await page.waitForFunction(() => document.querySelector('#resultArea')?.getAnimations().some((animation) => {
     const frames = animation.effect?.getKeyframes?.() || [];
-    return `${frames.at(-1)?.clipPath}`.startsWith('circle(0%');
+    return Number(frames[0]?.opacity) === 1 && Number(frames.at(-1)?.opacity) === 0;
   }));
-
-  const closingFrames = await page.locator('#resultArea').evaluate((area) => (
-    area.getAnimations()
-      .find((animation) => `${animation.effect?.getKeyframes?.().at(-1)?.clipPath}`.startsWith('circle(0%'))
-      .effect.getKeyframes()
-      .map(({ clipPath }) => clipPath)
+  const closingClips = await page.locator('#resultArea').evaluate((area) => (
+    area.getAnimations().flatMap((animation) => (
+      animation.effect?.getKeyframes?.().map(({ clipPath }) => clipPath || '') || []
+    ))
   ));
-  expect(closingFrames[0]).toContain('circle(150%');
-  expect(closingFrames.at(-1)).toContain('circle(0%');
+  expect(closingClips.every((clip) => clip === '')).toBe(true);
 
   await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/);
   const residue = await page.evaluate(() => ({
     areaClip: document.querySelector('#resultArea').style.clipPath,
     lyricClip: document.querySelector('#lyricText').style.clipPath,
-    originX: document.querySelector('#resultArea').style.getPropertyValue('--overlay-origin-x'),
-    originY: document.querySelector('#resultArea').style.getPropertyValue('--overlay-origin-y'),
+    lyricMask: document.querySelector('#lyricText').style.maskImage,
     lineStyles: Array.from(document.querySelectorAll('#lyricText .lyric-line')).map((line) => ({
       opacity: line.style.opacity,
       transform: line.style.transform,
       filter: line.style.filter,
-      clipPath: line.style.clipPath
+      clipPath: line.style.clipPath,
+      maskImage: line.style.maskImage
     }))
   }));
   expect(residue).toEqual({
     areaClip: '',
     lyricClip: '',
-    originX: '',
-    originY: '',
+    lyricMask: '',
     lineStyles: expect.arrayContaining([
-      { opacity: '', transform: '', filter: '', clipPath: '' }
+      { opacity: '', transform: '', filter: '', clipPath: '', maskImage: '' }
     ])
   });
 });
