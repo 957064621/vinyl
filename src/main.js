@@ -1455,6 +1455,14 @@ const criticalAssetGate = startCriticalAssetGate({
             const layer = document.getElementById('loadingHandoffResident');
             if (!layer) return Promise.resolve({ status: 'none' });
 
+            const sticker = document.querySelector('.vinyl-sticker');
+            const transferDuration = Math.min(duration, 560);
+            const clearRingTransfer = () => {
+                if (!sticker) return;
+                delete sticker.dataset.ringTransition;
+                sticker.style.removeProperty('--vinyl-ring-transfer-ms');
+            };
+
             const initialClipPath = layer.style.clipPath
                 || `circle(${layer.dataset.radius || 0}px at ${layer.dataset.centerX || 0}px ${layer.dataset.centerY || 0}px)`;
             const centerX = layer.dataset.centerX || '0';
@@ -1465,6 +1473,7 @@ const criticalAssetGate = startCriticalAssetGate({
                 if (!document.getElementById('loadingHandoffResident')) {
                     delete document.body?.dataset.loadingHandoffResident;
                 }
+                clearRingTransfer();
             };
 
             if (prefersReducedMotion || duration <= 0) {
@@ -1474,6 +1483,10 @@ const criticalAssetGate = startCriticalAssetGate({
 
             layer.dataset.ringState = 'releasing';
             layer.style.opacity = '1';
+            if (sticker) {
+                sticker.style.setProperty('--vinyl-ring-transfer-ms', `${transferDuration}ms`);
+                sticker.dataset.ringTransition = 'receiving';
+            }
             const release = animateWithCleanup(
                 layer,
                 [
@@ -1493,6 +1506,7 @@ const criticalAssetGate = startCriticalAssetGate({
                 if (result.status === 'completed') {
                     removeLayer();
                 } else {
+                    clearRingTransfer();
                     layer.dataset.ringState = 'entering';
                     layer.style.opacity = '1';
                     layer.style.clipPath = initialClipPath;
@@ -2061,7 +2075,7 @@ const criticalAssetGate = startCriticalAssetGate({
         const PLAYLIST_CONTENT_ENTER_NEAR_TRANSFORM = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) + 2px))';
         const PLAYLIST_OPEN_START_OPACITY = Object.freeze({
             full: Object.freeze({ area: 0.2, content: 0.5 }),
-            compact: Object.freeze({ area: 0.16, content: 0.08 }),
+            compact: Object.freeze({ area: 0.035, content: 0.02 }),
             reduce: Object.freeze({ area: 0, content: 0 })
         });
 
@@ -2651,16 +2665,16 @@ const criticalAssetGate = startCriticalAssetGate({
                     } else {
                         const cardDuration = profile === 'full'
                             ? duration
-                            : (profile === 'compact' ? Math.min(duration, 480) : 0);
+                            : (profile === 'compact' ? Math.min(duration, 600) : 0);
                         const contentDuration = profile === 'compact'
-                            ? Math.min(duration, 720)
+                            ? Math.min(duration, 760)
                             : duration;
                         const playlistStart = PLAYLIST_OPEN_START_OPACITY[profile]
                             || PLAYLIST_OPEN_START_OPACITY.compact;
                         const areaKeyframes = profile === 'compact' ? [
                             { opacity: playlistStart.area, transform: 'translateZ(0)' },
-                            { offset: 0.24, opacity: 0.86, transform: 'translateZ(0)' },
-                            { offset: 0.66, opacity: 0.98, transform: 'translateZ(0)' },
+                            { offset: 0.26, opacity: 0.14, transform: 'translateZ(0)' },
+                            { offset: 0.68, opacity: 0.58, transform: 'translateZ(0)' },
                             { opacity: 1, transform: 'translateZ(0)' }
                         ] : [
                             { opacity: playlistStart.area, transform: 'translateZ(0)' },
@@ -2668,8 +2682,8 @@ const criticalAssetGate = startCriticalAssetGate({
                         ];
                         const contentKeyframes = profile === 'compact' ? [
                             { opacity: playlistStart.content, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
-                            { offset: 0.34, opacity: 0.34, transform: PLAYLIST_CONTENT_ENTER_MID_TRANSFORM },
-                            { offset: 0.72, opacity: 0.84, transform: PLAYLIST_CONTENT_ENTER_NEAR_TRANSFORM },
+                            { offset: 0.3, opacity: 0.16, transform: PLAYLIST_CONTENT_ENTER_MID_TRANSFORM },
+                            { offset: 0.7, opacity: 0.64, transform: PLAYLIST_CONTENT_ENTER_NEAR_TRANSFORM },
                             { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
                         ] : [
                             { opacity: playlistStart.content, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
@@ -2682,7 +2696,7 @@ const criticalAssetGate = startCriticalAssetGate({
                                 {
                                     duration: cardDuration,
                                     easing: profile === 'compact'
-                                        ? 'cubic-bezier(0.23, 1, 0.32, 1)'
+                                        ? 'cubic-bezier(0.32, 0, 0.2, 1)'
                                         : primaryEasing
                                 },
                                 signal
@@ -3149,16 +3163,31 @@ const criticalAssetGate = startCriticalAssetGate({
             return runOverlayMotionCommand(() => motion.closeOverlay('playlist'));
         };
 
+        const isTouchBlankTarget = (target, protectedSelector) => {
+            if (!isCoarsePointer || !(target instanceof Element)) return false;
+            return !target.closest(protectedSelector);
+        };
+
         resultArea.addEventListener('click', async (event) => {
             if (!resultArea.classList.contains('is-visible')) return;
-            if (event.target !== resultArea && event.target !== lyricDismissHint) return;
+            const isBackdrop = event.target === resultArea || event.target === lyricDismissHint;
+            const isTouchBlank = isTouchBlankTarget(
+                event.target,
+                '#lyricText, #songName, #lyricCloseBtn'
+            );
+            if (!isBackdrop && !isTouchBlank) return;
 
             await closeLyricOverlay();
         });
 
         playlistArea.addEventListener('click', async (event) => {
             if (!playlistArea.classList.contains('is-visible')) return;
-            if (event.target !== playlistArea && event.target !== playlistDismissHint) return;
+            const isBackdrop = event.target === playlistArea || event.target === playlistDismissHint;
+            const isTouchBlank = isTouchBlankTarget(
+                event.target,
+                '#playlistCloseBtn, .playlist-title, .playlist-mode-wrap, .playlist-list'
+            );
+            if (!isBackdrop && !isTouchBlank) return;
 
             await closePlaylistOverlay();
         });

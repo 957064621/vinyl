@@ -232,7 +232,9 @@ test('overlay surfaces are true glass with a graceful non-blur fallback', () => 
 
   const glassDeclarations = css.match(/(?<!-webkit-)backdrop-filter\s*:\s*var\(--(?:overlay|playlist-panel)-backdrop-filter\)/g) || [];
   assert.equal(glassDeclarations.length, 2, 'glass blur stays confined to the two overlay surfaces');
-  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area\s*\{[^}]*--overlay-backdrop-filter:\s*blur\(16px\) saturate\(1\.12\)/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area\s*\{[^}]*--overlay-backdrop-filter:\s*none/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area::before\s*\{[^}]*filter:\s*none/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area::after\s*\{[^}]*filter:\s*none/s);
   assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-content\s*\{[^}]*--playlist-panel-backdrop-filter:\s*none/s);
 });
 

@@ -71,6 +71,11 @@ const accessibilityState = (page, selector) => page.locator(selector).evaluate((
   opacity: getComputedStyle(element).opacity
 }));
 
+const centerOf = (rect) => ({
+  x: rect.x + rect.width / 2,
+  y: rect.y + rect.height / 2
+});
+
 test('initially hidden player and overlays are absent from sequential focus', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium');
   await waitForApp(page);
@@ -112,11 +117,15 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
       const sample = (now) => {
         const area = document.querySelector('#playlistArea');
         const content = document.querySelector('#playlistContent');
+        const areaStyle = getComputedStyle(area);
         frames.push({
           time: now - startedAt,
           visible: area.classList.contains('is-visible'),
-          area: Number.parseFloat(getComputedStyle(area).opacity),
+          area: Number.parseFloat(areaStyle.opacity),
           content: Number.parseFloat(getComputedStyle(content).opacity),
+          backdropFilter: areaStyle.backdropFilter || areaStyle.webkitBackdropFilter,
+          beforeFilter: getComputedStyle(area, '::before').filter,
+          afterFilter: getComputedStyle(area, '::after').filter,
           items: document.querySelectorAll('.playlist-item').length
         });
         if (now - startedAt >= 900) resolve(frames);
@@ -135,8 +144,11 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
   expect(frames.every(({ items }) => items === itemCountBeforeOpen)).toBe(true);
   const visibleFrames = frames.filter(({ visible }) => visible);
   expect(visibleFrames.length).toBeGreaterThan(0);
-  expect(visibleFrames[0].area).toBeGreaterThanOrEqual(0.12);
-  expect(visibleFrames[0].content).toBeGreaterThanOrEqual(0.04);
+  expect(visibleFrames[0].area).toBeGreaterThanOrEqual(0.02);
+  expect(visibleFrames[0].content).toBeGreaterThanOrEqual(0.01);
+  expect(visibleFrames[0].backdropFilter).toBe('none');
+  expect(visibleFrames[0].beforeFilter).toBe('none');
+  expect(visibleFrames[0].afterFilter).toBe('none');
   const areaSamples = visibleFrames.map(({ area }) => area);
   const firstPositive = areaSamples.find((opacity) => opacity > 0.01);
   expect(firstPositive).toBeDefined();
@@ -152,9 +164,55 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
   const handoffFrames = composedFrames.filter(({ area }) => area > 0.5);
   expect(handoffFrames.some(({ content }) => content > 0.12 && content < 0.95)).toBe(true);
   const firstVisibleTime = visibleFrames[0].time;
+  const earlyFrames = visibleFrames.filter(({ time }) => time - firstVisibleTime <= 120);
+  expect(Math.max(...earlyFrames.map(({ area }) => area))).toBeLessThan(0.72);
   const firstReadableContent = visibleFrames.find(({ content }) => content >= 0.18);
   expect(firstReadableContent).toBeDefined();
-  expect(firstReadableContent.time - firstVisibleTime).toBeLessThan(220);
+  expect(firstReadableContent.time - firstVisibleTime).toBeLessThan(360);
+});
+
+test('short mobile lyric overlay closes from transparent layout space without making lyrics dismissible', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium');
+  await page.setViewportSize({ width: 390, height: 650 });
+  await waitForApp(page);
+  await page.locator('#playButton').click();
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+
+  const lyricPoint = centerOf(await page.locator('#lyricText').boundingBox());
+  await page.touchscreen.tap(lyricPoint.x, lyricPoint.y);
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/);
+
+  const blankPoint = await page.evaluate(() => {
+    const content = document.querySelector('#resultContent').getBoundingClientRect();
+    const lyric = document.querySelector('#lyricText').getBoundingClientRect();
+    return {
+      x: content.left + content.width / 2,
+      y: content.top + Math.max(12, (lyric.top - content.top) / 2)
+    };
+  });
+  expect(blankPoint.y).toBeLessThan(await page.locator('#lyricText').evaluate((element) => element.getBoundingClientRect().top));
+  await page.touchscreen.tap(blankPoint.x, blankPoint.y);
+
+  await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/);
+});
+
+test('mobile playlist panel padding dismisses while its controls remain interactive', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium');
+  await page.setViewportSize({ width: 393, height: 727 });
+  await waitForApp(page);
+  await drawAndOpenPlaylist(page);
+
+  const modePoint = centerOf(await page.locator('#playlistModeSwitch').boundingBox());
+  await page.touchscreen.tap(modePoint.x, modePoint.y);
+  await expect(page.locator('#playlistArea')).toHaveClass(/is-visible/);
+
+  const blankPoint = await page.locator('#playlistContent').evaluate((content) => {
+    const rect = content.getBoundingClientRect();
+    return { x: rect.left + 6, y: rect.top + 6 };
+  });
+  await page.touchscreen.tap(blankPoint.x, blankPoint.y);
+
+  await expect(page.locator('#playlistArea')).not.toHaveClass(/is-visible/);
 });
 
 test('primary 393x727 mobile composition keeps every lower rail separated', async ({ page }, testInfo) => {

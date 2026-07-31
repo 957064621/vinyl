@@ -450,9 +450,15 @@ test('draw crossfades the switched record cover before the 500ms lyric hold', as
   expect(Math.max(...timing.activeCoverCounts)).toBe(1);
   expect(timing.sawDepthCrossfade).toBe(true);
   expect(timing.ringFrames.length).toBeGreaterThanOrEqual(8);
-  expect(timing.ringFrames.every(({ opacity, zIndex }) => (
-    opacity >= 0.99 && zIndex === '2'
+  expect(timing.ringFrames.every(({ zIndex }) => zIndex === '2')).toBe(true);
+  expect(timing.ringFrames.some(({ opacity, residentConnected }) => (
+    residentConnected && opacity <= 0.02
   ))).toBe(true);
+  expect(timing.ringFrames.some(({ opacity, residentConnected }) => (
+    residentConnected && opacity > 0.08 && opacity < 0.94
+  ))).toBe(true);
+  expect(timing.ringFrames.at(-1).residentConnected).toBe(false);
+  expect(timing.ringFrames.at(-1).opacity).toBeGreaterThanOrEqual(0.99);
   if (testInfo.project.name !== 'mobile-reduce') {
     expect(timing.sawBlurredDepth).toBe(true);
     expect(timing.sawCoverOverlap).toBe(true);

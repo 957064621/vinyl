@@ -2952,7 +2952,7 @@ test('skip preserves the in-flight poster and hands end.jpg to the player withou
     expect(residentRingSamples.length).toBeGreaterThanOrEqual(12);
     expect(residentRingSamples[0].residentRingOpacity).toBeLessThanOrEqual(0.05);
     expect(residentRingSamples.at(-1).residentRingOpacity).toBeGreaterThanOrEqual(0.98);
-    expect(residentRingSamples.every(({ playerRingOpacity }) => playerRingOpacity >= 0.99)).toBe(true);
+    expect(residentRingSamples.every(({ playerRingOpacity }) => playerRingOpacity <= 0.01)).toBe(true);
     const residentRingSteps = residentRingSamples.slice(1).map((sample, index) => (
       sample.residentRingOpacity - residentRingSamples[index].residentRingOpacity
     ));

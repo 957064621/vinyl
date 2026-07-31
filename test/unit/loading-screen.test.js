@@ -2093,6 +2093,10 @@ test('loading CSS defines the projection layers and motion-specific fallbacks', 
   assert.match(residentRingEnter, /loading-handoff-resident-ring-enter 520ms/);
   const playerRing = extractCssBlock(css, '.vinyl-sticker::before');
   assert.match(playerRing, /z-index:\s*2/);
+  const hiddenPlayerRing = extractCssBlock(css, 'body[data-loading-handoff-resident="true"] .vinyl-sticker::before');
+  assert.match(hiddenPlayerRing, /opacity:\s*0/);
+  const receivingPlayerRing = extractCssBlock(css, 'body[data-loading-handoff-resident="true"] .vinyl-sticker[data-ring-transition="receiving"]::before');
+  assert.match(receivingPlayerRing, /vinyl-center-ring-receive/);
 
   expectDeclarations(
     extractCssBlock(loadingBlock, '.loading-frame.is-scattering .loading-image'),
