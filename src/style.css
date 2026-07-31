@@ -5936,10 +5936,18 @@
         html[data-motion-profile="compact"] .lyric-toggle-btn,
         html[data-motion-profile="compact"] .playlist-toggle-btn {
             transition:
-                transform 0.76s var(--continuity-ease),
-                opacity 0.64s var(--crossfade-ease),
-                background 0.48s var(--damping),
-                box-shadow 0.48s var(--damping);
+                transform 0.32s cubic-bezier(0.23, 1, 0.32, 1),
+                opacity 0.22s cubic-bezier(0.23, 1, 0.32, 1),
+                background 0.24s var(--damping),
+                box-shadow 0.24s var(--damping);
+        }
+
+        html[data-motion-profile="compact"] .playlist-toggle-btn.is-visible {
+            transition-delay: 0s;
+        }
+
+        html[data-motion-profile="compact"] .lyric-toggle-btn.is-visible {
+            transition-delay: 0.035s;
         }
 
         html[data-motion-profile="reduce"] .result-area.is-visible::before,

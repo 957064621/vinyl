@@ -2061,7 +2061,7 @@ const criticalAssetGate = startCriticalAssetGate({
         const PLAYLIST_CONTENT_ENTER_NEAR_TRANSFORM = 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) + 2px))';
         const PLAYLIST_OPEN_START_OPACITY = Object.freeze({
             full: Object.freeze({ area: 0.2, content: 0.5 }),
-            compact: Object.freeze({ area: 0, content: 0 }),
+            compact: Object.freeze({ area: 0.16, content: 0.08 }),
             reduce: Object.freeze({ area: 0, content: 0 })
         });
 
@@ -2215,7 +2215,7 @@ const criticalAssetGate = startCriticalAssetGate({
             }
         });
 
-        const resetResultVisual = () => {
+        const resetResultVisual = ({ preserveFloatingButtons = false } = {}) => {
             lyricAnimations.forEach((anim) => anim.cancel());
             lyricAnimations = [];
             clearLyricMotionResidue({ clearLines: true });
@@ -2223,7 +2223,7 @@ const criticalAssetGate = startCriticalAssetGate({
             resultArea.classList.remove('show-dismiss-hint');
             setInteractiveState(resultArea, false);
             document.body.classList.remove('has-lyric-overlay');
-            setOverlayControlsVisible(false);
+            if (!preserveFloatingButtons) setOverlayControlsVisible(false);
             resultArea.style.opacity = '0';
             resultArea.style.transform = 'none';
             lyricCloseBtn.style.opacity = '';
@@ -2238,14 +2238,14 @@ const criticalAssetGate = startCriticalAssetGate({
             // player-pill 现在在外部独立管理显示。
         };
 
-        const resetPlaylistVisual = () => {
+        const resetPlaylistVisual = ({ preserveFloatingButtons = false } = {}) => {
             playlistAnimations.forEach((anim) => anim.cancel());
             playlistAnimations = [];
             playlistArea.classList.remove('is-visible');
             playlistArea.classList.remove('show-dismiss-hint');
             setInteractiveState(playlistArea, false);
             document.body.classList.remove('has-playlist-overlay');
-            setOverlayControlsVisible(false);
+            if (!preserveFloatingButtons) setOverlayControlsVisible(false);
             playlistArea.style.opacity = '0';
             playlistArea.style.transform = 'none';
             playlistCloseBtn.style.opacity = '';
@@ -2569,8 +2569,8 @@ const criticalAssetGate = startCriticalAssetGate({
             const element = isLyrics ? resultArea : playlistArea;
             const focusOrigin = overlayFocusOrigin.get(kind);
 
-            if (isLyrics) resetResultVisual();
-            else resetPlaylistVisual();
+            if (isLyrics) resetResultVisual({ preserveFloatingButtons: true });
+            else resetPlaylistVisual({ preserveFloatingButtons: true });
             if (resultArea.classList.contains('is-visible')) setOverlayControlsVisible(true);
             else setFloatingButtonsVisible(true);
 
@@ -2651,23 +2651,25 @@ const criticalAssetGate = startCriticalAssetGate({
                     } else {
                         const cardDuration = profile === 'full'
                             ? duration
-                            : (profile === 'compact' ? duration : 0);
+                            : (profile === 'compact' ? Math.min(duration, 480) : 0);
+                        const contentDuration = profile === 'compact'
+                            ? Math.min(duration, 720)
+                            : duration;
                         const playlistStart = PLAYLIST_OPEN_START_OPACITY[profile]
                             || PLAYLIST_OPEN_START_OPACITY.compact;
                         const areaKeyframes = profile === 'compact' ? [
-                            { opacity: 0, transform: 'translateZ(0)' },
-                            { offset: 0.32, opacity: 0.72, transform: 'translateZ(0)' },
-                            { offset: 0.72, opacity: 0.96, transform: 'translateZ(0)' },
+                            { opacity: playlistStart.area, transform: 'translateZ(0)' },
+                            { offset: 0.24, opacity: 0.86, transform: 'translateZ(0)' },
+                            { offset: 0.66, opacity: 0.98, transform: 'translateZ(0)' },
                             { opacity: 1, transform: 'translateZ(0)' }
                         ] : [
                             { opacity: playlistStart.area, transform: 'translateZ(0)' },
                             { opacity: 1, transform: 'translateZ(0)' }
                         ];
                         const contentKeyframes = profile === 'compact' ? [
-                            { opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
-                            { offset: 0.18, opacity: 0, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
-                            { offset: 0.58, opacity: 0.56, transform: PLAYLIST_CONTENT_ENTER_MID_TRANSFORM },
-                            { offset: 0.82, opacity: 0.9, transform: PLAYLIST_CONTENT_ENTER_NEAR_TRANSFORM },
+                            { opacity: playlistStart.content, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
+                            { offset: 0.34, opacity: 0.34, transform: PLAYLIST_CONTENT_ENTER_MID_TRANSFORM },
+                            { offset: 0.72, opacity: 0.84, transform: PLAYLIST_CONTENT_ENTER_NEAR_TRANSFORM },
                             { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
                         ] : [
                             { opacity: playlistStart.content, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
@@ -2680,7 +2682,7 @@ const criticalAssetGate = startCriticalAssetGate({
                                 {
                                     duration: cardDuration,
                                     easing: profile === 'compact'
-                                        ? 'cubic-bezier(0.3, 0, 0.2, 1)'
+                                        ? 'cubic-bezier(0.23, 1, 0.32, 1)'
                                         : primaryEasing
                                 },
                                 signal
@@ -2688,7 +2690,12 @@ const criticalAssetGate = startCriticalAssetGate({
                             runOverlayAnimation(
                                 content,
                                 contentKeyframes,
-                                { duration, easing: primaryEasing },
+                                {
+                                    duration: contentDuration,
+                                    easing: profile === 'compact'
+                                        ? 'cubic-bezier(0.32, 0, 0.2, 1)'
+                                        : primaryEasing
+                                },
                                 signal
                             )
                         ]);
@@ -2714,12 +2721,18 @@ const criticalAssetGate = startCriticalAssetGate({
                 const contentExitTransform = isLyrics
                     ? 'translateY(-8px)'
                     : 'translateY(calc(var(--playlist-lift, -8vh) - var(--lyric-ios-offset) - 10px))';
+                const overlayCloseDuration = profile === 'compact'
+                    ? Math.min(duration, 460)
+                    : Math.min(duration, profile === 'reduce' ? 0 : 420);
                 const contentCloseDuration = profile === 'compact'
-                    ? Math.min(duration, 620)
-                    : Math.min(duration, 360);
-                const closeButtonDuration = profile === 'compact'
-                    ? Math.min(duration, 520)
+                    ? Math.min(duration, 360)
                     : Math.min(duration, 300);
+                const closeButtonDuration = profile === 'compact'
+                    ? Math.min(duration, 260)
+                    : Math.min(duration, 220);
+
+                dynamicIsland.classList.remove('is-overlay-control-visible');
+                setFloatingButtonsVisible(true);
                 try {
                     await Promise.all([
                         runOverlayAnimation(element, isLyrics ? [
@@ -2735,7 +2748,7 @@ const criticalAssetGate = startCriticalAssetGate({
                             { opacity: 1, transform: 'translateY(0)' },
                             { opacity: 0, transform: 'translateY(-8px)' }
                         ], {
-                            duration: profile === 'reduce' ? 0 : duration,
+                            duration: overlayCloseDuration,
                             easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
                         }, signal),
                         runOverlayAnimation(content, [

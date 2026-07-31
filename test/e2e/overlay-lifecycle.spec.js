@@ -119,7 +119,7 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
           content: Number.parseFloat(getComputedStyle(content).opacity),
           items: document.querySelectorAll('.playlist-item').length
         });
-        if (now - startedAt >= 1200) resolve(frames);
+        if (now - startedAt >= 900) resolve(frames);
         else requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
@@ -134,6 +134,9 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
   expect(await page.locator('.playlist-item').count()).toBe(itemCountBeforeOpen);
   expect(frames.every(({ items }) => items === itemCountBeforeOpen)).toBe(true);
   const visibleFrames = frames.filter(({ visible }) => visible);
+  expect(visibleFrames.length).toBeGreaterThan(0);
+  expect(visibleFrames[0].area).toBeGreaterThanOrEqual(0.12);
+  expect(visibleFrames[0].content).toBeGreaterThanOrEqual(0.04);
   const areaSamples = visibleFrames.map(({ area }) => area);
   const firstPositive = areaSamples.find((opacity) => opacity > 0.01);
   expect(firstPositive).toBeDefined();
@@ -144,10 +147,14 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
   }
   const composedFrames = visibleFrames.filter(({ area }) => area > 0.2 && area < 0.98);
   expect(composedFrames.length).toBeGreaterThan(0);
-  const veilFrames = composedFrames.filter(({ area }) => area < 0.68);
-  expect(veilFrames.some(({ area, content }) => content <= area * 0.45)).toBe(true);
-  const handoffFrames = composedFrames.filter(({ area }) => area > 0.56);
+  const veilFrames = composedFrames.filter(({ area }) => area < 0.9);
+  expect(veilFrames.some(({ area, content }) => content < area)).toBe(true);
+  const handoffFrames = composedFrames.filter(({ area }) => area > 0.5);
   expect(handoffFrames.some(({ content }) => content > 0.12 && content < 0.95)).toBe(true);
+  const firstVisibleTime = visibleFrames[0].time;
+  const firstReadableContent = visibleFrames.find(({ content }) => content >= 0.18);
+  expect(firstReadableContent).toBeDefined();
+  expect(firstReadableContent.time - firstVisibleTime).toBeLessThan(220);
 });
 
 test('primary 393x727 mobile composition keeps every lower rail separated', async ({ page }, testInfo) => {
@@ -168,6 +175,16 @@ test('primary 393x727 mobile composition keeps every lower rail separated', asyn
   await expect(page.locator('#playButton')).not.toHaveAttribute('data-busy', '', { timeout: 12_000 });
   await page.locator('#lyricCloseBtn').click();
   await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/);
+  const returnedControls = await page.evaluate(() => ({
+    lyricClass: document.querySelector('#lyricToggleBtn').classList.contains('is-visible'),
+    playlistClass: document.querySelector('#playlistToggleBtn').classList.contains('is-visible'),
+    lyricOpacity: Number.parseFloat(getComputedStyle(document.querySelector('#lyricToggleBtn')).opacity),
+    playlistOpacity: Number.parseFloat(getComputedStyle(document.querySelector('#playlistToggleBtn')).opacity)
+  }));
+  expect(returnedControls.lyricClass).toBe(true);
+  expect(returnedControls.playlistClass).toBe(true);
+  expect(returnedControls.lyricOpacity).toBeGreaterThanOrEqual(0.9);
+  expect(returnedControls.playlistOpacity).toBeGreaterThanOrEqual(0.9);
   await page.waitForFunction(() => Number.parseFloat(
     getComputedStyle(document.querySelector('#playerPill')).opacity
   ) >= 0.99);
