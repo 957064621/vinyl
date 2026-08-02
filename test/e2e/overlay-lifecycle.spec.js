@@ -128,7 +128,7 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
           afterFilter: getComputedStyle(area, '::after').filter,
           items: document.querySelectorAll('.playlist-item').length
         });
-        if (now - startedAt >= 900) resolve(frames);
+        if (now - startedAt >= 1400) resolve(frames);
         else requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
@@ -145,10 +145,11 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
   const visibleFrames = frames.filter(({ visible }) => visible);
   expect(visibleFrames.length).toBeGreaterThan(0);
   expect(visibleFrames[0].area).toBeGreaterThanOrEqual(0.02);
-  expect(visibleFrames[0].content).toBeGreaterThanOrEqual(0.01);
-  expect(visibleFrames[0].backdropFilter).toBe('none');
-  expect(visibleFrames[0].beforeFilter).toBe('none');
-  expect(visibleFrames[0].afterFilter).toBe('none');
+  expect(visibleFrames[0].content).toBeLessThanOrEqual(0.03);
+  expect(visibleFrames[0].content).toBeLessThan(visibleFrames[0].area);
+  expect(visibleFrames[0].backdropFilter).toBe('blur(28px) saturate(1.24)');
+  expect(visibleFrames[0].beforeFilter).toBe('blur(12px) saturate(1.18)');
+  expect(visibleFrames[0].afterFilter).toBe('blur(30px)');
   const areaSamples = visibleFrames.map(({ area }) => area);
   const firstPositive = areaSamples.find((opacity) => opacity > 0.01);
   expect(firstPositive).toBeDefined();
@@ -168,7 +169,14 @@ test('compact playlist is prewarmed and fades in without an empty flash', async 
   expect(Math.max(...earlyFrames.map(({ area }) => area))).toBeLessThan(0.72);
   const firstReadableContent = visibleFrames.find(({ content }) => content >= 0.18);
   expect(firstReadableContent).toBeDefined();
-  expect(firstReadableContent.time - firstVisibleTime).toBeLessThan(360);
+  expect(firstReadableContent.time - firstVisibleTime).toBeLessThan(440);
+  const contentSamples = visibleFrames.map(({ content }) => content);
+  for (let index = 1; index < contentSamples.length; index += 1) {
+    expect(contentSamples[index] + 0.02).toBeGreaterThanOrEqual(contentSamples[index - 1]);
+  }
+  const settledFrames = visibleFrames.filter(({ time }) => time - firstVisibleTime >= 850);
+  expect(settledFrames.length).toBeGreaterThan(0);
+  expect(settledFrames.every(({ content }) => content >= 0.98)).toBe(true);
 });
 
 test('short mobile lyric overlay closes from transparent layout space without making lyrics dismissible', async ({ page }, testInfo) => {
@@ -213,6 +221,71 @@ test('mobile playlist panel padding dismisses while its controls remain interact
   await page.touchscreen.tap(blankPoint.x, blankPoint.y);
 
   await expect(page.locator('#playlistArea')).not.toHaveClass(/is-visible/);
+});
+
+test('coarse taps that land on the player beneath a playlist still dismiss the overlay', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium');
+  await page.setViewportSize({ width: 393, height: 727 });
+  await waitForApp(page);
+  await drawAndOpenPlaylist(page);
+
+  await page.evaluate(() => {
+    const target = document.querySelector('#playButton');
+    const redirectedTarget = document.querySelector('#btnText');
+    window.__playlistUnderlayClicks = 0;
+    target?.addEventListener('click', () => {
+      window.__playlistUnderlayClicks += 1;
+    });
+    target?.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true,
+      cancelable: true,
+      pointerType: 'touch',
+      clientX: 186,
+      clientY: 688
+    }));
+    redirectedTarget?.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 186,
+      clientY: 688
+    }));
+  });
+
+  await expect(page.locator('#playlistArea')).not.toHaveClass(/is-visible/, { timeout: 12_000 });
+  await expect(page.locator('#playButton')).not.toHaveAttribute('data-busy', '');
+  expect(await page.evaluate(() => window.__playlistUnderlayClicks)).toBe(0);
+});
+
+test('coarse taps that land on the player beneath lyrics still dismiss the overlay', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium');
+  await page.setViewportSize({ width: 393, height: 727 });
+  await waitForApp(page);
+  await page.locator('#playButton').click();
+  await expect(page.locator('#resultArea')).toHaveClass(/is-visible/, { timeout: 12_000 });
+
+  await page.evaluate(() => {
+    const target = document.querySelector('#playerToggleBtn');
+    window.__lyricsUnderlayClicks = 0;
+    target?.addEventListener('click', () => {
+      window.__lyricsUnderlayClicks += 1;
+    });
+    target?.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true,
+      cancelable: true,
+      pointerType: 'touch',
+      clientX: 76,
+      clientY: 680
+    }));
+    target?.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 76,
+      clientY: 680
+    }));
+  });
+
+  await expect(page.locator('#resultArea')).not.toHaveClass(/is-visible/, { timeout: 12_000 });
+  expect(await page.evaluate(() => window.__lyricsUnderlayClicks)).toBe(0);
 });
 
 test('primary 393x727 mobile composition keeps every lower rail separated', async ({ page }, testInfo) => {

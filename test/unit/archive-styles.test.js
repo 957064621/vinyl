@@ -232,10 +232,12 @@ test('overlay surfaces are true glass with a graceful non-blur fallback', () => 
 
   const glassDeclarations = css.match(/(?<!-webkit-)backdrop-filter\s*:\s*var\(--(?:overlay|playlist-panel)-backdrop-filter\)/g) || [];
   assert.equal(glassDeclarations.length, 2, 'glass blur stays confined to the two overlay surfaces');
-  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area\s*\{[^}]*--overlay-backdrop-filter:\s*none/s);
-  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area::before\s*\{[^}]*filter:\s*none/s);
-  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area::after\s*\{[^}]*filter:\s*none/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area\s*\{[^}]*--overlay-backdrop-filter:\s*blur\(28px\) saturate\(1\.24\)/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.result-area::before,\s*html\[data-motion-profile="compact"\] \.playlist-area::before\s*\{[^}]*filter:\s*blur\(12px\) saturate\(1\.18\)/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area::after\s*\{[^}]*filter:\s*blur\(30px\)/s);
   assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-content\s*\{[^}]*--playlist-panel-backdrop-filter:\s*none/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area\.is-visible \.playlist-content\s*\{[^}]*transition:\s*none/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-content::before\s*\{[^}]*-webkit-mask:\s*none/s);
 });
 
 test('fullscreen layers use a stable fallback and dynamic viewport height', () => {
@@ -698,6 +700,30 @@ test('posters travel vertically through geometric gates without edge transparenc
 
   const stableReflection = archiveRuleBody('.loading-screen:not(.is-final-resolving):not([data-motion-profile="reduce"]) .loading-frame.is-stable::after');
   assert.match(stableReflection, /loading-poster-floor-glow 6\.4s/);
+});
+
+test('compact portal avoids WebKit mask and filtered-image compositor surfaces', () => {
+  assert.match(archiveCss, /@supports \(-webkit-backdrop-filter: blur\(1px\)\)\s*\{/);
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="compact"\] \.loading-light-slit:is\(\[data-portal-side="top"\], \[data-portal-side="bottom"\]\) \.loading-light-core::before\s*\{[^}]*-webkit-mask:\s*none;[^}]*mask:\s*none;[^}]*-webkit-mask-image:\s*none;[^}]*mask-image:\s*none/s
+  );
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="compact"\] \.loading-light-slit\[data-portal-side="top"\] \.loading-light-core::before\s*\{[^}]*radial-gradient\(\s*ellipse 72% 100% at 50% 0%/s
+  );
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="compact"\] \.loading-screen:not\(\[data-motion-profile="reduce"\]\) \.loading-frame\.is-entering-from-portal\[data-portal-side="top"\] \.loading-artwork-viewport\s*\{[^}]*-webkit-clip-path:\s*inset\(max\(0%, var\(--seam-inset, 0%\)\) 0 0 0\);[^}]*clip-path:\s*inset\(max\(0%, var\(--seam-inset, 0%\)\) 0 0 0\)/s
+  );
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="compact"\] \.loading-screen:not\(\[data-motion-profile="reduce"\]\) \.loading-frame\.is-exiting-to-portal\[data-portal-side="bottom"\] \.loading-artwork-viewport\s*\{[^}]*-webkit-clip-path:\s*inset\(0 0 max\(0%, var\(--seam-inset, 0%\)\) 0\);[^}]*clip-path:\s*inset\(0 0 max\(0%, var\(--seam-inset, 0%\)\) 0\)/s
+  );
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="compact"\] \.loading-screen:not\(\[data-motion-profile="reduce"\]\) \.loading-frame:is\(\.is-active, \.is-outgoing\) \.loading-image\s*\{[^}]*-webkit-filter:\s*none !important;[^}]*filter:\s*none !important/s
+  );
 });
 
 test('portal geometry follows the fixed poster stage while preserving artwork gaps and hold particles', () => {

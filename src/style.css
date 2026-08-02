@@ -5116,15 +5116,20 @@
         }
 
         html[data-motion-profile="compact"] .playlist-area {
-            --overlay-backdrop-filter: none;
+            /* Keep the playlist and lyrics overlays on the same glass surface.
+               The previous mobile-only `none` override made the playlist read
+               as a flat dark sheet and produced a visible material jump when
+               switching between the two overlays. */
+            --overlay-backdrop-filter: blur(28px) saturate(1.24);
         }
 
+        html[data-motion-profile="compact"] .result-area::before,
         html[data-motion-profile="compact"] .playlist-area::before {
-            filter: none;
+            filter: blur(12px) saturate(1.18);
         }
 
         html[data-motion-profile="compact"] .playlist-area::after {
-            filter: none;
+            filter: blur(30px);
         }
 
         html[data-motion-profile="compact"] .playlist-content {
@@ -5135,10 +5140,26 @@
                 color-mix(in srgb, var(--archive-graphite) 78%, transparent);
         }
 
+        html[data-motion-profile="compact"] .playlist-area.is-visible .playlist-content {
+            /* WAAPI owns the complete mobile overlay lifecycle. Leaving the
+               base transition active makes WebKit replay the primed opacity
+               after the animation is committed, which reads as a flash. */
+            transition: none;
+        }
+
         html[data-motion-profile="compact"] .playlist-content::before {
             animation: none;
             filter: blur(1.6px);
             opacity: 0.38;
+            /* Safari can flash the intermediate mask surface on the first
+               frame of a fixed overlay. Keep the same soft edge without the
+               compositing operation that causes that flash. */
+            -webkit-mask: none;
+            mask: none;
+            -webkit-mask-image: none;
+            mask-image: none;
+            -webkit-mask-composite: initial;
+            mask-composite: initial;
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -6574,4 +6595,67 @@
         html[data-motion-profile="reduce"] .playlist-item.is-current::before,
         html[data-motion-profile="reduce"] .playlist-item.is-current::after {
             animation: none !important;
+        }
+
+        /* WebKit mobile fallback for the portal handoff. Negative inset
+           clipping plus a filtered replaced image can be rasterised as a
+           black rectangle on iOS. Keep Android and compact desktop windows on
+           the normal geometric clipping path. */
+        @supports (-webkit-backdrop-filter: blur(1px)) {
+            html[data-motion-profile="compact"] .loading-light-slit[data-portal-side="top"],
+            html[data-motion-profile="compact"] .loading-light-slit[data-portal-side="bottom"] {
+                contain: none;
+                isolation: auto;
+            }
+
+            html[data-motion-profile="compact"] .loading-light-slit[data-portal-side="top"] .loading-light-core,
+            html[data-motion-profile="compact"] .loading-light-slit[data-portal-side="bottom"] .loading-light-core {
+                isolation: auto;
+            }
+
+            html[data-motion-profile="compact"] .loading-light-slit:is([data-portal-side="top"], [data-portal-side="bottom"]) .loading-light-core::before {
+                z-index: 0;
+                -webkit-mask: none;
+                mask: none;
+                -webkit-mask-image: none;
+                mask-image: none;
+                opacity: 0.78;
+            }
+
+            html[data-motion-profile="compact"] .loading-light-slit[data-portal-side="top"] .loading-light-core::before {
+                background: radial-gradient(
+                    ellipse 72% 100% at 50% 0%,
+                    rgba(255, 252, 243, 0.9) 0%,
+                    rgba(226, 241, 247, 0.4) 18%,
+                    rgba(194, 225, 240, 0.15) 42%,
+                    rgba(164, 205, 228, 0.045) 68%,
+                    transparent 100%
+                );
+            }
+
+            html[data-motion-profile="compact"] .loading-light-slit[data-portal-side="bottom"] .loading-light-core::before {
+                background: radial-gradient(
+                    ellipse 72% 100% at 50% 100%,
+                    rgba(255, 252, 243, 0.9) 0%,
+                    rgba(226, 241, 247, 0.4) 18%,
+                    rgba(194, 225, 240, 0.15) 42%,
+                    rgba(164, 205, 228, 0.045) 68%,
+                    transparent 100%
+                );
+            }
+
+            html[data-motion-profile="compact"] .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-entering-from-portal[data-portal-side="top"] .loading-artwork-viewport {
+                -webkit-clip-path: inset(max(0%, var(--seam-inset, 0%)) 0 0 0);
+                clip-path: inset(max(0%, var(--seam-inset, 0%)) 0 0 0);
+            }
+
+            html[data-motion-profile="compact"] .loading-screen:not([data-motion-profile="reduce"]) .loading-frame.is-exiting-to-portal[data-portal-side="bottom"] .loading-artwork-viewport {
+                -webkit-clip-path: inset(0 0 max(0%, var(--seam-inset, 0%)) 0);
+                clip-path: inset(0 0 max(0%, var(--seam-inset, 0%)) 0);
+            }
+
+            html[data-motion-profile="compact"] .loading-screen:not([data-motion-profile="reduce"]) .loading-frame:is(.is-active, .is-outgoing) .loading-image {
+                -webkit-filter: none !important;
+                filter: none !important;
+            }
         }

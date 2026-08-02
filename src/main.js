@@ -2663,6 +2663,11 @@ const criticalAssetGate = startCriticalAssetGate({
                             }, signal)
                         ]);
                     } else {
+                        if (profile === 'compact') {
+                            /* Give WebKit one paint with the primed low-opacity
+                               glass before the animated surface becomes visible. */
+                            await new Promise((resolve) => requestAnimationFrame(resolve));
+                        }
                         const cardDuration = profile === 'full'
                             ? duration
                             : (profile === 'compact' ? Math.min(duration, 600) : 0);
@@ -2673,8 +2678,8 @@ const criticalAssetGate = startCriticalAssetGate({
                             || PLAYLIST_OPEN_START_OPACITY.compact;
                         const areaKeyframes = profile === 'compact' ? [
                             { opacity: playlistStart.area, transform: 'translateZ(0)' },
-                            { offset: 0.26, opacity: 0.14, transform: 'translateZ(0)' },
-                            { offset: 0.68, opacity: 0.58, transform: 'translateZ(0)' },
+                            { offset: 0.2, opacity: 0.2, transform: 'translateZ(0)' },
+                            { offset: 0.5, opacity: 0.68, transform: 'translateZ(0)' },
                             { opacity: 1, transform: 'translateZ(0)' }
                         ] : [
                             { opacity: playlistStart.area, transform: 'translateZ(0)' },
@@ -2682,8 +2687,9 @@ const criticalAssetGate = startCriticalAssetGate({
                         ];
                         const contentKeyframes = profile === 'compact' ? [
                             { opacity: playlistStart.content, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
-                            { offset: 0.3, opacity: 0.16, transform: PLAYLIST_CONTENT_ENTER_MID_TRANSFORM },
-                            { offset: 0.7, opacity: 0.64, transform: PLAYLIST_CONTENT_ENTER_NEAR_TRANSFORM },
+                            { offset: 0.22, opacity: playlistStart.content, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
+                            { offset: 0.46, opacity: 0.24, transform: PLAYLIST_CONTENT_ENTER_MID_TRANSFORM },
+                            { offset: 0.78, opacity: 0.72, transform: PLAYLIST_CONTENT_ENTER_NEAR_TRANSFORM },
                             { opacity: 1, transform: PLAYLIST_CONTENT_REST_TRANSFORM }
                         ] : [
                             { opacity: playlistStart.content, transform: PLAYLIST_CONTENT_ENTER_START_TRANSFORM },
@@ -3162,6 +3168,63 @@ const criticalAssetGate = startCriticalAssetGate({
             if (!playlistArea.classList.contains('is-visible')) return;
             return runOverlayMotionCommand(() => motion.closeOverlay('playlist'));
         };
+
+        let pendingOverlayPassthroughClick = null;
+
+        /* On coarse-pointer devices a tap can land on a fixed player control
+           underneath an overlay while the overlay is still compositing. The
+           bubbling click listener then never sees the backdrop target. Catch
+           that pointer at the document boundary, close the active overlay, and
+           prevent the underlying control from receiving the same tap. */
+        document.addEventListener('pointerup', (event) => {
+            if (!isCoarsePointer && event.pointerType !== 'touch') return;
+
+            const activeOverlay = playlistArea.classList.contains('is-visible')
+                ? {
+                    area: playlistArea,
+                    protectedSelector: '#playlistCloseBtn, .playlist-title, .playlist-mode-wrap, .playlist-list',
+                    close: closePlaylistOverlay
+                }
+                : resultArea.classList.contains('is-visible')
+                    ? {
+                        area: resultArea,
+                        protectedSelector: '#lyricText, #songName, #lyricCloseBtn',
+                        close: closeLyricOverlay
+                    }
+                    : null;
+            if (!activeOverlay) return;
+
+            const target = event.target;
+            const targetElement = target instanceof Element ? target : null;
+            if (targetElement?.closest(activeOverlay.protectedSelector)) return;
+
+            pendingOverlayPassthroughClick = {
+                target,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                expiresAt: performance.now() + 700
+            };
+            if (event.cancelable) event.preventDefault();
+            event.stopPropagation();
+            void activeOverlay.close();
+        }, true);
+
+        document.addEventListener('click', (event) => {
+            const pending = pendingOverlayPassthroughClick;
+            if (!pending) return;
+
+            pendingOverlayPassthroughClick = null;
+            const withinSyntheticClickWindow = performance.now() <= pending.expiresAt;
+            const matchesTarget = event.target === pending.target;
+            const matchesPosition = Math.hypot(
+                event.clientX - pending.clientX,
+                event.clientY - pending.clientY
+            ) <= 18;
+            if (!withinSyntheticClickWindow || (!matchesTarget && !matchesPosition)) return;
+
+            if (event.cancelable) event.preventDefault();
+            event.stopImmediatePropagation();
+        }, true);
 
         const isTouchBlankTarget = (target, protectedSelector) => {
             if (!isCoarsePointer || !(target instanceof Element)) return false;
