@@ -11,6 +11,7 @@ import { ossImageDerivative } from './config/assets.js';
 import {
     createPlaylist,
     createPlaylistSelectionGuard,
+    getPlaylistContextScrollTop,
     getPlaylistViewportItems
 } from './ui/playlist.js';
 import { createAudioController } from './player/audio-controller.js';
@@ -1149,25 +1150,23 @@ const criticalAssetGate = startCriticalAssetGate({
         };
         setControlSplit(false);
 
-        const scrollPlaylistToCurrentTrack = (behavior = 'smooth') => {
+        const scrollPlaylistToCurrentContext = (behavior = 'smooth') => {
             if (!playlistList || currentLyricIndex === -1) return;
 
             const currentItem = playlistList.querySelector(`.playlist-item[data-index="${currentLyricIndex}"]`);
             if (!currentItem) return;
 
             const scrollBehavior = shouldUseCompactPlaylistMotion || shouldUseLeanPlaylistMotion() ? 'auto' : behavior;
+            const contextTop = getPlaylistContextScrollTop(playlistList, currentItem);
 
-            const listRect = playlistList.getBoundingClientRect();
-            const itemRect = currentItem.getBoundingClientRect();
-            const centeredTop = playlistList.scrollTop
-                + itemRect.top
-                - listRect.top
-                - ((playlistList.clientHeight - itemRect.height) / 2);
+            // Assign directly for non-animated opens so WebKit cannot defer
+            // the initial position until after the first visible frame.
+            if (scrollBehavior === 'auto') {
+                playlistList.scrollTop = contextTop;
+                return;
+            }
 
-            playlistList.scrollTo({
-                top: Math.max(0, centeredTop),
-                behavior: scrollBehavior
-            });
+            playlistList.scrollTo({ top: contextTop, behavior: scrollBehavior });
         };
 
         // ── 封面驱动的动态主色 + 径向揭示 ───────────────────────────
@@ -2608,7 +2607,7 @@ const criticalAssetGate = startCriticalAssetGate({
                     playlist.ensureRendered();
                     playlist.setActive(currentLyricIndex);
                     revealPlaylistItems();
-                    scrollPlaylistToCurrentTrack('auto');
+                    scrollPlaylistToCurrentContext('auto');
                 }
 
                 const element = isLyrics ? resultArea : playlistArea;
@@ -2799,7 +2798,7 @@ const criticalAssetGate = startCriticalAssetGate({
                 const snapshot = lastOverlaySnapshot;
                 if (snapshot?.playlist) {
                     playlist.setActive(currentLyricIndex);
-                    scrollPlaylistToCurrentTrack('auto');
+                    scrollPlaylistToCurrentContext('auto');
                 }
                 if (signal.aborted) return;
                 const element = snapshot?.playlist ? playlistContent : lyricEl;

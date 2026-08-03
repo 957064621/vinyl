@@ -38,6 +38,27 @@ export function getPlaylistViewportItems(items, viewportRect, anchorIndex = -1) 
   return visibleItems;
 }
 
+export function getPlaylistContextScrollTop(listEl, currentItem) {
+  if (!listEl || !currentItem) return 0;
+
+  const currentGroup = currentItem.closest?.('.playlist-group');
+  const contextAnchor = currentGroup?.querySelector?.('.playlist-group-head')
+    || currentGroup
+    || currentItem;
+  const listRect = listEl.getBoundingClientRect();
+  const anchorRect = contextAnchor.getBoundingClientRect();
+  const computedStyle = listEl.ownerDocument?.defaultView?.getComputedStyle?.(listEl);
+  const paddingTop = Number.parseFloat(computedStyle?.paddingTop) || 0;
+  const currentScrollTop = Number(listEl.scrollTop) || 0;
+  const target = currentScrollTop + anchorRect.top - listRect.top - paddingTop;
+  const maxScrollTop = Math.max(
+    0,
+    (Number(listEl.scrollHeight) || 0) - (Number(listEl.clientHeight) || 0)
+  );
+
+  return Math.min(maxScrollTop, Math.max(0, target));
+}
+
 const getReleaseYear = (releaseDate) => (
   String(releaseDate || '').match(/^\d{4}/)?.[0] || '待核对'
 );

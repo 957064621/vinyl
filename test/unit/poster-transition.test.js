@@ -140,6 +140,7 @@ const makeFixture = ({
   `);
   const document = dom.window.document;
   const particleCalls = [];
+  const particleSideCalls = [];
   const defaultParticleField = {
     gather(bounds, duration, options) {
       particleCalls.push(['gather', bounds, duration, options]);
@@ -152,6 +153,9 @@ const makeFixture = ({
     },
     setProfile(nextProfile) {
       particleCalls.push(['profile', nextProfile]);
+    },
+    setPortalSide(side) {
+      particleSideCalls.push([side, root.classList.contains('is-portal-active')]);
     }
   };
   const sleeps = [];
@@ -188,6 +192,7 @@ const makeFixture = ({
     images,
     particleCalls: particleField?.calls || particleCalls,
     particleField: particleField || defaultParticleField,
+    particleSideCalls,
     root,
     sleeps,
     slit,
@@ -348,6 +353,7 @@ test('top portal leaves measured space above the artwork and forwards its actual
   assert.ok(Math.abs(gatherOptions?.motionDistance - 268) < 0.001);
   assert.deepEqual(gatherOptions?.trajectory, {
     distance: gatherOptions.motionDistance,
+    trailDistance: portalGap,
     duration: POSTER_TIMING.normal.handoff,
     easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
     directionY: 1
@@ -361,7 +367,7 @@ test('top portal leaves measured space above the artwork and forwards its actual
 
 test('top portal ignites for the lead before a single poster begins entering', async () => {
   const scheduler = makeManualScheduler();
-  const { controller, root, scheduler: unused, slit, slots } = {
+  const { controller, particleSideCalls, root, scheduler: unused, slit, slots } = {
     ...makeFixture({ scheduler }),
     scheduler
   };
@@ -376,6 +382,11 @@ test('top portal ignites for the lead before a single poster begins entering', a
   assert.equal(slit.dataset.portalSide, 'top');
   assert.equal(slit.dataset.portalPhase, 'enter');
   assert.equal(root.querySelectorAll('.is-active').length, 0);
+  assert.deepEqual(
+    particleSideCalls,
+    [['top', false]],
+    'the old particle side is cleared before the top portal becomes visible'
+  );
 
   scheduler.releaseDuration(POSTER_TIMING.normal.gather);
   await flush();
@@ -899,7 +910,14 @@ for (const [initialProfile, nextProfile] of [
 
 test('poster exchange descends into the bottom portal before the next poster emerges from the top', async () => {
   const scheduler = makeManualScheduler();
-  const { controller, particleCalls, root, slit, slots } = makeFixture({ scheduler });
+  const {
+    controller,
+    particleCalls,
+    particleSideCalls,
+    root,
+    slit,
+    slots
+  } = makeFixture({ scheduler });
   controller.enqueue(slots[0]);
   controller.enqueue(slots[1]);
   await flush();
@@ -919,6 +937,7 @@ test('poster exchange descends into the bottom portal before the next poster eme
   assert.equal(root.querySelectorAll('.is-active, .is-outgoing').length, 1);
   assert.equal(slit.dataset.portalSide, 'bottom');
   assert.equal(slit.dataset.portalPhase, 'exit');
+  assert.deepEqual(particleSideCalls.at(-1), ['bottom', false]);
 
   scheduler.releaseDuration(POSTER_TIMING.normal.gather);
   await flush();
@@ -969,6 +988,7 @@ test('poster exchange descends into the bottom portal before the next poster eme
   assert.equal(root.dataset.portalPhase, 'enter');
   assert.equal(incoming.classList.contains('is-active'), false);
   assert.deepEqual(scheduler.durations, [POSTER_TIMING.normal.gather]);
+  assert.deepEqual(particleSideCalls.at(-1), ['top', false]);
 
   scheduler.releaseDuration(POSTER_TIMING.normal.gather);
   await flush();

@@ -6,6 +6,7 @@ import { releases, lyricsPool } from '../../src/data.js';
 import {
   createPlaylist,
   createPlaylistSelectionGuard,
+  getPlaylistContextScrollTop,
   getPlaylistViewportItems
 } from '../../src/ui/playlist.js';
 import { ossImageDerivative } from '../../src/config/assets.js';
@@ -206,4 +207,29 @@ test('collects only viewport rows around the current item and stops at both boun
 
   assert.deepEqual(visibleRows.map(({ index }) => index), [2, 3, 4]);
   assert.equal(geometryReads, 5);
+});
+
+test('anchors playlist opening to the current album header instead of centering a late track', () => {
+  const heading = {
+    getBoundingClientRect: () => ({ top: 268, bottom: 320 })
+  };
+  const group = {
+    querySelector: (selector) => selector === '.playlist-group-head' ? heading : null
+  };
+  const currentItem = {
+    closest: (selector) => selector === '.playlist-group' ? group : null
+  };
+  const listEl = {
+    scrollTop: 320,
+    scrollHeight: 1900,
+    clientHeight: 620,
+    getBoundingClientRect: () => ({ top: 100, bottom: 720 }),
+    ownerDocument: {
+      defaultView: {
+        getComputedStyle: () => ({ paddingTop: '28px' })
+      }
+    }
+  };
+
+  assert.equal(getPlaylistContextScrollTop(listEl, currentItem), 460);
 });

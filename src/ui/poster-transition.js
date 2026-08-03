@@ -362,12 +362,13 @@ export function createPosterTransition({
   const holdParticles = (item, duration) => {
     if (!item || typeof particleField.hold !== 'function') return Promise.resolve();
     const bounds = artMetrics(item, 'bottom')?.artBounds ?? item.slot.getBoundingClientRect();
-    return Promise.resolve(particleField.hold(bounds, duration));
+    return Promise.resolve(particleField.hold(bounds, duration, { portalSide: 'bottom' }));
   };
 
   // 门只在有限的进入或离开包络中点亮，稳定驻留时保持熄灭。
   const activatePortal = (side, phase, sceneProfile, duration) => {
     const portal = portalFor(side);
+    particleField.setPortalSide?.(side);
     root.dataset.portalSide = side;
     root.dataset.portalPhase = phase;
     portal.dataset.direction = portalOrientation;
@@ -451,6 +452,9 @@ export function createPosterTransition({
             motionDistance: exitMetrics?.motionDistance,
             trajectory: {
               distance: exitMetrics?.motionDistance,
+              ...(Number.isFinite(exitMetrics?.portalGap)
+                ? { trailDistance: exitMetrics.portalGap }
+                : {}),
               duration: timing.exit,
               easing: 'cubic-bezier(0.64, 0, 0.78, 0)',
               directionY: 1
@@ -490,6 +494,9 @@ export function createPosterTransition({
           motionDistance: enterMetrics?.motionDistance,
           trajectory: {
             distance: enterMetrics?.motionDistance,
+            ...(Number.isFinite(enterMetrics?.portalGap)
+              ? { trailDistance: enterMetrics.portalGap }
+              : {}),
             duration: timing.handoff,
             easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
             directionY: 1

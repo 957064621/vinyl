@@ -54,6 +54,10 @@ const PARTICLE_PORTAL = 1;
 const PARTICLE_TRAIL = 2;
 const PARTICLE_HOLD = 3;
 
+const PARTICLE_SIDE_NONE = 0;
+const PARTICLE_SIDE_TOP = 1;
+const PARTICLE_SIDE_BOTTOM = 2;
+
 const POSITION_X = 0;
 const POSITION_Y = 1;
 const VELOCITY_X = 2;
@@ -197,6 +201,7 @@ export const createLightParticleField = ({
   let particleKinds = new Uint8Array(settings.count);
   let particleColors = new Uint8Array(settings.count);
   let particleOwners = new Uint32Array(settings.count);
+  let particleSides = new Uint8Array(settings.count);
   let emitters = [];
   let aliveCount = 0;
   let poolCursor = 0;
@@ -299,6 +304,10 @@ export const createLightParticleField = ({
       options.distance,
       finite(options.motionDistance, finite(nested.distance, 0))
     ));
+    const trailDistance = Math.abs(finite(
+      options.trailDistance,
+      finite(nested.trailDistance, distance)
+    ));
     const motionDuration = Math.max(1, finite(
       options.motionDuration,
       finite(nested.duration, finite(options.duration, duration))
@@ -315,7 +324,21 @@ export const createLightParticleField = ({
       options.directionY,
       finite(nested.directionY, defaultDirectionY)
     )) || defaultDirectionY;
-    return { side, distance, duration: motionDuration, easing, sourceOffset, directionY };
+    return {
+      side,
+      distance,
+      trailDistance,
+      duration: motionDuration,
+      easing,
+      sourceOffset,
+      directionY
+    };
+  };
+
+  const sideCode = (side) => {
+    if (side === 'top') return PARTICLE_SIDE_TOP;
+    if (side === 'bottom') return PARTICLE_SIDE_BOTTOM;
+    return PARTICLE_SIDE_NONE;
   };
 
   const acquireSlot = () => {
@@ -337,12 +360,14 @@ export const createLightParticleField = ({
     particleActive[index] = 0;
     particleKinds[index] = 0;
     particleOwners[index] = 0;
+    particleSides[index] = PARTICLE_SIDE_NONE;
     aliveCount = Math.max(0, aliveCount - 1);
   };
 
   const spawnParticle = (
     emitterId,
     kind,
+    portalSide,
     x,
     y,
     velocityX,
@@ -374,6 +399,7 @@ export const createLightParticleField = ({
     particleKinds[index] = kind;
     particleColors[index] = color ?? (index % PARTICLE_COLORS.length);
     particleOwners[index] = emitterId;
+    particleSides[index] = sideCode(portalSide);
     return true;
   };
 
@@ -398,6 +424,26 @@ export const createLightParticleField = ({
       if (particleActive[index] && particleOwners[index] === emitterId) count += 1;
     }
     return count;
+  };
+
+  // The lamp becomes visible before its emitter starts, so retire the old side synchronously.
+  const switchPortalSide = (nextSide) => {
+    const nextSideCode = sideCode(nextSide);
+    if (nextSideCode === PARTICLE_SIDE_NONE) return;
+
+    for (const emitter of emitters) {
+      if (sideCode(emitter.motion.side) === nextSideCode) continue;
+      emitter.suppressed = true;
+    }
+
+    for (let index = 0; index < particleActive.length; index += 1) {
+      if (
+        !particleActive[index]
+        || particleSides[index] === PARTICLE_SIDE_NONE
+        || particleSides[index] === nextSideCode
+      ) continue;
+      releaseSlot(index);
+    }
   };
 
   const reserveCapacity = (requested, incomingEmitterId) => {
@@ -448,6 +494,7 @@ export const createLightParticleField = ({
       const spawnedParticle = spawnParticle(
         emitter.id,
         PARTICLE_PORTAL,
+        emitter.motion.side,
         bounds.left + (width * horizontalUnit),
         seamY + ((randomUnit() - 0.5) * 2.6),
         (horizontalBias * (42 + (travel * 0.34))) + (curlDirection * 7),
@@ -473,7 +520,7 @@ export const createLightParticleField = ({
     const seamY = emitter.motion.side === 'bottom'
       ? emitter.bounds.bottom
       : emitter.bounds.top;
-    const displacement = emitter.motion.directionY * emitter.motion.distance;
+    const displacement = emitter.motion.directionY * emitter.motion.trailDistance;
     const startY = emitter.phase === 'scatter' ? seamY - displacement : seamY;
     const durationSeconds = Math.max(0.001, emitter.motion.duration / 1000);
     let spawned = 0;
@@ -490,6 +537,7 @@ export const createLightParticleField = ({
       const spawnedParticle = spawnParticle(
         emitter.id,
         PARTICLE_TRAIL,
+        emitter.motion.side,
         emitter.bounds.left + (width * (0.08 + (randomUnit() * 0.84))),
         startY + (displacement * eased) + emitter.motion.sourceOffset + ((randomUnit() - 0.5) * 4),
         (randomUnit() - 0.5) * lateralEnergy * 2,
@@ -525,6 +573,7 @@ export const createLightParticleField = ({
       const spawnedParticle = spawnParticle(
         emitter.id,
         PARTICLE_HOLD,
+        emitter.motion.side,
         emitter.bounds.left + (width * (0.1 + (randomUnit() * 0.8))),
         floorY + (fieldDepth * randomUnit()),
         (randomUnit() - 0.5) * 12,
@@ -577,7 +626,7 @@ export const createLightParticleField = ({
       emitter.elapsed = Math.min(emitter.simulationDuration, emitter.elapsed + deltaMs);
       const progress = clamp(emitter.elapsed / emitter.motion.duration, 0, 1);
 
-      if (emitter.phase === 'hold' && previousElapsed < emitter.holdEmissionEndMs) {
+      if (!emitter.suppressed && emitter.phase === 'hold' && previousElapsed < emitter.holdEmissionEndMs) {
         const rampProgress = clamp(emitter.elapsed / Math.max(1, emitter.holdRampMs), 0, 1);
         const targetAlive = Math.round(
           emitter.holdBaselineAlive
@@ -591,7 +640,7 @@ export const createLightParticleField = ({
           reserveCapacity(requested, emitter.id);
           emitter.holdEmitted += seedHoldParticles(emitter, requested);
         }
-      } else if (emitter.phase !== 'hold' && emitter.motion.distance > 0) {
+      } else if (!emitter.suppressed && emitter.phase !== 'hold' && emitter.motion.distance > 0) {
         const desired = Math.floor(emitter.trailBudget * progress);
         const requested = Math.max(0, desired - emitter.trailEmitted);
         const spawned = spawnTrailParticles(emitter, requested, previousProgress, progress);
@@ -723,15 +772,18 @@ export const createLightParticleField = ({
   const isHidden = () => Boolean(documentRef?.hidden);
 
   const syncCanvasState = () => {
-    let phase = emitters.length === 0 ? (aliveCount > 0 ? 'tail' : 'idle') : emitters[0].phase;
+    let phase = null;
     let side = null;
     for (let index = 0; index < emitters.length; index += 1) {
       const emitter = emitters[index];
-      if (emitter.phase !== phase) phase = 'mixed';
+      if (emitter.suppressed) continue;
+      if (phase === null) phase = emitter.phase;
+      else if (emitter.phase !== phase) phase = 'mixed';
       if (emitter.phase === 'hold') continue;
       if (side === null) side = emitter.motion.side;
       else if (side !== emitter.motion.side) side = 'mixed';
     }
+    if (phase === null) phase = aliveCount > 0 ? 'tail' : 'idle';
 
     if (renderedEmitterCount !== emitters.length) {
       renderedEmitterCount = emitters.length;
@@ -762,6 +814,7 @@ export const createLightParticleField = ({
     particleKinds.fill(0);
     particleColors.fill(0);
     particleOwners.fill(0);
+    particleSides.fill(0);
     aliveCount = 0;
     poolCursor = 0;
     hasRendered = false;
@@ -851,6 +904,7 @@ export const createLightParticleField = ({
         emitter.bounds.top *= scaleY;
         emitter.bounds.bottom *= scaleY;
         emitter.motion.distance *= scaleY;
+        emitter.motion.trailDistance *= scaleY;
         emitter.motion.sourceOffset *= scaleY;
       }
     }
@@ -893,6 +947,7 @@ export const createLightParticleField = ({
         ? Math.min(commandDuration, settings.holdRampMs + 64)
         : 0,
       holdEmitted: 0,
+      suppressed: false,
       promiseResolved: false,
       resolve: resolvePromise
     };
@@ -919,6 +974,16 @@ export const createLightParticleField = ({
     return promise;
   };
 
+  const setPortalSide = (nextSide) => {
+    if (!PORTAL_SIDES.includes(nextSide)) {
+      throw new RangeError(`Unknown portal side: ${nextSide}`);
+    }
+    if (destroyed || settings.count === 0) return;
+    switchPortalSide(nextSide);
+    render();
+    syncCanvasState();
+  };
+
   const setProfile = (nextProfile) => {
     if (!Object.hasOwn(PARTICLE_PROFILES, nextProfile)) {
       throw new RangeError(`Unknown particle profile: ${nextProfile}`);
@@ -932,6 +997,7 @@ export const createLightParticleField = ({
     particleKinds = new Uint8Array(settings.count);
     particleColors = new Uint8Array(settings.count);
     particleOwners = new Uint32Array(settings.count);
+    particleSides = new Uint8Array(settings.count);
     resize();
   };
 
@@ -963,6 +1029,7 @@ export const createLightParticleField = ({
     particleKinds = new Uint8Array(0);
     particleColors = new Uint8Array(0);
     particleOwners = new Uint32Array(0);
+    particleSides = new Uint8Array(0);
     canvas.width = 0;
     canvas.height = 0;
   };
@@ -987,6 +1054,7 @@ export const createLightParticleField = ({
     scatter: (bounds, durationMs, options) => start('scatter', bounds, durationMs, options),
     hold: (bounds, durationMs, options) => start('hold', bounds, durationMs, options),
     resize,
+    setPortalSide,
     setProfile,
     clear,
     finish,

@@ -319,6 +319,7 @@ test('exports exact frozen pool profiles, caches radial sprites, and caps DPR at
   assert.equal(typeof field.gather, 'function');
   assert.equal(typeof field.scatter, 'function');
   assert.equal(typeof field.hold, 'function');
+  assert.equal(typeof field.setPortalSide, 'function');
   field.destroy();
 });
 
@@ -464,6 +465,72 @@ test('gather, scatter, and hold coexist without clearing and share exactly one R
   await runToIdle(fixture, [gathering, scattering, holding], { start: 65, step: 25 });
   assert.equal(fixture.canvas.dataset.emitterCount, '0');
   assert.equal(field.getState().particleCount, 0);
+  field.destroy();
+});
+
+test('portal activation keeps trails local and removes the opposite side before the new emitter', async () => {
+  const fixture = createFixture();
+  const field = createField(fixture, 'compact', () => 0.5);
+  let scatterResolved = false;
+  const scattering = field.scatter(
+    { left: 60, top: 130, right: 160, bottom: 130 },
+    200,
+    {
+      trajectory: {
+        distance: 70,
+        trailDistance: 20,
+        duration: 200,
+        easing: 'linear',
+        side: 'bottom'
+      }
+    }
+  ).then(() => { scatterResolved = true; });
+
+  fixture.scheduler.step(0);
+  fixture.scheduler.step(20);
+  const bottomFrame = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+  assert.ok(bottomFrame.every(([, y]) => y > 75), 'bottom trail never originates at the top portal');
+  const clearsBeforeSwitch = fixture.context.calls.filter(([name]) => name === 'clearRect').length;
+
+  field.setPortalSide('top');
+  await Promise.resolve();
+  assert.equal(scatterResolved, false, 'visual suppression does not settle the command promise early');
+  assert.equal(field.getState().particleCount, 0);
+  assert.equal(fixture.context.hasPixels, false, 'the opposite side is erased before its new portal is visible');
+  assert.equal(
+    fixture.context.calls.filter(([name]) => name === 'clearRect').length,
+    clearsBeforeSwitch + 1,
+    'portal activation redraws the Canvas immediately instead of retaining a stale frame'
+  );
+
+  const gathering = field.gather(
+    { left: 60, top: 50, right: 160, bottom: 50 },
+    200,
+    {
+      portalSide: 'top',
+      trajectory: {
+        distance: 70,
+        trailDistance: 20,
+        duration: 200,
+        easing: 'linear',
+        side: 'top'
+      }
+    }
+  );
+
+  assert.equal(fixture.canvas.dataset.portalSide, 'top');
+  assert.equal(fixture.canvas.dataset.phase, 'gather');
+
+  fixture.scheduler.step(40);
+  const firstTopFrame = pointCenters(renderedFrames(fixture.context.calls).at(-1));
+  assert.equal(firstTopFrame.some(([, y]) => y > 75), false);
+
+  fixture.scheduler.step(100);
+  await Promise.resolve();
+  assert.equal(scatterResolved, false, 'the original 200ms command contract is preserved');
+
+  await runToIdle(fixture, [scattering, gathering], { start: 125, step: 25 });
+  assert.equal(scatterResolved, true);
   field.destroy();
 });
 
@@ -742,6 +809,9 @@ test('destroy settles promises and releases Canvas and sprite backing stores', a
 
 test('rejects unknown profiles and missing 2D contexts', () => {
   const fixture = createFixture();
+  const field = createField(fixture);
+  assert.throws(() => field.setPortalSide('center'), /Unknown portal side/);
+  field.destroy();
   assert.throws(() => createField(fixture, 'unknown'), /Unknown particle profile/);
   fixture.canvas.getContext = () => null;
   assert.throws(() => createField(fixture), /2D canvas context/);

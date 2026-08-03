@@ -557,6 +557,13 @@ test('overlays and playlist use cover-driven polarized light without animated bl
   assert.doesNotMatch(drift, /\bbox-shadow\s*:/);
 });
 
+test('compact touch WebKit never composites the playlist conic ring', () => {
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="compact"\] \.playlist-content::before\s*\{[^}]*content:\s*none;[^}]*display:\s*none;[^}]*background:\s*none;[^}]*-webkit-mask:\s*none;[^}]*mask:\s*none;/s
+  );
+});
+
 test('lamp portal separates Carbon stretch and luminance tracks around one bounded bloom', () => {
   const gate = archiveRuleBody('.loading-light-slit[data-portal-side="top"],\n        .loading-light-slit[data-portal-side="bottom"]');
   const layers = archiveRuleBody('.loading-light-slit[data-portal-side="top"] > span,\n        .loading-light-slit[data-portal-side="bottom"] > span');

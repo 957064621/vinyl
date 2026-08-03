@@ -2713,9 +2713,11 @@
             max-height: min(54vh, 470px);
             overflow-y: auto;
             overflow-x: hidden;
+            overflow-anchor: none;
             overscroll-behavior-x: contain;
             -webkit-overflow-scrolling: touch;
             padding: calc(var(--playlist-edge-fade) + 6px) 24px calc(var(--playlist-edge-fade) + 8px);
+            scroll-padding-block: calc(var(--playlist-edge-fade) + 6px) calc(var(--playlist-edge-fade) + 8px);
             scrollbar-width: none;
             -ms-overflow-style: none;
             position: relative;
@@ -6147,6 +6149,21 @@
             html[data-motion-profile="full"] .playlist-area.is-visible .playlist-content::before {
                 animation: playlist-ring-orbit 16s linear infinite, playlist-panel-edge-breathe 9.8s var(--continuity-ease) infinite;
             }
+        }
+
+        /* iOS reports support for the conic-mask ring, but can discard the
+           mask during fixed-overlay compositing and paint the raw cone inside
+           the panel. Compact layouts use the shared overlay light without
+           this decorative compositor surface. */
+        html[data-motion-profile="compact"] .playlist-content::before {
+            content: none;
+            display: none;
+            background: none;
+            box-shadow: none;
+            filter: none;
+            -webkit-mask: none;
+            mask: none;
+            animation: none;
         }
 
         @keyframes playlist-ring-orbit {
