@@ -236,8 +236,8 @@ test('overlay surfaces are true glass with a graceful non-blur fallback', () => 
   assert.match(css, /html\[data-motion-profile="compact"\] \.result-area::before,\s*html\[data-motion-profile="compact"\] \.playlist-area::before\s*\{[^}]*filter:\s*blur\(12px\) saturate\(1\.18\)/s);
   assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area::after\s*\{[^}]*filter:\s*blur\(30px\)/s);
   assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-content\s*\{[^}]*--playlist-panel-backdrop-filter:\s*none/s);
+  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-content\s*\{[^}]*overflow:\s*hidden/s);
   assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-area\.is-visible \.playlist-content\s*\{[^}]*transition:\s*none/s);
-  assert.match(css, /html\[data-motion-profile="compact"\] \.playlist-content::before\s*\{[^}]*-webkit-mask:\s*none/s);
 });
 
 test('fullscreen layers use a stable fallback and dynamic viewport height', () => {
@@ -473,6 +473,8 @@ test('linear wrappers are limited to physical motion and keyframes with explicit
     'animation: loading-portal-stretch var(--portal-phase-ms, 760ms) linear both, loading-portal-luminance var(--portal-phase-ms, 760ms) linear both;': 2,
     'animation: loading-backdrop-reveal var(--final-resolve-ms, 1280ms) linear both;': 1,
     'animation: playlist-ring-orbit 16s linear infinite, playlist-panel-edge-breathe 9.8s var(--continuity-ease) infinite;': 1,
+    'animation: playlist-compact-flow-top 10.8s linear infinite both;': 1,
+    'animation: playlist-compact-flow-bottom 10.8s linear infinite both;': 1,
     'transition: opacity 120ms linear;': 2,
     'transition: transform 0.2s linear;': 2,
     'transition: opacity 120ms linear !important;': 2
@@ -557,10 +559,54 @@ test('overlays and playlist use cover-driven polarized light without animated bl
   assert.doesNotMatch(drift, /\bbox-shadow\s*:/);
 });
 
-test('compact touch WebKit never composites the playlist conic ring', () => {
+test('compact touch WebKit replaces the conic ring with composited edge sweeps', () => {
+  const compactEdges = archiveRuleBody(
+    'html[data-motion-profile="compact"] .playlist-content::before,\n        html[data-motion-profile="compact"] .playlist-content::after'
+  );
+  const compactForward = blockBody(archiveCss, '@keyframes playlist-compact-flow-top {');
+  const compactReverse = blockBody(archiveCss, '@keyframes playlist-compact-flow-bottom {');
+  const conicRules = [...archiveCss.matchAll(/([^{}]+)\{[^{}]*background:\s*conic-gradient\(/g)]
+    .filter(([, selector]) => selector.includes('.playlist-content::before'));
+  const compactFilterValues = [...compactEdges.matchAll(/(?:^|\s)filter\s*:\s*([^;]+);/g)]
+    .map((match) => match[1].trim());
+  const compactMaskValues = [...compactEdges.matchAll(/(?:^|\s)(?:-webkit-)?mask(?:-image)?\s*:\s*([^;]+);/g)]
+    .map((match) => match[1].trim());
+
+  assert.match(compactEdges, /background:\s*linear-gradient\(/);
+  assert.match(compactEdges, /width:\s*38%/);
+  assert.match(compactEdges, /height:\s*1\.5px/);
+  assert.match(compactEdges, /var\(--archive-projector\) 50%/);
+  assert.match(compactEdges, /opacity:\s*0/);
+  assert.match(compactEdges, /filter:\s*none/);
+  assert.match(compactEdges, /-webkit-mask:\s*none/);
+  assert.match(compactEdges, /(?<!-webkit-)mask:\s*none/);
+  assert.doesNotMatch(compactEdges, /conic-gradient|mix-blend-mode/);
+  assert.ok(compactFilterValues.every((value) => value === 'none'));
+  assert.ok(compactMaskValues.every((value) => value === 'none'));
+  assert.ok(conicRules.length > 0, 'the full profile keeps the conic ring');
+  for (const [, selector] of conicRules) {
+    assert.match(selector, /html\[data-motion-profile="full"\] \.playlist-content::before/);
+  }
+
+  for (const sweep of [compactForward, compactReverse]) {
+    assert.match(sweep, /translate3d\(/);
+    assert.match(sweep, /opacity:/);
+    assert.doesNotMatch(sweep, /(?:background|filter|box-shadow|(?:-webkit-)?mask|mix-blend-mode)\s*:/);
+  }
+  assert.match(compactForward, /opacity:\s*0\.92/);
+  assert.match(compactReverse, /opacity:\s*0\.88/);
+
   assert.match(
     archiveCss,
-    /html\[data-motion-profile="compact"\] \.playlist-content::before\s*\{[^}]*content:\s*none;[^}]*display:\s*none;[^}]*background:\s*none;[^}]*-webkit-mask:\s*none;[^}]*mask:\s*none;/s
+    /html\[data-motion-profile="compact"\] \.playlist-area\.is-visible \.playlist-content::before\s*\{[^}]*playlist-compact-flow-top 10\.8s linear infinite both/s
+  );
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="compact"\] \.playlist-area\.is-visible \.playlist-content::after\s*\{[^}]*playlist-compact-flow-bottom 10\.8s linear infinite both/s
+  );
+  assert.match(
+    archiveCss,
+    /html\[data-motion-profile="reduce"\] \.playlist-content::before,\s*html\[data-motion-profile="reduce"\] \.playlist-content::after,[^}]*\{[^}]*animation:\s*none !important/s
   );
 });
 

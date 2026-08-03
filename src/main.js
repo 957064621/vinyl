@@ -23,8 +23,14 @@ import {
 } from './motion/motion-controller.js';
 import { createAppTransitions } from './app/transitions.js';
 import { createArchiveMetadata } from './ui/archive-metadata.js';
+import { createControlParticleDissolver } from './ui/control-particle-dissolver.js';
 
 const motionProfile = detectMotionProfile();
+const controlParticleDissolver = createControlParticleDissolver({
+    documentRef: document,
+    windowRef: window,
+    profile: motionProfile
+});
 const criticalAssetGate = startCriticalAssetGate({
     motionProfile
 });
@@ -3099,6 +3105,7 @@ const criticalAssetGate = startCriticalAssetGate({
             if (prefersReducedMotion) hidePointerLight();
             const nextProfile = detectMotionProfile();
             document.documentElement.dataset.motionProfile = nextProfile;
+            controlParticleDissolver.setProfile(nextProfile);
             if (nextProfile !== 'full') resetDrawButtonSpotlight();
             criticalAssetGate.setProfile?.(nextProfile);
             turntableController.setMotionPreference(prefersReducedMotion);

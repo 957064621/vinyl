@@ -5140,6 +5140,7 @@
                 radial-gradient(ellipse 74% 32% at 50% 0%, color-mix(in srgb, var(--cover-accent) 9%, transparent), transparent 72%),
                 linear-gradient(150deg, color-mix(in srgb, var(--cover-a) 5%, transparent), transparent 46%),
                 color-mix(in srgb, var(--archive-graphite) 78%, transparent);
+            overflow: hidden;
         }
 
         html[data-motion-profile="compact"] .playlist-area.is-visible .playlist-content {
@@ -5147,21 +5148,6 @@
                base transition active makes WebKit replay the primed opacity
                after the animation is committed, which reads as a flash. */
             transition: none;
-        }
-
-        html[data-motion-profile="compact"] .playlist-content::before {
-            animation: none;
-            filter: blur(1.6px);
-            opacity: 0.38;
-            /* Safari can flash the intermediate mask surface on the first
-               frame of a fixed overlay. Keep the same soft edge without the
-               compositing operation that causes that flash. */
-            -webkit-mask: none;
-            mask: none;
-            -webkit-mask-image: none;
-            mask-image: none;
-            -webkit-mask-composite: initial;
-            mask-composite: initial;
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -6099,7 +6085,7 @@
             }
         }
 
-        .playlist-content::before {
+        html[data-motion-profile="full"] .playlist-content::before {
             inset: -7px;
             width: auto;
             height: auto;
@@ -6118,7 +6104,7 @@
         }
 
         @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) {
-            .playlist-content::before {
+            html[data-motion-profile="full"] .playlist-content::before {
                 inset: -2px;
                 padding: 2px;
                 border: 0;
@@ -6151,19 +6137,67 @@
             }
         }
 
-        /* iOS reports support for the conic-mask ring, but can discard the
-           mask during fixed-overlay compositing and paint the raw cone inside
-           the panel. Compact layouts use the shared overlay light without
-           this decorative compositor surface. */
-        html[data-motion-profile="compact"] .playlist-content::before {
-            content: none;
-            display: none;
-            background: none;
-            box-shadow: none;
+        /* Compact WebKit can expose the raw conic layer while a fixed overlay
+           is being composited. Two clipped linear highlights preserve the
+           traveling light without masks, blur filters, or paint animation. */
+        html[data-motion-profile="compact"] .playlist-content::before,
+        html[data-motion-profile="compact"] .playlist-content::after {
+            content: "";
+            display: block;
+            position: absolute;
+            left: 0;
+            right: auto;
+            width: 38%;
+            height: 1.5px;
+            padding: 0;
+            border: 0;
+            border-radius: 1px;
+            background: linear-gradient(
+                90deg,
+                transparent 0%,
+                color-mix(in srgb, var(--cover-a) 38%, transparent) 18%,
+                color-mix(in srgb, var(--cover-accent) 62%, transparent) 38%,
+                var(--archive-projector) 50%,
+                color-mix(in srgb, var(--cover-b) 64%, transparent) 64%,
+                transparent 100%
+            );
+            box-shadow:
+                0 0 8px color-mix(in srgb, var(--cover-accent) 38%, transparent),
+                0 0 16px color-mix(in srgb, var(--archive-projector) 16%, transparent);
             filter: none;
             -webkit-mask: none;
             mask: none;
+            -webkit-mask-image: none;
+            mask-image: none;
+            -webkit-mask-composite: initial;
+            mask-composite: initial;
             animation: none;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        html[data-motion-profile="compact"] .playlist-content::before {
+            top: 0;
+            bottom: auto;
+            left: -38%;
+            transform: translate3d(0, 0, 0) scaleX(0.72);
+        }
+
+        html[data-motion-profile="compact"] .playlist-content::after {
+            top: auto;
+            right: -38%;
+            left: auto;
+            bottom: 0;
+            transform: translate3d(0, 0, 0) scaleX(0.72);
+        }
+
+        html[data-motion-profile="compact"] .playlist-area.is-visible .playlist-content::before {
+            animation: playlist-compact-flow-top 10.8s linear infinite both;
+        }
+
+        html[data-motion-profile="compact"] .playlist-area.is-visible .playlist-content::after {
+            animation: playlist-compact-flow-bottom 10.8s linear infinite both;
         }
 
         @keyframes playlist-ring-orbit {
@@ -6208,6 +6242,55 @@
         .playlist-item:focus-visible::before {
             opacity: 0.58;
             transform: scale3d(1, 0.96, 1);
+        }
+
+        @keyframes playlist-compact-flow-top {
+            0% {
+                opacity: 0;
+                transform: translate3d(0, 0, 0) scaleX(0.72);
+            }
+            6% {
+                opacity: 0.4;
+                transform: translate3d(44%, 0, 0) scaleX(0.82);
+            }
+            23% {
+                opacity: 0.92;
+                transform: translate3d(174%, 0, 0) scaleX(1);
+            }
+            42% {
+                opacity: 0.4;
+                transform: translate3d(298%, 0, 0) scaleX(0.88);
+            }
+            48%,
+            100% {
+                opacity: 0;
+                transform: translate3d(363%, 0, 0) scaleX(0.72);
+            }
+        }
+
+        @keyframes playlist-compact-flow-bottom {
+            0%,
+            50% {
+                opacity: 0;
+                transform: translate3d(0, 0, 0) scaleX(0.72);
+            }
+            56% {
+                opacity: 0.38;
+                transform: translate3d(-44%, 0, 0) scaleX(0.82);
+            }
+            73% {
+                opacity: 0.88;
+                transform: translate3d(-174%, 0, 0) scaleX(1);
+            }
+            92% {
+                opacity: 0.36;
+                transform: translate3d(-298%, 0, 0) scaleX(0.88);
+            }
+            98%,
+            100% {
+                opacity: 0;
+                transform: translate3d(-363%, 0, 0) scaleX(0.72);
+            }
         }
 
         /* One material source for every primary control: 20% glass with a
@@ -6590,6 +6673,7 @@
             }
 
             .playlist-content::before,
+            .playlist-content::after,
             .playlist-item.is-current::before,
             .playlist-item.is-current::after,
             .result-area::before,
@@ -6609,6 +6693,7 @@
         }
 
         html[data-motion-profile="reduce"] .playlist-content::before,
+        html[data-motion-profile="reduce"] .playlist-content::after,
         html[data-motion-profile="reduce"] .playlist-item.is-current::before,
         html[data-motion-profile="reduce"] .playlist-item.is-current::after {
             animation: none !important;
@@ -6675,4 +6760,49 @@
                 -webkit-filter: none !important;
                 filter: none !important;
             }
+        }
+
+        .control-particle-layer {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100dvh;
+            overflow: hidden;
+            pointer-events: none;
+            contain: strict;
+            isolation: isolate;
+            z-index: 2147483000;
+        }
+
+        .control-particle-layer[hidden] {
+            display: none !important;
+        }
+
+        .control-particle-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .control-particle-ghost {
+            box-sizing: border-box !important;
+            pointer-events: none !important;
+            user-select: none !important;
+            -webkit-user-select: none !important;
+            -webkit-tap-highlight-color: transparent !important;
+            backface-visibility: hidden;
+            z-index: 1 !important;
+        }
+
+        .control-particle-ghost,
+        .control-particle-ghost * {
+            animation: none !important;
+            transition: none !important;
+        }
+
+        html[data-motion-profile="reduce"] .control-particle-layer {
+            display: none !important;
         }
