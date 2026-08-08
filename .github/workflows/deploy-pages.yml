@@ -39,10 +39,16 @@ jobs:
       - name: Verify and build
         run: npm run verify
 
-      - name: Upload Pages artifact
+      - name: Prepare legacy URL redirect
+        run: |
+          test -f pages-redirect/index.html
+          test -f pages-redirect/404.html
+          test -f pages-redirect/robots.txt
+
+      - name: Upload Pages redirect artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: pages-redirect
 
   deploy:
     environment:
